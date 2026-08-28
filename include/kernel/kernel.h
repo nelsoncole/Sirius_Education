@@ -52,11 +52,4 @@ void kernel_main(BOOT_INFO *boot_info);
 // Ponto de entrada independente de arquitetura (chamado por src/arch/x86_64/mm/
 void setup_paging(BOOT_INFO *boot_info);
 
-
-/* ============================================================================
- * 4. FUNÇÕES GLOBAIS DO DRIVERS VIDEO
- * ============================================================================ */
-// Ponto de entrada independente de arquitetura (chamado por src/drivers/video/
-#include <kernel/video.h>
-
 #endif // __KERNEL_H__

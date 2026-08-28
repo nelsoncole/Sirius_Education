@@ -20,16 +20,22 @@ ASM_SRC := $(ARCH_DIR)/x86_64/boot/entry.asm
 C_SRC   := \
 	$(KERNEL_DIR)/core/kernel_main.c \
 	$(ARCH_DIR)/x86_64/mm/paging.c \
+	$(ARCH_DIR)x86_64/cpu/cpu.c \
 	$(LIB_DIR)/string.c \
-    $(DRIVERS_DIR)/video/video.c
+    $(DRIVERS_DIR)/video/video.c \
+	$(DRIVERS_DIR)/char/char.c \
+	$(DRIVERS_DIR)/char/font.c
 
 ASM_OBJ := $(BUILD_DIR)/entry.o
 
 C_OBJ   := \
 	$(BUILD_DIR)/kernel_main.o \
 	$(BUILD_DIR)/paging.o \
+	$(BUILD_DIR)/cpu.o \
 	$(BUILD_DIR)/string.o \
-    $(BUILD_DIR)/video.o
+    $(BUILD_DIR)/video.o \
+	$(BUILD_DIR)/char.o \
+	$(BUILD_DIR)/font.o
 
 
 # ============================================================
@@ -41,6 +47,7 @@ CFLAGS := -m64 \
           -fno-pie \
           -fno-stack-protector \
           -mno-red-zone \
+		  -mcmodel=kernel \
           -Wall \
           -Wextra \
           -I./include
@@ -91,6 +98,13 @@ $(BUILD_DIR)/kernel_main.o: $(KERNEL_DIR)/core/kernel_main.c | $(BUILD_DIR)
 $(BUILD_DIR)/paging.o: $(ARCH_DIR)/x86_64/mm/paging.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# ============================================================
+# Compile cpu.c
+# ============================================================
+
+$(BUILD_DIR)/cpu.o: $(ARCH_DIR)/x86_64/cpu/cpu.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 
 # ============================================================
 # Compile string.c
@@ -105,6 +119,22 @@ $(BUILD_DIR)/string.o: $(LIB_DIR)/string.c | $(BUILD_DIR)
 # ============================================================
 
 $(BUILD_DIR)/video.o: $(DRIVERS_DIR)/video/video.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+
+# ============================================================
+# Compile char.c
+# ============================================================
+
+$(BUILD_DIR)/char.o: $(DRIVERS_DIR)/char/char.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+
+# ============================================================
+# Compile font.c
+# ============================================================
+
+$(BUILD_DIR)/font.o: $(DRIVERS_DIR)/char/font.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 

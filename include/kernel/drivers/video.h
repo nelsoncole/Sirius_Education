@@ -50,4 +50,9 @@ extern KERNEL_DISPLAY g_display;
 void video_init(GRAPHIC_INFO *graphic_info);
 void put_pixel(unsigned int x, unsigned int y, unsigned int color);
 
+// Abstração de texto via Framebuffer
+void fb_clear(void);
+void fb_putc(char c);
+void fb_print(const char *str);
+
 #endif // __VIDEO_H__

@@ -14,7 +14,7 @@
  * ============================================================================
  */
 
-#include <kernel/video.h>
+#include <kernel/drivers/video.h>
 
 KERNEL_DISPLAY g_display;
 
