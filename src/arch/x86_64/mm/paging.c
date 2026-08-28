@@ -1,0 +1,681 @@
+/*
+ * ============================================================================
+ *        Project: Sirius_Education
+ *       Filename: paging.c
+ *    Description: Implementação do sistema de paginação x86_64 do kernel.
+ *                 Cria e inicializa as tabelas PML4, PDPT, PD e PT,
+ *                 estabelece o mapeamento de memória física para virtual,
+ *                 incluindo o mapeamento do kernel no higher half e do
+ *                 framebuffer de vídeo, e configura o registrador CR3 com o
+ *                 endereço físico da tabela PML4.
+ *
+ *         Author: Nelson Cole
+ *   Created Date: 27/08/2026
+ *
+ *    Modified By: Nelson Cole
+ *  Modified Date: 28/08/2026
+ *
+ *        License: MIT
+ * ============================================================================
+ */
+
+#include "paging.h"
+#include <kernel/string.h>
+#include <kernel/kernel.h>
+
+
+#define PAGE_SIZE 0x1000UL
+
+#define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000UL
+
+#define KERNEL_VIDEO_VIRTUAL_BASE 0xFFFF8000E0000000UL
+
+
+/*
+ * ============================================================
+ * ENDEREÇOS VIRTUAIS DAS PAGE TABLES
+ * ============================================================
+ */
+
+#define PML4_ADDRESS 0xFFFFFFFF80100000UL
+#define PDPT_ADDRESS 0xFFFFFFFF80101000UL
+#define PD_ADDRESS   0xFFFFFFFF80102000UL
+#define PT_ADDRESS   0xFFFFFFFF80103000UL
+
+
+/*
+ * ============================================================
+ * ENDEREÇOS FÍSICOS DAS PAGE TABLES
+ * ============================================================
+ *
+ * As tabelas foram reservadas pelo bootloader.
+ *
+ * KernelAddress
+ *      + 0x100000 -> PML4
+ *      + 0x101000 -> PDPT
+ *      + 0x102000 -> PD
+ *      + 0x103000 -> PT
+ *
+ * ============================================================
+ */
+
+#define PML4_PHYSICAL_OFFSET 0x00100000UL
+#define PDPT_PHYSICAL_OFFSET 0x00101000UL
+#define PD_PHYSICAL_OFFSET   0x00102000UL
+#define PT_PHYSICAL_OFFSET   0x00103000UL
+
+
+/*
+ * ============================================================
+ * ÁREA RESERVADA PARA AS PAGE TABLES
+ * ============================================================
+ *
+ * PT_ADDRESS:
+ *
+ * 0xFFFFFFFF80103000
+ *
+ * até:
+ *
+ * 0xFFFFFFFF80200000
+ *
+ * 253 PTs disponíveis.
+ *
+ * ============================================================
+ */
+
+#define NUM_PT_TABLES 253
+
+
+void
+setup_paging(
+    BOOT_INFO *boot_info
+)
+{
+    unsigned long kernel_phys;
+    unsigned long kernel_size;
+    unsigned long kernel_pages;
+
+    unsigned long framebuffer_phys;
+    unsigned long framebuffer_size;
+    unsigned long framebuffer_pages;
+
+    unsigned long PML4_PHYSICAL;
+    unsigned long PDPT_PHYSICAL;
+    unsigned long PD_PHYSICAL;
+    unsigned long PT_PHYSICAL;
+
+
+    PML4_TABLE *pml4;
+    PAGE_DIRECTORY_POINTER_TABLE *pdpt;
+    PAGE_DIRECTORY *pd;
+    PAGE_TABLE *pt;
+
+
+    /*
+     * ========================================================
+     * ENDEREÇOS FÍSICOS DAS TABELAS
+     * ========================================================
+     */
+
+    PML4_PHYSICAL =
+        boot_info->KernelAddress +
+        PML4_PHYSICAL_OFFSET;
+
+    PDPT_PHYSICAL =
+        boot_info->KernelAddress +
+        PDPT_PHYSICAL_OFFSET;
+
+    PD_PHYSICAL =
+        boot_info->KernelAddress +
+        PD_PHYSICAL_OFFSET;
+
+    PT_PHYSICAL =
+        boot_info->KernelAddress +
+        PT_PHYSICAL_OFFSET;
+
+
+    /*
+     * ========================================================
+     * ENDEREÇOS DAS TABELAS
+     *
+     * Neste ponto o kernel ainda está usando o espaço virtual
+     * fornecido pelo ambiente anterior.
+     *
+     * ========================================================
+     */
+
+    pml4 =
+        (PML4_TABLE *)PML4_ADDRESS;
+
+    pdpt =
+        (PAGE_DIRECTORY_POINTER_TABLE *)PDPT_ADDRESS;
+
+    pd =
+        (PAGE_DIRECTORY *)PD_ADDRESS;
+
+    pt =
+        (PAGE_TABLE *)PT_ADDRESS;
+
+
+    /*
+     * ========================================================
+     * LIMPAR PML4
+     * ========================================================
+     */
+
+    memset(
+        pml4,
+        0,
+        sizeof(PML4_TABLE) * 512
+    );
+
+
+    /*
+     * ========================================================
+     * LIMPAR PDPT
+     * ========================================================
+     */
+
+    memset(
+        pdpt,
+        0,
+        sizeof(PAGE_DIRECTORY_POINTER_TABLE) * 512
+    );
+
+
+    /*
+     * ========================================================
+     * LIMPAR PD
+     * ========================================================
+     */
+
+    memset(
+        pd,
+        0,
+        sizeof(PAGE_DIRECTORY) * 512
+    );
+
+
+    /*
+     * ========================================================
+     * LIMPAR TODAS AS PAGE TABLES
+     * ========================================================
+     */
+
+    memset(
+        pt,
+        0,
+        sizeof(PAGE_TABLE) * 512 * NUM_PT_TABLES
+    );
+
+
+    /*
+     * ========================================================
+     * DADOS DO KERNEL
+     * ========================================================
+     */
+
+    kernel_phys =
+        boot_info->KernelAddress;
+
+    kernel_size =
+        boot_info->KernelMemorySize;
+
+
+    /*
+     * ========================================================
+     * QUANTIDADE DE PÁGINAS DO KERNEL
+     * ========================================================
+     */
+
+    kernel_pages =
+        (kernel_size + PAGE_SIZE - 1)
+        / PAGE_SIZE;
+
+
+    /*
+     * ========================================================
+     * IDENTITY MAPPING
+     *
+     * 0x00000000
+     *
+     * até
+     *
+     * 0x001FFFFF
+     *
+     * ========================================================
+     *
+     * PT[0] é exclusivamente da identity mapping.
+     *
+     * Portanto:
+     *
+     * PT[0] = identity
+     * PT[1...] = kernel
+     *
+     * ========================================================
+     */
+
+    for (unsigned long i = 0;
+         i < 512;
+         i++)
+    {
+        pt[i].p  = 1;
+        pt[i].rw = 1;
+        pt[i].us = 0;
+
+        pt[i].frames = i;
+    }
+
+
+    /*
+     * ========================================================
+     * PD[0] -> PT[0]
+     * ========================================================
+     */
+
+    pd[0].p  = 1;
+    pd[0].rw = 1;
+    pd[0].us = 0;
+    pd[0].ps = 0;
+
+    pd[0].phy_addr_pt =
+        PT_PHYSICAL >> 12;
+
+
+    /*
+     * ========================================================
+     * PML4 -> PDPT
+     *
+     * Higher Half:
+     *
+     * 0xFFFFFFFF80000000
+     *
+     * PML4[511]
+     * ========================================================
+     */
+
+    pml4[511].p  = 1;
+    pml4[511].rw = 1;
+    pml4[511].us = 0;
+
+    pml4[511].phy_addr_pdpt =
+        PDPT_PHYSICAL >> 12;
+
+
+    /*
+     * ========================================================
+     * PDPT -> PD
+     *
+     * Para:
+     *
+     * 0xFFFFFFFF80000000
+     *
+     * PDPT = 510
+     * ========================================================
+     */
+
+    pdpt[510].p  = 1;
+    pdpt[510].rw = 1;
+    pdpt[510].us = 0;
+
+    pdpt[510].phy_addr_pd =
+        PD_PHYSICAL >> 12;
+
+
+    /*
+     * ========================================================
+     * MAPEAR KERNEL
+     *
+     * Virtual:
+     *
+     * 0xFFFFFFFF80000000
+     *
+     * Physical:
+     *
+     * boot_info->KernelAddress
+     *
+     * ========================================================
+     */
+
+    for (unsigned long page = 0;
+         page < kernel_pages;
+         page++)
+    {
+        /*
+         * PT[0] está reservada para identity.
+         *
+         * Portanto o kernel começa em PT[1].
+         */
+
+        unsigned long pt_number =
+            (page / 512) + 1;
+
+
+        /*
+         * Não ultrapassar as PTs disponíveis.
+         */
+
+        if (pt_number >= NUM_PT_TABLES)
+        {
+            break;
+        }
+
+
+        /*
+         * Endereço físico da página.
+         */
+
+        unsigned long physical =
+            kernel_phys +
+            page * PAGE_SIZE;
+
+
+        /*
+         * Endereço virtual do kernel.
+         */
+
+        unsigned long virtual_addr =
+            KERNEL_VIRTUAL_BASE +
+            page * PAGE_SIZE;
+
+
+        /*
+         * Índices x86_64.
+         */
+
+        unsigned long pd_index =
+            (virtual_addr >> 21) & 0x1FF;
+
+        unsigned long pt_index =
+            (virtual_addr >> 12) & 0x1FF;
+
+
+        /*
+         * Endereço físico da PT.
+         */
+
+        unsigned long current_pt_physical =
+            PT_PHYSICAL +
+            pt_number * PAGE_SIZE;
+
+
+        /*
+         * ====================================================
+         * PD -> PT
+         * ====================================================
+         */
+
+        pd[pd_index].p  = 1;
+        pd[pd_index].rw = 1;
+        pd[pd_index].us = 0;
+        pd[pd_index].ps = 0;
+
+        pd[pd_index].phy_addr_pt =
+            current_pt_physical >> 12;
+
+
+        /*
+         * ====================================================
+         * PT -> KERNEL
+         * ====================================================
+         */
+
+        unsigned long pt_entry =
+            (pt_number * 512) +
+            pt_index;
+
+
+        pt[pt_entry].p  = 1;
+        pt[pt_entry].rw = 1;
+        pt[pt_entry].us = 0;
+
+        pt[pt_entry].frames =
+            physical >> 12;
+
+        /*
+         * Código do kernel pode executar.
+         */
+
+        //pt[pt_entry].nx = 0;
+    }
+
+
+    /*
+     * ========================================================
+     * FRAMEBUFFER
+     * ========================================================
+     *
+     * Virtual:
+     *
+     * 0xFFFF8000E0000000
+     *
+     * Physical:
+     *
+     * boot_info->Graphics.FrameBufferBase
+     *
+     * ========================================================
+     */
+
+    framebuffer_phys =
+        boot_info->Graphics.FrameBufferBase;
+
+    framebuffer_size =
+        boot_info->Graphics.FrameBufferSize;
+
+
+    /*
+     * ========================================================
+     * QUANTIDADE DE PÁGINAS DO FRAMEBUFFER
+     * ========================================================
+     */
+
+    framebuffer_pages =
+        (framebuffer_size + PAGE_SIZE - 1)
+        / PAGE_SIZE;
+
+
+    /*
+     * ========================================================
+     * PML4[256]
+     * ========================================================
+     */
+
+    pml4[256].p  = 1;
+    pml4[256].rw = 1;
+    pml4[256].us = 0;
+
+    pml4[256].phy_addr_pdpt =
+        PDPT_PHYSICAL >> 12;
+
+
+    /*
+     * ========================================================
+     * CALCULAR ÍNDICES DO FRAMEBUFFER
+     * ========================================================
+     */
+
+    unsigned long framebuffer_virtual =
+        KERNEL_VIDEO_VIRTUAL_BASE;
+
+
+    unsigned long framebuffer_pdpt_index =
+        (framebuffer_virtual >> 30) & 0x1FF;
+
+
+    /*
+     * ========================================================
+     * PDPT -> PD
+     * ========================================================
+     */
+
+    pdpt[framebuffer_pdpt_index].p  = 1;
+    pdpt[framebuffer_pdpt_index].rw = 1;
+    pdpt[framebuffer_pdpt_index].us = 0;
+
+    pdpt[framebuffer_pdpt_index].phy_addr_pd =
+        PD_PHYSICAL >> 12;
+
+
+    /*
+     * ========================================================
+     * PRIMEIRA PT DISPONÍVEL APÓS O KERNEL
+     * ========================================================
+     *
+     * PT[0] = identity
+     *
+     * PT[1...] = kernel
+     *
+     * Portanto o framebuffer começa depois das PTs
+     * necessárias para o kernel.
+     *
+     * ========================================================
+     */
+
+    unsigned long kernel_pt_count =
+        (kernel_pages + 511) / 512;
+
+
+    unsigned long framebuffer_pt_start =
+        kernel_pt_count + 1;
+
+
+    /*
+     * ========================================================
+     * MAPEAR FRAMEBUFFER
+     * ========================================================
+     */
+
+    for (unsigned long page = 0;
+         page < framebuffer_pages;
+         page++)
+    {
+        unsigned long pt_number =
+            framebuffer_pt_start +
+            (page / 512);
+
+
+        /*
+         * Verificar limite das PTs.
+         */
+
+        if (pt_number >= NUM_PT_TABLES)
+        {
+            break;
+        }
+
+
+        /*
+         * Endereço físico do framebuffer.
+         */
+
+        unsigned long physical =
+            framebuffer_phys +
+            page * PAGE_SIZE;
+
+
+        /*
+         * Endereço virtual.
+         */
+
+        unsigned long virtual_addr =
+            KERNEL_VIDEO_VIRTUAL_BASE +
+            page * PAGE_SIZE;
+
+
+        /*
+         * Índice dentro do PD.
+         */
+
+        unsigned long pd_index =
+            (virtual_addr >> 21) & 0x1FF;
+
+
+        /*
+         * Índice dentro da PT.
+         */
+
+        unsigned long pt_index =
+            (virtual_addr >> 12) & 0x1FF;
+
+
+        /*
+         * Endereço físico da PT.
+         */
+
+        unsigned long current_pt_physical =
+            PT_PHYSICAL +
+            pt_number * PAGE_SIZE;
+
+
+        /*
+         * ====================================================
+         * PD -> PT
+         * ====================================================
+         */
+
+        pd[pd_index].p  = 1;
+        pd[pd_index].rw = 1;
+        pd[pd_index].us = 0;
+        pd[pd_index].ps = 0;
+
+        pd[pd_index].phy_addr_pt =
+            current_pt_physical >> 12;
+
+
+        /*
+         * ====================================================
+         * PT -> FRAMEBUFFER
+         * ====================================================
+         */
+
+        unsigned long pt_entry =
+            (pt_number * 512) +
+            pt_index;
+
+
+        pt[pt_entry].p  = 1;
+        pt[pt_entry].rw = 1;
+        pt[pt_entry].us = 0;
+
+        pt[pt_entry].frames =
+            physical >> 12;
+
+
+        /*
+         * Framebuffer é memória de dados.
+         *
+         * NX = 1
+         */
+
+        //pt[pt_entry].nx = 1;
+    }
+
+
+    /*
+     * ========================================================
+     * DESATIVAR INTERRUPÇÕES
+     * ========================================================
+     */
+
+    __asm__ __volatile__(
+        "cli"
+    );
+
+
+    /*
+     * ========================================================
+     * CARREGAR CR3
+     * ========================================================
+     *
+     * CR3 recebe SEMPRE o endereço físico da PML4.
+     *
+     * ========================================================
+     */
+
+    __asm__ __volatile__(
+        "mov %0, %%cr3"
+        :
+        : "r"(PML4_PHYSICAL)
+        : "memory"
+    );
+}
