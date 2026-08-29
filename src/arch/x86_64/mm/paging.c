@@ -13,77 +13,81 @@
  *   Created Date: 27/08/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 28/08/2026
+ *  Modified Date: 29/08/2026
  *
  *        License: MIT
  * ============================================================================
  */
 
 #include "paging.h"
-#include <kernel/string.h>
+#include <kernel/lib/string.h>
+#include <kernel/lib/stdint.h>
 #include <kernel/kernel.h>
 
 
-#define PAGE_SIZE 0x1000UL
-
-#define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000UL
-
-#define KERNEL_VIDEO_VIRTUAL_BASE 0xFFFF8000E0000000UL
-
-
 /*
- * ============================================================
- * ENDEREÇOS VIRTUAIS DAS PAGE TABLES
- * ============================================================
+ * ============================================================================
+ * Instanciação das Estruturas Globais de Paginação (x86_64)
+ * ============================================================================
+ * 
+ * Estas variáveis guardam os endereços virtuais base das tabelas que controlam
+ * a MMU do processador. São inicializadas diretamente pelo subsistema setup_paging.
  */
 
-#define PML4_ADDRESS 0xFFFFFFFF80100000UL
-#define PDPT_ADDRESS 0xFFFFFFFF80101000UL
-#define PD_ADDRESS   0xFFFFFFFF80102000UL
-#define PT_ADDRESS   0xFFFFFFFF80103000UL
+// Ponteiro global para a Page Map Level 4 (PML4) - A raiz da árvore de paginação
+PML4_TABLE *g_pml4 = 0;
 
+// Ponteiro global para a Page Directory Pointer Table (PDPT) - Tabelas de nível 3
+PAGE_DIRECTORY_POINTER_TABLE *g_pdpt = 0;
 
-/*
- * ============================================================
- * ENDEREÇOS FÍSICOS DAS PAGE TABLES
- * ============================================================
- *
- * As tabelas foram reservadas pelo bootloader.
- *
- * KernelAddress
- *      + 0x100000 -> PML4
- *      + 0x101000 -> PDPT
- *      + 0x102000 -> PD
- *      + 0x103000 -> PT
- *
- * ============================================================
- */
+// Ponteiro global para o Page Directory (PD) - Tabelas de nível 2
+PAGE_DIRECTORY *g_pd = 0;
 
-#define PML4_PHYSICAL_OFFSET 0x00100000UL
-#define PDPT_PHYSICAL_OFFSET 0x00101000UL
-#define PD_PHYSICAL_OFFSET   0x00102000UL
-#define PT_PHYSICAL_OFFSET   0x00103000UL
-
+// Ponteiro global para a tabela de páginas folha (Page Table) - Tabelas de nível 1
+PAGE_TABLE *g_pt = 0;
 
 /*
- * ============================================================
- * ÁREA RESERVADA PARA AS PAGE TABLES
- * ============================================================
- *
- * PT_ADDRESS:
- *
- * 0xFFFFFFFF80103000
- *
- * até:
- *
- * 0xFFFFFFFF80200000
- *
- * 253 PTs disponíveis.
- *
- * ============================================================
+ * Rastreia o número da próxima Tabela de Páginas (PT) de 4 KB inteira livre 
+ * no array global (g_pt). Aponta para o início de cada bloco de 4 KB, 
+ * evitando sobreposições e garantindo alocações contíguas na Higher-Half.
  */
+unsigned long g_next_pt_number = 0;
 
-#define NUM_PT_TABLES 253
+/*
+ * ============================================================================
+ * ENABLE NX
+ * ============================================================================
+ *
+ * Habilita EFER.NXE antes de utilizar o bit NX nas Page Tables.
+ *
+ * EFER = MSR 0xC0000080
+ * NXE   = bit 11
+ *
+ * ============================================================================ */
+
+static void enable_nxe(void)
+{
+    uint32_t eax;
+    uint32_t edx;
+
+    __asm__ __volatile__(
+        "mov $0xC0000080, %%ecx\n"
+        "rdmsr\n"
+        : "=a"(eax), "=d"(edx)
+        :
+        : "ecx"
+    );
+
+    eax |= (1U << 11);
+
+    __asm__ __volatile__(
+        "mov $0xC0000080, %%ecx\n"
+        "wrmsr\n"
+        :
+        : "a"(eax), "d"(edx)
+        : "ecx", "memory"
+    );
+}
 
 
 void
@@ -127,7 +131,7 @@ setup_paging(
 
     PD_PHYSICAL =
         boot_info->KernelAddress +
-        PD_PHYSICAL_OFFSET;
+        PD_KERNEL_PHYSICAL_OFFSET;
 
     PT_PHYSICAL =
         boot_info->KernelAddress +
@@ -144,16 +148,16 @@ setup_paging(
      * ========================================================
      */
 
-    pml4 =
+    g_pml4 = pml4 =
         (PML4_TABLE *)PML4_ADDRESS;
 
-    pdpt =
+    g_pdpt = pdpt =
         (PAGE_DIRECTORY_POINTER_TABLE *)PDPT_ADDRESS;
 
-    pd =
-        (PAGE_DIRECTORY *)PD_ADDRESS;
+    g_pd = pd =
+        (PAGE_DIRECTORY *)PD_KERNEL_ADDRESS;
 
-    pt =
+    g_pt = pt =
         (PAGE_TABLE *)PT_ADDRESS;
 
 
@@ -233,27 +237,26 @@ setup_paging(
         / PAGE_SIZE;
 
 
-    /*
+        /*
      * ========================================================
-     * IDENTITY MAPPING
+     * IDENTITY MAPPING & PML4[0] -> PDPT
      *
-     * 0x00000000
-     *
-     * até
-     *
-     * 0x001FFFFF
-     *
-     * ========================================================
-     *
-     * PT[0] é exclusivamente da identity mapping.
-     *
+     * Intervalo: 0x0000000000000000 até 0x00000000001FFFFF (2 MiB)
+     * 
+     * O PT[0] é usado exclusivamente para o mapeamento de identidade.
      * Portanto:
-     *
-     * PT[0] = identity
-     * PT[1...] = kernel
-     *
+     *   - PT[0]    = Identity Mapping (1:1)
+     *   - PT[1...] = Kernel Mappings
      * ========================================================
      */
+
+
+    pml4[0].p  = 1;
+    pml4[0].rw = 1;
+    pml4[0].us = 0;
+
+    pml4[0].phy_addr_pdpt =
+        PDPT_PHYSICAL >> 12;
 
     for (unsigned long i = 0;
          i < 512;
@@ -264,8 +267,14 @@ setup_paging(
         pt[i].us = 0;
 
         pt[i].frames = i;
+
+        /*
+         * Identity mapping pode executar durante o bootstrap.
+         */
+        pt[i].nx = 0;
     }
 
+    g_next_pt_number = 1;
 
     /*
      * ========================================================
@@ -322,18 +331,12 @@ setup_paging(
         PD_PHYSICAL >> 12;
 
 
-    /*
+     /*
      * ========================================================
      * MAPEAR KERNEL
      *
-     * Virtual:
-     *
-     * 0xFFFFFFFF80000000
-     *
-     * Physical:
-     *
-     * boot_info->KernelAddress
-     *
+     * Virtual:  0xFFFFFFFF80000000
+     * Physical: boot_info->KernelAddress
      * ========================================================
      */
 
@@ -348,7 +351,7 @@ setup_paging(
          */
 
         unsigned long pt_number =
-            (page / 512) + 1;
+            (page / 512) + g_next_pt_number;
 
 
         /*
@@ -436,23 +439,27 @@ setup_paging(
          * Código do kernel pode executar.
          */
 
-        //pt[pt_entry].nx = 0;
+        pt[pt_entry].nx = 0;
     }
 
 
-    /*
+     /*
      * ========================================================
-     * FRAMEBUFFER
+     * ARMAZENAR O PRÓXIMO NÚMERO DE TABELA (PT) LIVRE
+     * ========================================================
+     * 1 = Tabela PT[0] ocupada pela Identidade.
+     * Depois, convertemos as páginas do kernel em blocos de tabelas (divisão por 512).
+     */
+    unsigned long kernel_tables = (kernel_pages + 511) / 512;
+    g_next_pt_number += kernel_tables;
+
+     /*
+     * ========================================================
+     * FRAMEBUFFER (Continuação do seu setup_paging)
      * ========================================================
      *
-     * Virtual:
-     *
-     * 0xFFFF8000E0000000
-     *
-     * Physical:
-     *
-     * boot_info->Graphics.FrameBufferBase
-     *
+     * Virtual:  0xFFFF8000E0000000
+     * Physical: boot_info->Graphics.FrameBufferBase
      * ========================================================
      */
 
@@ -461,6 +468,15 @@ setup_paging(
 
     framebuffer_size =
         boot_info->Graphics.FrameBufferSize;
+
+    /*
+     * Limitação de segurança: Se o tamanho for maior que 64 MB,
+     * mapeia estritamente apenas os primeiros 64 MB.
+     */
+    if (framebuffer_size > 0x4000000UL)
+    {
+        framebuffer_size = 0x4000000UL;
+    }
 
 
     /*
@@ -531,13 +547,7 @@ setup_paging(
      * ========================================================
      */
 
-    unsigned long kernel_pt_count =
-        (kernel_pages + 511) / 512;
-
-
-    unsigned long framebuffer_pt_start =
-        kernel_pt_count + 1;
-
+    unsigned long framebuffer_pt_start = g_next_pt_number;
 
     /*
      * ========================================================
@@ -647,9 +657,20 @@ setup_paging(
          * NX = 1
          */
 
-        //pt[pt_entry].nx = 1;
+        pt[pt_entry].nx = 1;
+
     }
 
+    g_next_pt_number += (framebuffer_pages + 511) / 512;
+    /*
+     * ========================================================================
+     * HABILITAR NX
+     *
+     * Só fazemos isso depois de construir as tabelas.
+     * ========================================================================
+     */
+
+    enable_nxe();
 
     /*
      * ========================================================

@@ -9,14 +9,14 @@
  *   Created Date: 27/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 27/08/2026
+ *  Modified Date: 29/08/2026
  * 
  *        License: MIT
  * ============================================================================
  */
 
-#ifndef __VIDEO_H__
-#define __VIDEO_H__
+#ifndef _VIDEO_H_
+#define _VIDEO_H_
 
 #include <kernel/boot_info.h>
 
@@ -30,6 +30,8 @@ typedef struct {
     unsigned int  width;
     unsigned int  height;
     unsigned int  pixels_per_scanLine;
+
+    EFI_GRAPHICS_PIXEL_FORMAT pixel_format;
     
     unsigned int  cursor_x;         // Coluna atual do texto (em pixéis ou caracteres)
     unsigned int  cursor_y;         // Linha atual do texto
@@ -47,7 +49,7 @@ extern KERNEL_DISPLAY g_display;
  * FUNÇÕES VITAIS DE VÍDEO
  * ============================================================================ */
 
-void video_init(GRAPHIC_INFO *graphic_info);
+void video_init(BOOT_INFO *boot_info);
 void put_pixel(unsigned int x, unsigned int y, unsigned int color);
 
 // Abstração de texto via Framebuffer

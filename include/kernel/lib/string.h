@@ -9,14 +9,14 @@
  *   Created Date: 27/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 27/08/2026
+ *  Modified Date: 29/08/2026
  * 
  *        License: MIT
  * ============================================================================
  */
 
-#ifndef __STRING_H__
-#define __STRING_H__
+#ifndef _STRING_H_
+#define _STRING_H_
 
 #include <stddef.h>
 

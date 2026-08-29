@@ -8,14 +8,14 @@
  *   Created Date: 28/08/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 28/08/2026
+ *  Modified Date: 29/08/2026
  *
  *        License: MIT
  * ============================================================================
  */
 
-#ifndef __STDINT_H__
-#define __STDINT_H__
+#ifndef _STDINT_H_
+#define _STDINT_H_
 
 typedef char int8_t;
 typedef unsigned char uint8_t;

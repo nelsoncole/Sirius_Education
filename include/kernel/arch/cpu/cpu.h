@@ -9,16 +9,16 @@
  *   Created Date: 28/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 28/08/2026
+ *  Modified Date: 29/08/2026
  * 
  *        License: MIT
  * ============================================================================
  */
 
-#ifndef __CPU_H__
-#define __CPU_H__
+#ifndef _CPU_H_
+#define _CPU_H_
 
-#include <kernel/stdint.h>
+#include <kernel/lib/stdint.h>
 
 #include "gdt.h"
 #include "tss.h"

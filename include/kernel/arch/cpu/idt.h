@@ -8,14 +8,14 @@
  *   Created Date: 28/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 28/08/2026
+ *  Modified Date: 29/08/2026
  * 
  *        License: MIT
  * ============================================================================
  */
 
-#ifndef __IDT_H__
-#define __IDT_H__
+#ifndef _IDT_H_
+#define _IDT_H_
 
 typedef struct _idt{
 

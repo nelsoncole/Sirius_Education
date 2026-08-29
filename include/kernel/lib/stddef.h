@@ -10,16 +10,16 @@
  *   Created Date: 27/08/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 27/08/2026
+ *  Modified Date: 29/08/2026
  *
  *        License: MIT
  * ============================================================================
  */
 
-#ifndef __STDDEF_H__
-#define __STDDEF_H__
+#ifndef _STDDEF_H_
+#define _STDDEF_H_
 
-#include <size_t.h>
+#include "size_t.h"
 
 #define NULL ((void *)0)
 

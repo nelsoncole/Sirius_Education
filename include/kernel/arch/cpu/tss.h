@@ -8,14 +8,14 @@
  *   Created Date: 28/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 28/08/2026
+ *  Modified Date: 29/08/2026
  * 
  *        License: MIT
  * ============================================================================
  */
 
-#ifndef __TSS_H__
-#define __TSS_H__
+#ifndef _TSS_H_
+#define _TSS_H_
 
 typedef struct _tss {
 	unsigned int reserved;

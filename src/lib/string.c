@@ -10,13 +10,13 @@
  *   Created Date: 27/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 27/08/2026
+ *  Modified Date: 29/08/2026
  * 
  *        License: MIT
  * ============================================================================
  */
 
-#include <kernel/string.h>
+#include <kernel/lib/string.h>
 
 void *memset(void *s, char val, size_t count)
 {

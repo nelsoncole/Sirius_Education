@@ -9,7 +9,7 @@
  *   Created Date: 25/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 27/08/2026
+ *  Modified Date: 29/08/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -17,6 +17,8 @@
 
 #include <kernel/kernel.h>
 #include <kernel/drivers/video.h>
+#include <kernel/lib/stdio.h>
+#include <kernel/kernel/mm/pmm.h>
 
 void kernel_main(BOOT_INFO *boot_info)
 {
@@ -60,46 +62,74 @@ void kernel_main(BOOT_INFO *boot_info)
 	 *
 	 */
 
-    setup_paging(boot_info);
+	/*
+	 * 1. Paging
+	 */
+	setup_paging(boot_info);
 
-	// Inicializa o ecrã com as configurações do UEFI
-    video_init(&boot_info->Graphics);
+	/*
+	 * 2. Console (Vídeo / Framebuffer)
+	 */
+	video_init(boot_info);
+	fb_clear();
 
-    // Limpa o ecrã para começar o desenho do zero
-    fb_clear();
+	kprintf("========================================================================\n");
+	kprintf("                     SIRIUS EDUCATION KERNEL x86_64                     \n");
+	kprintf("========================================================================\n\n");
 
-    // 3. Mensagem de Boas-Vindas Estruturada (Testa \n e \t)
-    fb_print("========================================================================\n");
-    fb_print("                     SIRIUS EDUCATION KERNEL x86_64                     \n");
-    fb_print("========================================================================\n\n");
-    
-    fb_print("[OK] Video framebuffer inicializado com sucesso.\n");
-    fb_print("[OK] Fonte bitmap VGA 8x16 carregada.\n");
-    fb_print("[OK] Ponto de entrada de baixo nivel (entry.asm) operacional.\n\n");
+	kprintf("RAM %d MB\n",boot_info->MemoryMap.InstalledRAM/1024/1024);
 
-    fb_print("Configuracoes detetadas pelo Bootloader:\n");
-    fb_print("----------------------------------------\n");
-    fb_print("  * Resolucao da Tela:\t");
-    // (Mais tarde usaremos kprintf aqui, por agora vamos simular com strings fixas)
-    fb_print("Ativa via UEFI\n");
-    fb_print("  * Arquitetura:\t\tx86_64 Long Mode\n");
-    fb_print("  * Status do SMP:\t\tSuporte para ate 256 nucleos configurado\n\n");
+	/*
+	 * 3. Inicializar o PMM (Physical Memory Manager)
+	 */
+	kprintf("[INIT] Inicializando o Gestor de Memoria Fisica (PMM)...\n");
+	pmm_init(boot_info);
 
-    fb_print("========================================================================\n");
-    fb_print("Inicializando subsistemas de memoria (PMM / VMM)...\n");
-    fb_print("========================================================================\n");
+	/*
+	 * 4. Inicializar o VMM (Virtual Memory Manager) / Kernel Heap
+	 */
+	kprintf("[INIT] Inicializando o Gestor de Memoria Virtual (VMM) e Heap...\n");
+	// vmm_init();
 
-    /* 
-     * TESTE DE SCROLL REAL:
-     * Vamos imprimir várias linhas consecutivas para estourar o limite 
-     * vertical da resolução e forçar o ecrã a rolar para cima.
-     */
-    for (int i = 1; i <= 40; i++) {
-        fb_print("A testar a estabilidade do sistema... Linha de log numero \n");
-    }
+	/*
+	 * 5. Alocar o CpuDataBlock do BSP (Core Principal)
+	 */
+	kprintf("[INIT] Alocando bloco de dados da CPU (CpuDataBlock) para o BSP...\n");
 
-    fb_print("\n[SUCESSO] Se consegue ler isto no fundo da tela, o Scroll funciona!\n");
+	/*
+	 * 6. Preenche a GDT e o TSS dentro do cpu_blocks[0]
+	 * 7. Executa a instrução LGDT apontando para cpu_blocks[0]->gdtr
+	 */
+	kprintf("[INIT] Configurando GDT e TSS globais...\n");
 
+	/*
+	 * 8. Configura o MSR GS_BASE do Core 0 para apontar para cpu_blocks[0]
+	 */
+	kprintf("[INIT] Configurando registador MSR GS_BASE...\n");
+
+	/*
+	 * 9. Inicializar a IDT Global
+	 */
+	kprintf("[INIT] Inicializando a Tabela de Descritores de Interrupcao (IDT)...\n");
+	// idt_init();
+
+	/*
+	 * 10. ACPI
+	 * 11. Drivers
+	 * 12. VFS
+	 * 13. Scheduler
+	 * 14. IPC
+	 * 15. Modules
+	 */
+	kprintf("[INIT] Inicializando ACPI, barramentos e drivers locais...\n");
+
+	kprintf("\n========================================================================\n");
+	kprintf("Sirius OS carregado com sucesso. Sistema pronto.\n");
+	kprintf("========================================================================\n");
+
+	/*
+	 * Loop de paragem segura do Kernel
+	 */
 	for (;;)
 	{
 		__asm__ volatile("cli");

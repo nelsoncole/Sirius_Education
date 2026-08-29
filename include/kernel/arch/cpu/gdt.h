@@ -8,14 +8,14 @@
  *   Created Date: 28/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 28/08/2026
+ *  Modified Date: 29/08/2026
  * 
  *        License: MIT
  * ============================================================================
  */
 
-#ifndef __GDT_H__
-#define __GDT_H__
+#ifndef _GDT_H_
+#define _GDT_H_
 
 typedef struct _gdt{
 	unsigned long long limit_15_0 :16; 

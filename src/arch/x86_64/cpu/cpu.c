@@ -13,14 +13,14 @@
  *   Created Date: 28/08/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 28/08/2026
+ *  Modified Date: 29/08/2026
  *
  *        License: MIT
  * ============================================================================
  */
 
-#include <kernel/arch/cpu.h>
-#include <kernel/string.h>
+#include <kernel/arch/cpu/cpu.h>
+#include <kernel/lib/string.h>
 
 cpu_data_block_t* cpu_blocks[MAX_CPUS] = {0};
 

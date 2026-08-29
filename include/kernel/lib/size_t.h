@@ -10,14 +10,14 @@
  *   Created Date: 27/08/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 27/08/2026
+ *  Modified Date: 29/08/2026
  *
  *        License: MIT
  * ============================================================================
  */
 
-#ifndef __SIZE_T_H__
-#define __SIZE_T_H__
+#ifndef _SIZE_T_H_
+#define _SIZE_T_H_
 
 typedef unsigned long size_t;
 

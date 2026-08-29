@@ -150,3 +150,15 @@ void fb_print(const char *str)
         str++; // Avança para o próximo caractere na string
     }
 }
+
+
+/*
+ * Emite um único caractere para o terminal ativo do kernel.
+ * Atua como uma camada de abstração sobre o driver de Framebuffer (fb).
+ * Esta função é chamada no kprintf.c
+ */
+
+void kernel_putchar(char c)
+{
+    fb_putc(c);
+}

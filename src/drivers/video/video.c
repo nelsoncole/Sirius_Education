@@ -5,10 +5,10 @@
  *    Description: Inicialização e manipulação do dispositivo de exibição global.
  * 
  *         Author: Nelson Cole
- *   Created Date: 27/08/2026
+ *   Created Date: 28/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 28/08/2026
+ *  Modified Date: 29/08/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -18,13 +18,16 @@
 
 KERNEL_DISPLAY g_display;
 
-void video_init(GRAPHIC_INFO *graphic_info) 
+void video_init(BOOT_INFO *boot_info) 
 {
+    GRAPHIC_INFO *graphic_info = (GRAPHIC_INFO *)&boot_info->Graphics;
+
     g_display.frame_buffer_base     = (unsigned int *) KERNEL_VIDEO_VIRTUAL_BASE;//graphic_info->FrameBufferBase;
     g_display.frame_buffer_size     = graphic_info->FrameBufferSize;
     g_display.width                 = graphic_info->Width;
     g_display.height                = graphic_info->Height;
     g_display.pixels_per_scanLine   = graphic_info->PixelsPerScanLine;
+    g_display.pixel_format          = graphic_info->PixelFormat;
     g_display.cursor_x              = 0;
     g_display.cursor_y              = 0;
     g_display.text_color            = 0xFFFFFFFF;       // Cor padrão do texto (Ex: 0xFFFFFFFF para Branco)
