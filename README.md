@@ -30,7 +30,7 @@ Sirius_Education/
 |   |
 │   ├── kernel/              # Core independente de arquitetura
 │   │   ├── core/            # Inicialização geral (kernelmain.c, panic.c)
-│   │   ├── mm/              # Gestão de memória genérica (PMM, VMM, Heap)
+│   │   ├── mm/              # Gestão de memória genérica (PMM, Heap)
 │   │   ├── sched/           # Escalonador e controlo de processos
 │   │   ├── ipc/             # Comunicação entre processos (Pipes, Sinais)
 │   │   └── syscall/         # Interface de chamadas de sistema
@@ -39,7 +39,7 @@ Sirius_Education/
 │   │   └── x86_64/          # Contexto específico para Intel/AMD 64-bits (GDT, IDT, Paginação)
 │   │       ├── boot/        # Inicialização específica da CPU (trampoline, etc)
 │   │       ├── cpu/         # GDT, IDT, ISRs, IRQs, Controlo de Registos
-│   │       ├── mm/          # Paginação específica (PML4, tabelas de páginas x86)
+│   │       ├── mm/          # Paginação específica (PML4, tabelas de páginas x86) e VMM
 │   │       └── kapi/        # Abstração de hardware para o kernel genérico
 |   |
 │   ├── drivers/             # Controladores de hardware embutidos (Char, Block, Net, Bus)

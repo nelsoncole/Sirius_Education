@@ -9,7 +9,7 @@
  *   Created Date: 27/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 29/08/2026
+ *  Modified Date: 30/08/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -20,7 +20,8 @@
 
 #include <kernel/boot_info.h>
 
-#define KERNEL_VIDEO_VIRTUAL_BASE  0xFFFF8000E0000000UL
+// contem KERNEL_VIDEO_VIRTUAL_BASE
+#include <kernel/kernel/mm/memory_map.h>
 
 // Estrutura que estende a info do bootloader adicionando o estado do cursor
 typedef struct {

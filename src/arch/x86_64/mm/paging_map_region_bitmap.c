@@ -17,7 +17,7 @@
  * ============================================================================
  */
 
-#include "paging.h"
+#include <kernel/arch/mm/paging.h>
 #include <kernel/kernel.h>
 
 unsigned long paging_map_region_bitmap(BOOT_INFO *boot_info, 

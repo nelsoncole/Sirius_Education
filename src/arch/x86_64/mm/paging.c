@@ -19,32 +19,11 @@
  * ============================================================================
  */
 
-#include "paging.h"
+#include <kernel/arch/mm/paging.h>
 #include <kernel/lib/string.h>
 #include <kernel/lib/stdint.h>
 #include <kernel/kernel.h>
 
-
-/*
- * ============================================================================
- * Instanciação das Estruturas Globais de Paginação (x86_64)
- * ============================================================================
- * 
- * Estas variáveis guardam os endereços virtuais base das tabelas que controlam
- * a MMU do processador. São inicializadas diretamente pelo subsistema setup_paging.
- */
-
-// Ponteiro global para a Page Map Level 4 (PML4) - A raiz da árvore de paginação
-PML4_TABLE *g_pml4 = 0;
-
-// Ponteiro global para a Page Directory Pointer Table (PDPT) - Tabelas de nível 3
-PAGE_DIRECTORY_POINTER_TABLE *g_pdpt = 0;
-
-// Ponteiro global para o Page Directory (PD) - Tabelas de nível 2
-PAGE_DIRECTORY *g_pd = 0;
-
-// Ponteiro global para a tabela de páginas folha (Page Table) - Tabelas de nível 1
-PAGE_TABLE *g_pt = 0;
 
 /*
  * Rastreia o número da próxima Tabela de Páginas (PT) de 4 KB inteira livre 
@@ -148,16 +127,16 @@ setup_paging(
      * ========================================================
      */
 
-    g_pml4 = pml4 =
+    pml4 =
         (PML4_TABLE *)PML4_ADDRESS;
 
-    g_pdpt = pdpt =
+    pdpt =
         (PAGE_DIRECTORY_POINTER_TABLE *)PDPT_ADDRESS;
 
-    g_pd = pd =
+    pd =
         (PAGE_DIRECTORY *)PD_KERNEL_ADDRESS;
 
-    g_pt = pt =
+    pt =
         (PAGE_TABLE *)PT_ADDRESS;
 
 

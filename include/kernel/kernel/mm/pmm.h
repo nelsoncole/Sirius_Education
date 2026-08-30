@@ -19,7 +19,7 @@
 
 #include <kernel/boot_info.h>
 
-#define PAGE_SIZE 4096
+#include "memory_map.h" // contem PAGE_SIZE
 
 /*
  * Inicializa o Gestor de Memória Física com base no mapa do Bootloader.

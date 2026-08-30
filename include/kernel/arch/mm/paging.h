@@ -9,7 +9,7 @@
  *   Created Date: 27/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 29/08/2026
+ *  Modified Date: 30/08/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -19,27 +19,7 @@
 #define _PAGING_H_
 
 #include <kernel/boot_info.h>
-
-#define PAGE_SIZE 0x1000UL
-#define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000UL
-#define KERNEL_VIDEO_VIRTUAL_BASE 0xFFFF8000E0000000UL
-
-/*
- * ============================================================
- * ENDEREÇO VIRTUAL DO BITMAP DE MEMÓRIA FÍSICA (PMM)
- * ============================================================
- *
- * Mapeado em 0xFFFF800000000000UL.
- * Utiliza o índice 256 da PML4 (partilhando o mesmo PDPT do Vídeo),
- * mas assume o Índice 0 da PDPT (o vídeo usa o índice 3).
- *
- * Espaço útil isolado de 1 GB, ideal para acomodar os 16 MB
- * necessários para gerir até 512 GB de memória RAM de forma limpa.
- * ============================================================
- */
-#define KERNEL_BITMAP_VIRTUAL_BASE  0xFFFF800000000000UL
-
-
+#include <kernel/kernel/mm/memory_map.h>
 
 /*
  * ============================================================
@@ -214,27 +194,6 @@ typedef struct _PML4_TABLE
 
 } __attribute__((packed)) PML4_TABLE;
 
-
-/*
- * ============================================================================
- * Estruturas Globais de Paginação (Tabelas de Páginas x86_64)
- * ============================================================================
- * 
- * Estas variáveis apontam para os blocos de memória virtual que gerem a MMU.
- * Foram mapeadas e instanciadas inicialmente no subsistema setup_paging.
- */
-
-// Ponteiro para a tabela de Nível 4 (Page Map Level 4) - Raíz da paginação
-extern PML4_TABLE *g_pml4;
-
-// Ponteiro para a tabela de Nível 3 (Page Directory Pointer Table)
-extern PAGE_DIRECTORY_POINTER_TABLE *g_pdpt;
-
-// Ponteiro para a tabela de Nível 2 (Page Directory)
-extern PAGE_DIRECTORY *g_pd;
-
-// Ponteiro para a base do array de tabelas de Nível 1 (Page Tables)
-extern PAGE_TABLE *g_pt;
 
 // Inteiro para o próximo índice de entrada livre no array global de Page Tables (g_pt).
 // Aponta para o início de cada bloco de 4 KB

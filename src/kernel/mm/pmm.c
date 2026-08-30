@@ -9,7 +9,7 @@
  *   Created Date: 29/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 29/08/2026
+ *  Modified Date: 30/08/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -29,22 +29,53 @@ static unsigned long pmm_bitmap_size = 0;
  * Funções auxiliares para manipulação de bits
  */
 static inline void bitmap_set_bit(unsigned long page_index) {
-    pmm_bitmap[page_index / 8] |= (1 << (page_index % 8));
+    pmm_bitmap[page_index / 8] |= (1ULL << (page_index % 8));
 }
 
 static inline void bitmap_clear_bit(unsigned long page_index) {
-    pmm_bitmap[page_index / 8] &= ~(1 << (page_index % 8));
+    pmm_bitmap[page_index / 8] &= ~(1ULL << (page_index % 8));
 }
 
 void pmm_init(BOOT_INFO *boot_info) {
     MEMORY_MAP_INFO *map = &boot_info->MemoryMap;
+
+    if(map->MemoryRegionCount < 1) {
+        kprintf("[PMM ERRO CRITICO] Nao foi encontrada nenhuma regiao de memoria!\n");
+        for(;;);
+    }
+
+    // Converte a memória alocada pelo bootloader UEFI em RAM livre para o kernel utilizar
+    for (unsigned long i = 0; i < map->MemoryRegionCount; i++) {
+        if (map->MemoryRegions[i].Type == MEMORY_LOADER_DATA) {
+            map->MemoryRegions[i].Type = MEMORY_FREE;
+        }
+    }
     
     // 1. Calcular o total de páginas com base na RAM Instalada
-    pmm_total_pages = map->InstalledRAM / PAGE_SIZE;
+    // Nelson, como seguraça devemos calcular o pmm_total_pages a partir da ultima regiao mapeada
+    // pmm_total_pages = map->InstalledRAM / PAGE_SIZE;
+
+    // -------------------------------------------------------------------------
+    // CORREÇÃO: Varredura para encontrar o endereço físico absoluto mais alto.
+    // Isso é vital porque a UEFI não entrega as regiões ordenadas e o remapeamento
+    // joga blocos para cima de 4GB (0x100000000).
+    // -------------------------------------------------------------------------
+    unsigned long highest_physical_address = 0;
+    for (unsigned long i = 0; i < map->MemoryRegionCount; i++) {
+        unsigned long region_end = map->MemoryRegions[i].Start + map->MemoryRegions[i].Size;
+        if (region_end > highest_physical_address) {
+            highest_physical_address = region_end;
+        }
+    }
+
+    // Calcula o total de páginas reais de ponta a ponta (do endereço 0x0 até o topo)
+    pmm_total_pages = highest_physical_address / PAGE_SIZE;
     
     // Cada byte do bitmap controla 8 páginas.
     pmm_bitmap_size = pmm_total_pages / 8;
     if (pmm_total_pages % 8) pmm_bitmap_size++;
+
+    //pmm_bitmap_size = 524288;
 
     kprintf("[PMM] Total de RAM: %d MB (%d paginas de 4KB).\n", map->InstalledRAM / 1024 / 1024, pmm_total_pages);
     kprintf("[PMM] Tamanho do Bitmap necessario: %d bytes.\n", pmm_bitmap_size);
@@ -82,10 +113,10 @@ void pmm_init(BOOT_INFO *boot_info) {
     // Atribuição direta através do retorno da função
     pmm_bitmap = (unsigned char *) bitmap_virt_addr;
     kprintf("[PMM] Bitmap alocado no endereco fisico: 0x%x mapeado em %p\n", bitmap_phys_addr, pmm_bitmap);
-
+    
     // 3. Inicializar o Bitmap completo como "Ocupado" (Prevenção por segurança)
     memset(pmm_bitmap, 0xFF, pmm_bitmap_size);
-
+    
     // 4. Mapear o estado real da RAM com base nas regiões do Bootloader
     for (unsigned long i = 0; i < map->MemoryRegionCount; i++) {
         MEMORY_REGION reg = map->MemoryRegions[i];

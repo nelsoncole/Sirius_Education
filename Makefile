@@ -19,8 +19,12 @@ ASM_SRC := $(ARCH_DIR)/x86_64/boot/entry.asm
 
 C_SRC   := \
 	$(KERNEL_DIR)/core/kernel_main.c \
+	$(KERNEL_DIR)/core/panic.c \
+	$(KERNEL_DIR)/core/boot_info.c \
 	$(ARCH_DIR)/x86_64/mm/paging.c \
 	$(ARCH_DIR)/x86_64/mm/paging_map_region_bitmap.c \
+	$(ARCH_DIR)/x86_64/mm/vmm.c \
+	$(ARCH_DIR)/x86_64/mm/vmm_scratch_window.c \
 	$(ARCH_DIR)x86_64/cpu/cpu.c \
 	$(LIB_DIR)/string.c \
     $(DRIVERS_DIR)/video/video.c \
@@ -28,20 +32,26 @@ C_SRC   := \
 	$(DRIVERS_DIR)/char/font.c \
 	$(LIB_DIR)/kprintf.c \
 	$(KERNEL_DIR)/mm/pmm.c \
+	$(KERNEL_DIR)/mm/heap.c
 
 ASM_OBJ := $(BUILD_DIR)/entry.o
 
 C_OBJ   := \
 	$(BUILD_DIR)/kernel_main.o \
+	$(BUILD_DIR)/panic.o \
+	$(BUILD_DIR)/boot_info.o \
 	$(BUILD_DIR)/paging.o \
 	$(BUILD_DIR)/paging_map_region_bitmap.o \
+	$(BUILD_DIR)/vmm.o \
+	$(BUILD_DIR)/vmm_scratch_window.o \
 	$(BUILD_DIR)/cpu.o \
 	$(BUILD_DIR)/string.o \
     $(BUILD_DIR)/video.o \
 	$(BUILD_DIR)/char.o \
 	$(BUILD_DIR)/font.o \
 	$(BUILD_DIR)/kprintf.o \
-	$(BUILD_DIR)/pmm.o
+	$(BUILD_DIR)/pmm.o \
+	$(BUILD_DIR)/heap.o
 
 
 # ============================================================
@@ -96,6 +106,20 @@ $(BUILD_DIR)/kernel_main.o: $(KERNEL_DIR)/core/kernel_main.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================
+# Compile panic.c
+# ============================================================
+
+$(BUILD_DIR)/panic.o: $(KERNEL_DIR)/core/panic.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile boot_info.c
+# ============================================================
+
+$(BUILD_DIR)/boot_info.o: $(KERNEL_DIR)/core/boot_info.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
 # Compile paging.c
 # ============================================================
 
@@ -107,6 +131,20 @@ $(BUILD_DIR)/paging.o: $(ARCH_DIR)/x86_64/mm/paging.c | $(BUILD_DIR)
 # ============================================================
 
 $(BUILD_DIR)/paging_map_region_bitmap.o: $(ARCH_DIR)/x86_64/mm/paging_map_region_bitmap.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile vmm.c
+# ============================================================
+
+$(BUILD_DIR)/vmm.o: $(ARCH_DIR)/x86_64/mm/vmm.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile vmm_scratch_window.c
+# ============================================================
+
+$(BUILD_DIR)/vmm_scratch_window.o: $(ARCH_DIR)/x86_64/mm/vmm_scratch_window.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================
@@ -156,6 +194,13 @@ $(BUILD_DIR)/kprintf.o: $(LIB_DIR)/kprintf.c | $(BUILD_DIR)
 # ============================================================
 
 $(BUILD_DIR)/pmm.o: $(KERNEL_DIR)/mm/pmm.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile heap.c
+# ============================================================
+
+$(BUILD_DIR)/heap.o: $(KERNEL_DIR)/mm/heap.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 

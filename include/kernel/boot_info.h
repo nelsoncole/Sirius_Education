@@ -8,7 +8,7 @@
  *           Date: 27/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 27/08/2026
+ *  Modified Date: 30/08/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -67,13 +67,16 @@ typedef struct
 } __attribute__((packed)) DEVICE_PATH_INFO; // Total exato: 48 bytes (Múltiplo de 8)
 
 
-typedef enum {
-    MEMORY_FREE = 0,       // RAM utilizável pelo kernel
-    MEMORY_RESERVED,       // Reservada pelo firmware/plataforma
-    MEMORY_RUNTIME,        // UEFI Runtime Services
-    MEMORY_ACPI,           // ACPI Reclaim Memory
-    MEMORY_NVS,            // ACPI NVS
-    MEMORY_MMIO            // Memória mapeada para dispositivos
+typedef enum
+{
+    MEMORY_FREE = 0,        // RAM utilizável pelo kernel
+    MEMORY_RESERVED,        // Reservada pelo firmware/plataforma
+    MEMORY_RUNTIME,         // UEFI Runtime Services
+    MEMORY_ACPI,            // ACPI Reclaim Memory
+    MEMORY_NVS,             // ACPI NVS
+    MEMORY_MMIO,            // Memória mapeada para dispositivos
+    MEMORY_UNUSABLE,        // Memória danificada ou inutilizável
+    MEMORY_LOADER_DATA      // Alocada pelo bootloader/app UEFI (Pode ser reutilizada pelo kernel!)
 } MEMORY_TYPE;
 
 #define MAX_MEMORY_REGIONS 256
@@ -135,4 +138,5 @@ typedef struct {
     MEMORY_MAP_INFO MemoryMap;
 } BOOT_INFO;
 
+extern BOOT_INFO *g_boot_info;
 #endif // __BOOT_INFO_H__
