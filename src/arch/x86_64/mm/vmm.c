@@ -15,8 +15,9 @@
  * ============================================================================
  */
 
-#include <kernel/arch/mm/vmm.h>
+#include <kernel/arch/x86_64/mm/vmm.h>
 #include <kernel/kernel/mm/pmm.h>
+#include <kernel/kernel/core/panic.h>
 
 
 /*
@@ -212,4 +213,75 @@ void vmm_unmap_page(PML4_TABLE* pml4, unsigned long virt) {
 
     // 5. Invalida imediatamente o cache TLB do processador para o endereço virtual alvo
     __asm__ __volatile__("invlpg (%0)" :: "r"(virt) : "memory");
+}
+
+/*
+ * Mapeia com segurança qualquer dispositivo físico ou tabela de firmware (MMIO)
+ * dentro da janela massiva de 512 GB (PML4 Índice 510).
+ *
+ * Parâmetros:
+ *   phys_addr: O endereço físico real do dispositivo na placa-mãe.
+ *   size:      O tamanho em bytes da região do dispositivo.
+ * 
+ * Retorna:
+ *   O ponteiro virtual correspondente no Higher-Half pronto para leitura/escrita.
+ */
+void* vmm_map_device(unsigned long phys_addr, unsigned long size)
+{
+    PML4_TABLE* pml4 = (PML4_TABLE*)PML4_ADDRESS;
+    if (size == 0) return 0;
+
+    // 1. ISOLAR OFFSETS E ALINHAR AS PÁGINAS A FRONTEIRAS DE 4 KB
+    // Captura o início exato da página física (zera os 12 bits inferiores)
+    unsigned long phys_page   = phys_addr & ~(PAGE_SIZE - 1);
+    // Captura o deslocamento do endereço dentro daquela página (0 a 4095)
+    unsigned long page_offset = phys_addr & (PAGE_SIZE - 1);
+    
+    // Calcula a quantidade real de páginas de 4 KB que o tamanho total exige
+    unsigned long num_pages = (size + page_offset + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    /*
+     * 2. PONTEIRO LINEAR DE ALOCAÇÃO VIRTUAL
+     * Usamos uma variável estática que retém o seu valor entre chamadas.
+     * Ela inicia na base de 512 GB e "anda para a frente" a cada novo dispositivo,
+     * garantindo que um hardware nunca sobreponha o espaço virtual do outro.
+     */
+    static unsigned long next_available_virtual = KERNEL_MMIO_VIRTUAL_BASE;
+    unsigned long start_virtual_address = next_available_virtual;
+
+    /*
+     * 3. CONFIGURAÇÃO DE FLAGS DE HARDWARE (CACHE DISABLE)
+     * Para registadores de IO (como LAPIC/IOAPIC), precisamos de desativar o cache.
+     *   Bit 0 (0x01) -> Present
+     *   Bit 1 (0x02) -> Read/Write
+     *   Bit 3 (0x08) -> Page-level Write-Through (PWT)
+     *   Bit 4 (0x10) -> Page-level Cache Disable (PCD)
+     *   Total das flags por hardware = 0x1B
+     */
+    unsigned int mmio_flags = 0x1B;
+
+    // 4. MAPEAR PÁGINA POR PÁGINA NA ÁRVORE DE PAGINAÇÃO
+    for (unsigned long i = 0; i < num_pages; i++)
+    {
+        // Carimba a associação física-virtual na tabela CR3 do Kernel
+        vmm_map_page(pml4, next_available_virtual, phys_page + (i * PAGE_SIZE), mmio_flags);
+        
+        // Desloca 4 KB para a frente na janela virtual de MMIO
+        next_available_virtual += PAGE_SIZE;
+
+        // Proteção estrita contra estouro do limite superior de 512 GB
+        if (next_available_virtual >= KERNEL_MMIO_VIRTUAL_END)
+        {
+            kernel_panic("[VMM ERRO CRITICO] Espaco virtual massivo de 512 GB para MMIO esgotado!\n");
+            for(;;);
+        }
+    }
+
+    /*
+     * 5. RETORNA O ENDEREÇO VIRTUAL AJUSTADO
+     * Devolvemos o endereço de partida virtual somado ao offset original.
+     * Desta forma, se o hardware começava no byte 512 da página física,
+     * o ponteiro devolverá o byte 512 da página virtual gerada.
+     */
+    return (void *)(start_virtual_address + page_offset);
 }

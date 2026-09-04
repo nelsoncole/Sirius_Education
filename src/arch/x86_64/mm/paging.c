@@ -19,7 +19,7 @@
  * ============================================================================
  */
 
-#include <kernel/arch/mm/paging.h>
+#include <kernel/arch/x86_64/mm/paging.h>
 #include <kernel/lib/string.h>
 #include <kernel/lib/stdint.h>
 #include <kernel/kernel.h>
@@ -84,13 +84,17 @@ setup_paging(
 
     unsigned long PML4_PHYSICAL;
     unsigned long PDPT_PHYSICAL;
+    unsigned long PDPT_IDENTITY_PHYSICAL;
     unsigned long PD_PHYSICAL;
+    unsigned long PD_IDENTITY_PHYSICAL;
     unsigned long PT_PHYSICAL;
 
 
     PML4_TABLE *pml4;
     PAGE_DIRECTORY_POINTER_TABLE *pdpt;
+    PAGE_DIRECTORY_POINTER_TABLE *pdpt_identity;
     PAGE_DIRECTORY *pd;
+    PAGE_DIRECTORY *pd_identity;
     PAGE_TABLE *pt;
 
 
@@ -107,10 +111,18 @@ setup_paging(
     PDPT_PHYSICAL =
         boot_info->KernelAddress +
         PDPT_PHYSICAL_OFFSET;
+    
+    PDPT_IDENTITY_PHYSICAL =
+        boot_info->KernelAddress +
+        PDPT_IDENTITY_PHYSICAL_OFFSET;
 
     PD_PHYSICAL =
         boot_info->KernelAddress +
         PD_KERNEL_PHYSICAL_OFFSET;
+
+    PD_IDENTITY_PHYSICAL =
+        boot_info->KernelAddress +
+        PD_IDENTITY_PHYSICAL_OFFSET;
 
     PT_PHYSICAL =
         boot_info->KernelAddress +
@@ -133,8 +145,14 @@ setup_paging(
     pdpt =
         (PAGE_DIRECTORY_POINTER_TABLE *)PDPT_ADDRESS;
 
+    pdpt_identity =
+        (PAGE_DIRECTORY_POINTER_TABLE *)PDPT_IDENTITY_ADDRESS;
+
     pd =
         (PAGE_DIRECTORY *)PD_KERNEL_ADDRESS;
+
+    pd_identity =
+        (PAGE_DIRECTORY *)PD_IDENTITY_ADDRESS;
 
     pt =
         (PAGE_TABLE *)PT_ADDRESS;
@@ -165,6 +183,12 @@ setup_paging(
         sizeof(PAGE_DIRECTORY_POINTER_TABLE) * 512
     );
 
+    memset(
+        pdpt_identity,
+        0,
+        sizeof(PAGE_DIRECTORY_POINTER_TABLE) * 512
+    );
+
 
     /*
      * ========================================================
@@ -174,6 +198,12 @@ setup_paging(
 
     memset(
         pd,
+        0,
+        sizeof(PAGE_DIRECTORY) * 512
+    );
+
+    memset(
+        pd_identity,
         0,
         sizeof(PAGE_DIRECTORY) * 512
     );
@@ -228,47 +258,57 @@ setup_paging(
      *   - PT[1...] = Kernel Mappings
      * ========================================================
      */
-
-
-    pml4[0].p  = 1;
-    pml4[0].rw = 1;
-    pml4[0].us = 0;
-
-    pml4[0].phy_addr_pdpt =
-        PDPT_PHYSICAL >> 12;
-
-    for (unsigned long i = 0;
-         i < 512;
-         i++)
+    /*
+     * ============================================================================
+     * IDENTITY MAPPING ISOLADO (EXATAMENTE 1 MiB COMPATÍVEL COM VMWARE/VBOX)
+     *
+     * Intervalo: 0x0000000000000000 até 0x00000000000FFFFF (1 MiB / 256 Páginas)
+     * 
+     * Mapeia de forma 1:1 o primeiro megabyte físico. É crucial para que os 
+     * APs acessem o código do trampolim em 0x8000 durante a subida de modo.
+     * ============================================================================
+     */
+    for (unsigned long i = 0; i < 256; i++)
     {
-        pt[i].p  = 1;
+        unsigned long physical = 0 + (i * PAGE_SIZE);
+        pt[i].p = 1;
         pt[i].rw = 1;
         pt[i].us = 0;
-
-        pt[i].frames = i;
-
-        /*
-         * Identity mapping pode executar durante o bootstrap.
-         */
-        pt[i].nx = 0;
+        pt[i].frames = physical >> 12;
+        pt[i].nx = 0; // Deve permitir execução de código (Bootstrap de 16-bits)
     }
 
+    /* 
+     * O array global de Page Tables avança.
+     * Como a PT[0] foi inteiramente reservada para a Identidade de 1 MB, 
+     * o mapeamento do Higher-Half do Kernel começará a partir da PT[1].
+     */
     g_next_pt_number = 1;
 
     /*
-     * ========================================================
-     * PD[0] -> PT[0]
-     * ========================================================
+     * ============================================================================
+     * CONEXÃO FÍSICA DOS RAMOS DA ARVORE VIRTUAL
+     * ============================================================================
      */
 
-    pd[0].p  = 1;
-    pd[0].rw = 1;
-    pd[0].us = 0;
-    pd[0].ps = 0;
+    // RAMO 1: Liga o Diretório Baixo à Page Table de Identidade
+    pd_identity[0].p = 1;
+    pd_identity[0].rw = 1;
+    pd_identity[0].us = 0;
+    pd_identity[0].ps = 0;
+    pd_identity[0].phy_addr_pt = PT_PHYSICAL >> 12;
 
-    pd[0].phy_addr_pt =
-        PT_PHYSICAL >> 12;
+    // RAMO 2: Liga a PDPT Baixa ao Diretório de Identidade Físico
+    pdpt_identity[0].p = 1;
+    pdpt_identity[0].rw = 1;
+    pdpt_identity[0].us = 0;
+    pdpt_identity[0].phy_addr_pd = PD_IDENTITY_PHYSICAL >> 12;
 
+    // RAMO 3: Liga a Raiz PML4 à PDPT Baixa no índice 0
+    pml4[0].p = 1;
+    pml4[0].rw = 1;
+    pml4[0].us = 0;
+    pml4[0].phy_addr_pdpt = PDPT_IDENTITY_PHYSICAL >> 12;
 
     /*
      * ========================================================
@@ -530,7 +570,7 @@ setup_paging(
 
     /*
      * ========================================================
-     * MAPEAR FRAMEBUFFER
+     * MAPEAR FRAMEBUFFER (Com PAT / Write-Combining)
      * ========================================================
      */
 
@@ -629,6 +669,13 @@ setup_paging(
         pt[pt_entry].frames =
             physical >> 12;
 
+        /*
+         * ATIVAÇÃO DO WRITE-COMBINING (PAT)
+         * PWT = 1, PCD = 1 -> Seleciona a entrada PAT3 na arquitetura x86.
+         * Por padrão, a grande maioria dos firmwares configura PAT3 como WC.
+         */
+        pt[pt_entry].pwt = 1; // Bit 3 da entrada da PT
+        pt[pt_entry].pcd = 1; // Bit 4 da entrada da PT
 
         /*
          * Framebuffer é memória de dados.

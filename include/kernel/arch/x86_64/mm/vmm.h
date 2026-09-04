@@ -41,6 +41,9 @@ void vmm_map_page(PML4_TABLE* pml4, unsigned long virt, unsigned long phys, unsi
 // Remove o mapeamento de uma página virtual
 void vmm_unmap_page(PML4_TABLE* pml4, unsigned long virt);
 
+// Protótipo do seu novo mapeador de hardware do VMM
+void* vmm_map_device(unsigned long phys_addr, unsigned long size);
+
 /*
  * OPERAÇÃO DE ALTERAÇÃO DO DIRETÓRIO RAÍZ
  * ------------------------------------------------------------------------

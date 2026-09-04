@@ -93,13 +93,21 @@ int strcmp (const char* s1, const char* s2)
     	return -1;
 }
 
-int memcmp(char *s1, char *s2, int n)
+int memcmp(const void *s1, const void *s2, unsigned long n)
 {
-   int i;
-   for(i=0;i<n;i++)
-   {
-      if(s1[i] != s2[i])
-         return 1;
-   }
-   return 0;
+	// Converte os ponteiros genéricos void* para bytes puros (unsigned char) lidos pelo hardware
+	const unsigned char *p1 = (const unsigned char *)s1;
+	const unsigned char *p2 = (const unsigned char *)s2;
+	unsigned long i;
+
+	for (i = 0; i < n; i++)
+	{
+		// Agora a indexação por índice [i] é 100% válida e segura
+		if (p1[i] != p2[i])
+		{
+			return 1; // Encontrou diferença, retorna 1 imediato
+		}
+	}
+
+	return 0; // Blocos idênticos, retorna 0
 }

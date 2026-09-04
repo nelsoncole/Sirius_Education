@@ -15,8 +15,8 @@
  * ============================================================================
  */
 
-#include <kernel/arch/mm/paging.h>
-#include <kernel/arch/mm/vmm.h>
+#include <kernel/arch/x86_64/mm/paging.h>
+#include <kernel/arch/x86_64/mm/vmm.h>
 #include <kernel/boot_info.h>
 
 /*

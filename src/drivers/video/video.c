@@ -32,6 +32,8 @@ void video_init(BOOT_INFO *boot_info)
     g_display.cursor_y              = 0;
     g_display.text_color            = 0xFFFFFFFF;       // Cor padrão do texto (Ex: 0xFFFFFFFF para Branco)
     g_display.background_color      = 0x00000000; // Cor padrão do fundo (Ex: 0x00000000 para Preto)
+
+    fb_clear();
 }
 
 // Função base para o teu futuro gestor de janelas desenhar retângulos, bordas, etc.

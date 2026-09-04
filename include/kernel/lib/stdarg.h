@@ -23,6 +23,8 @@
  * x86_64
  */
 
+#if defined(__GNUC__) || defined(__clang__)
+
 typedef __builtin_va_list va_list;
 
 /*
@@ -48,5 +50,9 @@ typedef __builtin_va_list va_list;
  */
 #define va_copy(dest, src) \
     __builtin_va_copy(dest, src)
+
+#else
+#error "Compiler not supported for va_list implementation"
+#endif
 
 #endif

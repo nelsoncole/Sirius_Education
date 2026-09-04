@@ -127,16 +127,19 @@ typedef struct {
 
 
 typedef struct {
-    unsigned int Version;
-    unsigned int Size;
+    unsigned int Version;                    // 4 bytes
+    unsigned int Size;                       // 4 bytes (Total: 8)
 
-    unsigned long KernelAddress;
-    unsigned long KernelMemorySize;
-    
-    GRAPHIC_INFO Graphics;
-    DEVICE_PATH_INFO BootDevice;
-    MEMORY_MAP_INFO MemoryMap;
-} BOOT_INFO;
+    unsigned long KernelAddress;             // 8 bytes
+    unsigned long KernelMemorySize;          // 8 bytes
+
+    // Endereço físico do RSDP do ACPI
+    unsigned long RsdpAddress;               // 8 bytes
+
+    GRAPHIC_INFO Graphics;                   // 40 bytes (Alinhado)
+    DEVICE_PATH_INFO BootDevice;             // 56 bytes (Alinhado)
+    MEMORY_MAP_INFO MemoryMap;               // Plana (Alinhada)
+} __attribute__((packed)) BOOT_INFO;         // Alinhamento total preservado
 
 extern BOOT_INFO *g_boot_info;
 #endif // __BOOT_INFO_H__

@@ -38,6 +38,8 @@ typedef struct {
     unsigned int  cursor_y;         // Linha atual do texto
     unsigned int  text_color;       // Cor padrão do texto (Ex: 0xFFFFFFFF para Branco)
     unsigned int  background_color; // Cor padrão do fundo (Ex: 0x00000000 para Preto)
+
+    unsigned int  *back_buffer;
 } __attribute__((packed)) KERNEL_DISPLAY;
 
 /* ============================================================================
@@ -51,7 +53,10 @@ extern KERNEL_DISPLAY g_display;
  * ============================================================================ */
 
 void video_init(BOOT_INFO *boot_info);
+void video_flush(void);
 void put_pixel(unsigned int x, unsigned int y, unsigned int color);
+void video_clear(void);
+void video_scroll_up(unsigned int lines);
 
 // Abstração de texto via Framebuffer
 void fb_clear(void);

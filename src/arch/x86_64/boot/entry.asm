@@ -98,7 +98,7 @@ gdt_start:
     ; Bits de acesso (0x92)
     dq 0x0000920000000000
 gdt_end:
-
+global gdtr
 gdtr:
     dw gdt_end - gdt_start - 1   ; Limite da GDT
     dq gdt_start                 ; Endereço base da GDT
@@ -109,6 +109,7 @@ gdtr:
 section .bss
 align 16
 
+global stack_top
 stack_bottom:
     resb 16384                ; 16 KiB
 

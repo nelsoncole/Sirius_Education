@@ -120,9 +120,36 @@ check_scroll:
         unsigned int *dst = g_display.frame_buffer_base;
         unsigned int *src = g_display.frame_buffer_base + text_line_pixels;
 
-        for (unsigned int i = 0; i < pixels_to_copy; i++) {
+        /*for (unsigned int i = 0; i < pixels_to_copy; i++) {
+            dst[i] = src[i];
+        }*/
+        // Copiar os pixels para cima (Deslocar a imagem) usando SSE (128-bits)
+        // Cada iteração SSE processa 4 píxeis (16 bytes)
+        unsigned int blocks = pixels_to_copy / 4;
+        unsigned int remainder = pixels_to_copy % 4;
+
+        if (blocks > 0) {
+            asm volatile (
+                "1:\n\t"
+                "movdqu (%0), %%xmm0\n\t"    // Lê 4 píxeis da VRAM para o registo XMM0
+                "movdqu %%xmm0, (%1)\n\t"    // Escreve os 4 píxeis de volta na nova posição da VRAM
+                "add $16, %0\n\t"            // Avança 16 bytes na origem
+                "add $16, %1\n\t"            // Avança 16 bytes no destino
+                "loop 1b\n\t"
+                : "+r"(src), "+r"(dst), "+c"(blocks)
+                :
+                : "xmm0", "memory"
+            );
+        }
+
+        // Copia o resto se o total de píxeis não for múltiplo de 4
+        for (unsigned int i = 0; i < remainder; i++) {
             dst[i] = src[i];
         }
+
+        // Garante a sincronização das operações de escrita na memória de vídeo
+        asm volatile("sfence" ::: "memory");
+        // end
 
         // 4. Limpar a última linha que ficou duplicada no fundo (Preencher com Background Color)
         unsigned int *last_line_start = g_display.frame_buffer_base + pixels_to_copy;

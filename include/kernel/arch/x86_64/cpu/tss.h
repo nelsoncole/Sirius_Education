@@ -24,7 +24,7 @@ typedef struct _tss {
 	unsigned long long ist[7]; // Interrupt Stack Table (IST 1 a 7)
 	unsigned int reserved3[2];
 	unsigned short reserved4;
-	unsigned short io_map_base_addr;
+	unsigned short iomap_base;
 	
 }__attribute__((packed)) tss_t;
 

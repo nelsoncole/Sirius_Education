@@ -9,7 +9,7 @@
  *   Created Date: 30/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 30/08/2026
+ *  Modified Date: 04/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -17,11 +17,26 @@
 
 #include <kernel/kernel/mm/heap.h>
 #include <kernel/kernel/mm/pmm.h>
-#include <kernel/arch/mm/paging.h>
-#include <kernel/arch/mm/vmm.h>
+#include <kernel/arch/x86_64/mm/paging.h>
+#include <kernel/arch/x86_64/mm/vmm.h>
 
 // Ponteiro global que indica a raiz (início) da lista encadeada do Heap
 static HEAP_HEADER* g_heap_start = (void*)0;
+
+// Variável de Lock: 0 = Livre, 1 = Ocupado
+static volatile int g_heap_lock = 0;
+
+// Primitiva de Spinlock usando Builtins atómicos do GCC
+static inline void heap_lock(void) {
+    while (__atomic_test_and_set(&g_heap_lock, __ATOMIC_ACQUIRE)) {
+        __builtin_ia32_pause(); // Instrução PAUSE indica ao CPU um loop de espera otimizado
+    }
+}
+
+static inline void heap_unlock(void) {
+    __atomic_clear(&g_heap_lock, __ATOMIC_RELEASE);
+}
+
 
 /*
  * INICIALIZAÇÃO DO HEAP DO KERNEL (KHEAP INIT)
@@ -37,6 +52,8 @@ void kheap_init(void) {
     g_heap_start->size = KERNEL_HEAP_INITIAL_SIZE - sizeof(HEAP_HEADER);
     g_heap_start->is_free = 1;
     g_heap_start->next = (void*)0;
+
+    heap_unlock();
 }
 
 /*
@@ -63,6 +80,8 @@ static unsigned long g_heap_current_end = KERNEL_HEAP_VIRTUAL_BASE + KERNEL_HEAP
  */
 void* kmalloc(unsigned long size) {
     if (size == 0) return (void*)0;
+
+    heap_lock();
 
     // Alinha o tamanho solicitado para 8 bytes para garantir performance de barramento
     size = (size + 7) & ~7UL;
@@ -111,7 +130,11 @@ void* kmalloc(unsigned long size) {
             unsigned long phys_page = pmm_alloc_page();
             
             // Se o PMM esgotar a RAM física do hardware, não há como expandir
-            if (phys_page == 0) return (void*)0; 
+            if (phys_page == 0)
+            {
+                heap_unlock();
+                return (void*)0;
+            } 
 
             vmm_map_page(pml4, g_heap_current_end + offset, phys_page, 0x2);
         }
@@ -166,6 +189,8 @@ void* kmalloc(unsigned long size) {
     // Marca o bloco escolhido como ocupado
     best_block->is_free = 0;
 
+    heap_unlock();
+
     // Retorna o ponteiro virtual útil pronto para uso
     return (void*)((unsigned long)best_block + sizeof(HEAP_HEADER));
 }
@@ -179,6 +204,8 @@ void* kmalloc(unsigned long size) {
  */
 void kfree(void* ptr) {
     if (ptr == (void*)0) return;
+
+    heap_lock();
 
     // Recupera o cabeçalho original recuando o tamanho dos metadados
     HEAP_HEADER* header = (HEAP_HEADER*)((unsigned long)ptr - sizeof(HEAP_HEADER));
@@ -200,4 +227,6 @@ void kfree(void* ptr) {
         }
         current = current->next;
     }
+
+    heap_unlock();
 }

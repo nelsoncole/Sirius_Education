@@ -23,10 +23,10 @@
  * ======================================================================== */
 #define PAGE_SIZE                   0x1000UL        // Tamanho padrão da página (4 KB)
 
+
 /* ========================================================================
  * MAPA DE ENDEREÇAMENTO VIRTUAL DO KERNEL
  * ======================================================================== */
-
 /*
  * BASE PRINCIPAL DO KERNEL
  * ------------------------------------------------------------------------
@@ -36,12 +36,31 @@
 #define KERNEL_VIRTUAL_BASE         0xFFFFFFFF80000000UL
 
 /*
+ * ENDEREÇO VIRTUAL DO TRAMPOLIM DO SMP
+ * ------------------------------------------------------------------------
+ * Posicionado exatamente 3 MB acima da base do Kernel.
+ * Espaço reservado e seguro dentro do primeiro gigabyte (-mcmodel=kernel)
+ * para projetar o buffer de inicialização dos 11 APs.
+ */
+#define KERNEL_TRAMPOLINE_VIRTUAL_BASE (KERNEL_VIRTUAL_BASE + 0x300000UL) // 0xFFFFFFFF80300000UL
+
+/*
  * JANELA TEMPORÁRIA DO VMM (SCRATCH WINDOW)
  * ------------------------------------------------------------------------
  * Mapeado no índice 511 da PML4, Índice 510 da PDPT, Índice 1 da PD e Índice 511 da PT.
  * Endereço virtual isolado para manipulação volátil de tabelas físicas.
  */
 #define VMM_SCRATCH_WINDOW          0xFFFFFFFF803FF000UL
+
+/*
+ * DISPOSITIVOS DE HARDWARE E MMIO GLOBAL (ACPI, LAPIC, IOAPIC, PCI)
+ * ------------------------------------------------------------------------
+ * Mapeado no índice 510 da PML4.
+ * Cria uma janela virtual massiva de 512 GB para mapear qualquer dispositivo 
+ * de hardware ou tabela de firmware sem risco de colisão.
+ */
+#define KERNEL_MMIO_VIRTUAL_BASE    0xFFFFFF0000000000UL
+#define KERNEL_MMIO_VIRTUAL_END     0xFFFFFF8000000000UL
 
 /*
  * BITMAP DE MEMÓRIA FÍSICA (PMM)
