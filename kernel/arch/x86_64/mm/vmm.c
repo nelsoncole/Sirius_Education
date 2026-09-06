@@ -18,6 +18,7 @@
 #include <kernel/arch/x86_64/mm/vmm.h>
 #include <kernel/kernel/mm/pmm.h>
 #include <kernel/kernel/core/panic.h>
+#include <kernel/klib.h>
 
 
 /*
@@ -100,7 +101,7 @@ void vmm_map_page(PML4_TABLE* pml4, unsigned long virt, unsigned long phys, unsi
     if (!pml4[pml4_idx].p) {
         unsigned long new_table_phys = pmm_alloc_page();
         
-        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map(new_table_phys);
+        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map_internal(new_table_phys);
         for (int i = 0; i < 512; i++) virt_ptr[i] = 0;
         
         pml4[pml4_idx].p = 1;
@@ -114,15 +115,15 @@ void vmm_map_page(PML4_TABLE* pml4, unsigned long virt, unsigned long phys, unsi
      * 2. GARANTE A EXISTÊNCIA DO DIRETÓRIO DE PÁGINAS (PD)
      * ------------------------------------------------------------------------
      */
-    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map(pdpt_phys);
+    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys);
     if (!pdpt[pdpt_idx].p) {
         unsigned long new_table_phys = pmm_alloc_page();
         
-        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map(new_table_phys);
+        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map_internal(new_table_phys);
         for (int i = 0; i < 512; i++) virt_ptr[i] = 0;
         
         // Reabre a PDPT para salvar o vínculo do novo frame físico
-        pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map(pdpt_phys);
+        pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys);
         pdpt[pdpt_idx].p = 1;
         pdpt[pdpt_idx].rw = flag_rw;
         pdpt[pdpt_idx].us = flag_us;
@@ -134,15 +135,15 @@ void vmm_map_page(PML4_TABLE* pml4, unsigned long virt, unsigned long phys, unsi
      * 3. GARANTE A EXISTÊNCIA DA TABELA DE PÁGINAS (PT)
      * ------------------------------------------------------------------------
      */
-    PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map(pd_phys);
+    PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys);
     if (!pd[pd_idx].p) {
         unsigned long new_table_phys = pmm_alloc_page();
         
-        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map(new_table_phys);
+        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map_internal(new_table_phys);
         for (int i = 0; i < 512; i++) virt_ptr[i] = 0;
         
         // Reabre a PD para salvar o vínculo do novo frame físico da PT
-        pd = (PAGE_DIRECTORY*)vmm_scratch_map(pd_phys);
+        pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys);
         pd[pd_idx].p = 1;
         pd[pd_idx].rw = flag_rw;
         pd[pd_idx].us = flag_us;
@@ -155,7 +156,7 @@ void vmm_map_page(PML4_TABLE* pml4, unsigned long virt, unsigned long phys, unsi
      * 4. CONFIGURAÇÃO FINAL DO DESCRITOR DE PÁGINA (PTE)
      * ------------------------------------------------------------------------
      */
-    PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map(pt_phys);
+    PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys);
     pt[pt_idx].p = 1;
     pt[pt_idx].rw = flag_rw;
     pt[pt_idx].us = flag_us;
@@ -184,17 +185,17 @@ void vmm_unmap_page(PML4_TABLE* pml4, unsigned long virt) {
     unsigned long pdpt_phys = (unsigned long)pml4[pml4_idx].phy_addr_pdpt << 12;
     
     // 2. Verifica se o PD existe
-    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map(pdpt_phys);
+    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys);
     if (!pdpt[pdpt_idx].p) return;
     unsigned long pd_phys = (unsigned long)pdpt[pdpt_idx].phy_addr_pd << 12;
 
     // 3. Verifica se a PT existe
-    PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map(pd_phys);
+    PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys);
     if (!pd[pd_idx].p) return;
     unsigned long pt_phys = (unsigned long)pd[pd_idx].phy_addr_pt << 12;
 
     // 4. Mapeia a PT final para inspecionar e modificar a entrada da página
-    PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map(pt_phys);
+    PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys);
     if (!pt[pt_idx].p) return;
 
     // Recupera o endereço físico do frame antes de anular a entrada
@@ -284,4 +285,61 @@ void* vmm_map_device(unsigned long phys_addr, unsigned long size)
      * o ponteiro devolverá o byte 512 da página virtual gerada.
      */
     return (void *)(start_virtual_address + page_offset);
+}
+
+/**
+ * Cria um novo espaço de endereçamento virtual (PML4).
+ * Aloca a página raíz, limpa o espaço do utilizador e clona a metade do Kernel.
+ * 
+ * @return O endereço físico do novo PML4 (pronto para ser guardado no proc->cr3).
+ */
+unsigned long vmm_create_address_space(void)
+{
+    /* 1. Aloca uma página física para o novo PML4 (4096 bytes) */
+    unsigned long new_pml4_phys = pmm_alloc_page(); 
+    if (!new_pml4_phys) 
+    {
+        kprintf("[VMM] Erro: Falha ao alocar pagina fisica para o novo PML4.\n");
+        return 0;
+    }
+
+    /* Captura o PML4 (CR3) ativo no Kernel atualmente */
+    unsigned long current_pml4_phys;
+    __asm__ __volatile__("mov %%cr3, %0" : "=r"(current_pml4_phys));
+    
+    /* 
+     * CORREÇÃO CRÍTICA: Buffer puro de 64 bits (8 bytes por entrada).
+     * Armazena os bits brutos das 256 entradas da metade superior do Kernel.
+     */
+    unsigned long long kernel_entries_buffer[256];
+
+    /* Mapeia o PML4 do Kernel na janela temporária para leitura */
+    unsigned long long* current_pml4_raw = (unsigned long long*)vmm_scratch_map_internal(current_pml4_phys);
+    
+    /* Salva com segurança a metade superior do Kernel no stack local */
+    for (int i = 256; i < 512; i++) 
+    {
+        kernel_entries_buffer[i - 256] = current_pml4_raw[i];
+    }
+
+    /* 
+     * 2. Mapeia a nova página PML4 alocada na Janela Temporária 
+     * substituindo o mapeamento antigo.
+     */
+    unsigned long long* new_pml4_raw = (unsigned long long*)vmm_scratch_map_internal(new_pml4_phys);
+
+    /* 3. Limpa a metade inferior (Índices 0 a 255 -> Espaço do Utilizador) */
+    for (int i = 0; i < 256; i++) 
+    {
+        new_pml4_raw[i] = 0ULL;
+    }
+
+    /* 4. Restaura a metade superior clonada do Kernel (Índices 256 a 511) */
+    for (int i = 256; i < 512; i++) 
+    {
+        new_pml4_raw[i] = kernel_entries_buffer[i - 256];
+    }
+
+    /* Retorna o endereço físico perfeitamente alinhado a 4KB */
+    return (new_pml4_phys & ~0xFFFUL);
 }

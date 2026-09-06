@@ -139,14 +139,22 @@ void cpu_initialize_local(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top
     cpu->gdt_entries[2] = create_gdt_entry(0, 0xFFFFF, 0x92, 0x00); // Kernel Data 64 (0x10)
     cpu->gdt_entries[3] = create_gdt_entry(0, 0xFFFFF, 0xFA, 0x02); // User Code 64   (0x18)
     cpu->gdt_entries[4] = create_gdt_entry(0, 0xFFFFF, 0xF2, 0x00); // User Data 64   (0x20)
+     // ============================================================================
+    // ENTRADAS EXCLUSIVAS PARA O SYSRETQ (Índices 5 e 6)
+    // ============================================================================
+    // Repara: O User Data VEM ANTES do User Code para satisfazer o hardware!
+    cpu->gdt_entries[5] = create_gdt_entry(0, 0xFFFFF, 0xF2, 0x00); // Sysret SS (0x28 -> 0x2B com RPL=3)
+    cpu->gdt_entries[6] = create_gdt_entry(0, 0xFFFFF, 0xFA, 0x02); // Sysret CS (0x30 -> 0x33 com RPL=3)
+
 
     // 2. Configuração da TSS Local do Core (Pilha Ring 0 ativa em Interrupções vindo de Ring 3)
     cpu->tss.rsp0 = stack_top; 
     cpu->tss.iomap_base = sizeof(tss_t); // Desativa e bloqueia acessos diretos ao mapa I/O por defeito
 
-    // 3. Instalação do descritor de TSS de 16 bytes na GDT (Ocupa os índices 5 e 6)
-    // Seletor correspondente: 5 * 8 = 0x28
-    write_gdt_tss_entry(cpu->gdt_entries, 5, (uint64_t)&cpu->tss, sizeof(tss_t) - 1, 0x89);
+    // 3. Instalação da TSS (Passa para os Índices 7 e 8)
+    // Seletor correspondente: 7 * 8 = 0x38. Totalmente isolado e seguro!
+    write_gdt_tss_entry(cpu->gdt_entries, 7, (uint64_t)&cpu->tss, sizeof(tss_t) - 1, 0x89);
+
 
     // 4. Configuração do Descritor GDTR e Carga da GDT
     cpu->gdtr.limit = (sizeof(uint64_t) * GDT_ENTRIES) - 1;
@@ -167,8 +175,8 @@ void cpu_initialize_local(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top
     );
 
     // 6. Carga do Task Register (Carrega a TSS associada a este Core)
-    // Passa o seletor 0x28 (Índice GDT 5, RPL 0)
-    __asm__ volatile("ltr %%ax" : : "a"(0x28) : "memory");
+    // Passa o seletor 0x28 (Índice GDT 7, RPL 0)
+    __asm__ volatile("ltr %%ax" : : "a"(0x38) : "memory");
 
     // 7. Configuração do MSR GS_BASE para habilitar os dados estruturados Per-CPU
     wrmsr(IA32_GS_BASE, (uint64_t)cpu);
@@ -182,4 +190,17 @@ void cpu_initialize_local(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top
 
     kprintf("CPU %d (LAPIC %d): GDT, TSS (0x28) e GS_BASE mapeados e operantes em Hardware. %p\n", 
             cpu_id, lapic_id, cpu);
+}
+
+/**
+ * Retorna o bloco de dados de um CPU específico através do seu ID.
+ */
+cpu_data_block_t* get_cpu_data_block(uint32_t cpu_id)
+{
+    if (cpu_id >= MAX_CPUS)
+    {
+        return NULL; /* ID inválido ou acima do limite máximo */
+    }
+    
+    return cpu_blocks[cpu_id];
 }

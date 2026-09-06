@@ -68,5 +68,21 @@ void vmm_scratch_setup(void);
  */
 void* vmm_scratch_map(unsigned long phys_addr);
 
+/*
+ * OPERAÇÃO VOLÁTIL EXCLUSIVA INTERNA (SCRATCH MAP INTERNAL)
+ * ------------------------------------------------------------------------
+ * Substitui o frame físico na janela secundária isolada (Índice 510).
+ * Protege a criação hierárquica de tabelas de sub-níveis contra corrupção.
+ */
+void* vmm_scratch_map_internal(unsigned long phys_addr);
+
+/**
+ * Cria um novo espaço de endereçamento virtual (PML4).
+ * Aloca a página raíz, limpa o espaço do utilizador e clona a metade do Kernel.
+ * 
+ * @return O endereço físico do novo PML4 (pronto para ser guardado no proc->cr3).
+ */
+unsigned long vmm_create_address_space(void);
+
 #endif /* _VMM_H_ */
 

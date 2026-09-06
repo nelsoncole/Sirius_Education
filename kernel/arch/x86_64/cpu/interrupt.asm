@@ -10,7 +10,7 @@
 ;   Created Date: 31/08/2026
 ; 
 ;    Modified By: Nelson Cole
-;  Modified Date: 31/08/2026
+;  Modified Date: 05/09/2026
 ; 
 ;        License: MIT
 ; ============================================================================
@@ -21,11 +21,13 @@ section .text
 extern interrupt_handler_c
 global interrupt_common_stub
 
+; Exporta o rótulo de saída para permitir comutação voluntária no SYS_EXIT
+global interrupt_exit_stub
+
 ; ============================================================================
 ; MACROS PARA GERAR OS HANDLERS INDIVIDUAIS DE EXCEÇÃO
 ; ============================================================================
 
-; Macro para exceções que NÃO enviam código de erro (Injeta 0 falso para alinhar a pilha)
 %macro ISR_NO_ERR_CODE 1
 global isr%1
 isr%1:
@@ -34,7 +36,6 @@ isr%1:
     jmp interrupt_common_stub
 %endmacro
 
-; Macro para exceções que AUTOMATICAMENTE injetam código de erro no stack pela CPU
 %macro ISR_ERR_CODE 1
 global isr%1
 isr%1:
@@ -53,13 +54,13 @@ ISR_NO_ERR_CODE 4  ; #OF: Overflow
 ISR_NO_ERR_CODE 5  ; #BR: Bound Range Exceeded
 ISR_NO_ERR_CODE 6  ; #UD: Invalid Opcode
 ISR_NO_ERR_CODE 7  ; #NM: Device Not Available
-ISR_ERR_CODE    8  ; #DF: Double Fault (Usa a sua IST1 alocada no TSS!)
+ISR_ERR_CODE    8  ; #DF: Double Fault
 ISR_NO_ERR_CODE 9  ; Coprocessor Segment Overrun
 ISR_ERR_CODE    10 ; #TS: Invalid TSS
 ISR_ERR_CODE    11 ; #NP: Segment Not Present
 ISR_ERR_CODE    12 ; #SS: Stack-Segment Fault
-ISR_ERR_CODE    13 ; #GP: General Protection Fault (A mais clássica de Ring 3)
-ISR_ERR_CODE    14 ; #PF: Page Fault (Passa o endereço corrompido no CR2)
+ISR_ERR_CODE    13 ; #GP: General Protection Fault
+ISR_ERR_CODE    14 ; #PF: Page Fault
 ISR_NO_ERR_CODE 15 ; Reserved
 ISR_NO_ERR_CODE 16 ; #MF: x87 Floating-Point Exception
 ISR_ERR_CODE    17 ; #AC: Alignment Check
@@ -89,23 +90,14 @@ ISR_NO_ERR_CODE 255 ; isr255: Handler de Interrupções Espúrias do LAPIC
 ; STUB CENTRAL DE PRESERVAÇÃO E CHAVEAMENTO DE CONTEXTO
 ; ============================================================================
 interrupt_common_stub:
-    ; Neste ponto, a pilha contém:
-    ; [rsp + 0]  -> Número do Vetor (Injetado pela Macro)
-    ; [rsp + 8]  -> Código de Erro (Injetado pela CPU ou Macro)
-    ; [rsp + 16] -> RIP salvo pelo hardware
-    ; [rsp + 24] -> CS salvo pelo hardware  <-- O SEU ALVO PARA VERIFICAR O RING!
-    ; [rsp + 32] -> RFLAGS salvo pelo hardware
-    ; [rsp + 40] -> RSP original (Se veio do Ring 3)
-    ; [rsp + 48] -> SS original (Se veio do Ring 3)
-
     ; 1. VERIFICAÇÃO SE VEIO DO USER MODE (RING 3)
-    test qword [rsp + 24], 3  ; Verifica se os bits de privilégio inferiores (CPL) são 3
-    jz .skip_swapgs           ; Se for 0 (Kernel), pula o swapgs
+    test qword [rsp + 24], 3  ; Verifica os bits CS empilhados pelo hardware
+    jz .skip_swapgs           ; Se for 0 (Kernel), salta o swapgs
 
-    swapgs                    ; Ativa a GS_BASE do Kernel (CpuDataBlock) para o Core atual
+    swapgs                    ; Ativa a GS_BASE do Kernel (CpuDataBlock)
 .skip_swapgs:
 
-    ; 2. SALVA O CONTEXTO INTEIRO DE RESTRITORES GERAIS (ABI System V)
+    ; 2. SALVA O CONTEXTO DE REGISTRADORES GERAIS
     push rbp
     push rdi
     push rsi
@@ -124,16 +116,21 @@ interrupt_common_stub:
 
     ; 3. CORREÇÃO DE ALINHAMENTO DA PILHA PARA A ABI DO GCC
     mov rbp, rsp
-    and rsp, ~0xF           ; Alinha rsp na fronteira de 16 bytes
+    and rsp, ~0xF             ; Garante alinhamento estrito de 16 bytes para funções C
 
-    ; 4. PASSA O CONTEXTO COMO ARGUMENTO E CHAMA O C HANDLER
-    mov rdi, rbp              ; RDI = Ponteiro para a estrutura de registradores salvos (registers_t *)
-    call interrupt_handler_c
+    ; 4. PASSA O CONTEXTO COMO ARGUMENTO E CHAMA O GESTOR EM C
+    mov rdi, rbp              ; RDI = Ponteiro registers_t*
+    call interrupt_handler_c  ; O C processa e retorna o novo RSP em RAX
 
-    ; 5. DESFAZ O ALINHAMENTO DA PILHA
-    mov rsp, rbp
+    ; 5. CHAVEAMENTO FÍSICO SEGURO DE CONTEXTO
+    mov rsp, rax              ; Substitui a pilha atual pela pilha escolhida pelo scheduler
 
-    ; 6. RESTAURA O CONTEXTO INTEIRO DOS REGISTRADORES
+; ============================================================================
+; PONTO DE RESTAURAÇÃO EXCLUSIVO PARA DESVIO DE VOLUNTÁRIOS
+; ============================================================================
+interrupt_exit_stub:
+
+    ; 6. RESTAURA O CONTEXTO DA NOVA TAREFA
     pop r15
     pop r14
     pop r13
@@ -142,7 +139,7 @@ interrupt_common_stub:
     pop r10
     pop r9
     pop r8
-    pop rbx                   ; CORRIGIDO: Era pop r11, o que corrompia o rbx e duplicava o r11!
+    pop rbx                   
     pop rax
     pop rcx
     pop rdx
@@ -150,13 +147,13 @@ interrupt_common_stub:
     pop rdi
     pop rbp
 
-    ; Remove o Número do Vetor e o Código de Erro que as Macros inseriram (+16 bytes)
+    ; Remove o Número do Vetor e o Código de Erro (+16 bytes)
     add rsp, 16
 
-    ; 7. DEVOLVE O GS DO UTILIZADOR SE ELE VEIO DE RING 3
-    test qword [rsp + 8], 3   ; Agora que removemos os registradores, o CS está em [rsp + 8]
+    ; 7. DEVOLVE O GS DO UTILIZADOR SE A NOVA THREAD FOR DE RING 3
+    test qword [rsp + 8], 3   
     jz .skip_swapgs_exit
-    swapgs                    ; Restaura a GS_BASE do User Mode para o Ring 3
+    swapgs                    ; Restaura a GS_BASE do utilizador para o Ring 3
 .skip_swapgs_exit:
 
-    iretq                     ; Retorno atómico de Interrupção de 64 bits
+    iretq                     ; Retorno atómico

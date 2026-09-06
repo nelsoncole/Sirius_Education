@@ -6,13 +6,13 @@ CC := gcc
 AS := nasm
 LD := ld
 
-KERNEL_DIR  := src/kernel
-ARCH_DIR    := src/arch
-LIB_DIR     := src/lib
-DRIVERS_DIR := src/drivers
+KERNEL_DIR  := kernel/kernel
+ARCH_DIR    := kernel/arch
+LIB_DIR     := kernel/lib
+DRIVERS_DIR := kernel/drivers
 BUILD_DIR   := build
 LINKER      := scripts/linker/x86_64.ld
-APLINKER     := scripts/linker/x86_64_ap.ld
+APLINKER    := scripts/linker/x86_64_ap.ld
 
 TARGET := $(BUILD_DIR)/kernel.elf
 
@@ -23,7 +23,8 @@ TARGET := $(BUILD_DIR)/kernel.elf
 
 ASM_OBJ := \
 	$(BUILD_DIR)/entry.o \
-	$(BUILD_DIR)/interrupt.o
+	$(BUILD_DIR)/interrupt.o \
+	$(BUILD_DIR)/syscall_stub.o
 
 
 # ============================================================
@@ -52,7 +53,11 @@ C_OBJ := \
 	$(BUILD_DIR)/acpi.o \
 	$(BUILD_DIR)/lapic.o \
 	$(BUILD_DIR)/ioapic.o \
-	$(BUILD_DIR)/smp.o
+	$(BUILD_DIR)/smp.o \
+	$(BUILD_DIR)/scheduler.o \
+	$(BUILD_DIR)/thread.o \
+	$(BUILD_DIR)/process.o \
+	$(BUILD_DIR)/syscall.o
 
 
 # ============================================================
@@ -63,15 +68,16 @@ CFLAGS := -m64 \
           -ffreestanding \
           -fno-pie \
           -fno-stack-protector \
+          -fno-omit-frame-pointer \
           -mno-red-zone \
           -mcmodel=kernel \
-		  -nostdlib \
-		  -nostdinc \
+          -nostdlib \
+          -nostdinc \
           -Wall \
           -Wextra \
           -I./include
 
-ASFLAGS := -f elf64 -O0
+ASFLAGS := -f elf64
 
 LDFLAGS := -m elf_x86_64 \
            -Map kernel.map -T $(LINKER)
@@ -112,19 +118,19 @@ $(BUILD_DIR)/entry.o: $(ARCH_DIR)/x86_64/boot/entry.asm | $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
 
 # ============================================================
-# Assemble trampoline_ap.asm
-# ============================================================
-
-$(BUILD_DIR)/trampoline_ap.o: $(ARCH_DIR)/x86_64/boot/trampoline_ap.asm | $(BUILD_DIR)
-	$(AS) $(ASFLAGS) $< -o $@
-
-
-# ============================================================
 # Assemble interrupt.asm
 # ============================================================
 
 $(BUILD_DIR)/interrupt.o: $(ARCH_DIR)/x86_64/cpu/interrupt.asm | $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
+
+# ============================================================
+# Assemble syscall_stub.asm
+# ============================================================
+
+$(BUILD_DIR)/syscall_stub.o: $(ARCH_DIR)/x86_64/cpu/syscall_stub.asm | $(BUILD_DIR)
+	$(AS) $(ASFLAGS) $< -o $@
+
 
 
 # ============================================================
@@ -294,6 +300,34 @@ $(BUILD_DIR)/ioapic.o: $(ARCH_DIR)/x86_64/cpu/ioapic.c | $(BUILD_DIR)
 # ============================================================
 
 $(BUILD_DIR)/smp.o: $(ARCH_DIR)/x86_64/cpu/smp.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile scheduler.c
+# ============================================================
+
+$(BUILD_DIR)/scheduler.o: $(KERNEL_DIR)/sched/scheduler.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile thread.c
+# ============================================================
+
+$(BUILD_DIR)/thread.o: $(KERNEL_DIR)/sched/thread.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile process.c
+# ============================================================
+
+$(BUILD_DIR)/process.o: $(KERNEL_DIR)/sched/process.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile syscall.c
+# ============================================================
+
+$(BUILD_DIR)/syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================

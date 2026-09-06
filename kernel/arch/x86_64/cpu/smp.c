@@ -25,9 +25,9 @@
 #include <kernel/kernel/mm/pmm.h>
 #include <kernel/drivers/bus/acpi.h>
 #include <kernel/kernel/core/panic.h>
-#include <kernel/lib/stdio.h>
-#include <kernel/lib/string.h>
-#include <kernel/lib/stdint.h>
+#include <kernel/klib.h>
+#include <kernel/kernel/sched/scheduler.h>
+#include <kernel/kernel/syscall/syscall.h>
 
 // Endereço físico padrão de 16 bits exigido pela arquitetura para o Boot dos APs
 #define TRAMPOLINE_PHYS_ADDRESS 0x8000UL
@@ -45,6 +45,10 @@ extern idtr_t g_idtr;
  * ============================================================================
  */
 static volatile int g_smp_ap_gate = 0;
+
+/* Contador atómico de núcleos online (O BSP começa em 1) */
+static volatile uint32_t g_smp_cpus_online = 1;
+
 
 /*
  * Ponto de Entrada mestre de 64-bits para onde todos os APs saltam após o trampolim.
@@ -67,10 +71,20 @@ void segment_ap_main(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top)
     // 4. Ativa o relógio local a 100 Hz copiando o coeficiente estável do BSP
     lapic_timer_init(100);
 
-    // 5. Liga o barramento local de interrupções com segurança
+    // 5. Inicializa o Scheduler para o AP (Core 1+)
+	scheduler_init();
+
+    /* 6. Programa os MSRs locais deste núcleo para suportar Syscalls */
+    syscall_init();
+
+    // 6. Liga o barramento local de interrupções com segurança
     __asm__ __volatile__("sti");
 
     kprintf("[SMP] Nucleo %u (LAPIC ID: %u) online e operando em Long Mode!\n", cpu_id, lapic_id);
+
+    // Incrementa de forma atómica o número de CPUs prontos no sistema
+    __atomic_add_fetch(&g_smp_cpus_online, 1, __ATOMIC_SEQ_CST);
+
 
     // Força a escrita na cache e RAM antes de libertar o BSP
     __asm__ volatile("mfence" ::: "memory");
@@ -265,6 +279,7 @@ void smp_init(BOOT_INFO *boot_info)
      * ============================================================================
      */
     __atomic_clear(&g_smp_ap_gate, __ATOMIC_RELEASE);
+    g_smp_cpus_online = 1;
 
     // Requisita a tabela MADT ao barramento ACPI usando o macro de assinatura
     acpi_madt_t *madt = (acpi_madt_t *)acpi_find_table(ACPI_SIG_MADT);
@@ -324,5 +339,16 @@ void smp_init(BOOT_INFO *boot_info)
         entry_ptr += header->length;
     }
 
-    kprintf("[SMP] Topologia mapeada. Sistema configurado para gerenciar %u cores.\n", active_cores_count);
+    /* 
+     * BARREIRA DE INICIALIZAÇÃO SMP GLOBAL
+     * O BSP aguarda ativamente até que TODOS os APs acordados tenham 
+     * incrementado o contador 'g_smp_cpus_online'.
+     */
+    kprintf("[SMP] BSP aguardando a sincronizacao de todos os nucleos...\n");
+    while (g_smp_cpus_online < active_cores_count)
+    {
+        __asm__ __volatile__("pause" ::: "memory");
+    }
+
+    kprintf("[SMP] Todos os %u nucleos sincronizados e prontos para o agendador!\n", g_smp_cpus_online);
 }

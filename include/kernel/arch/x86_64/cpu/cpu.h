@@ -19,20 +19,26 @@
 #define _CPU_H_
 
 #include <kernel/lib/stdint.h>
+#include <kernel/kernel/sched/thread.h>
 
 #include "gdt.h"
 #include "tss.h"
 #include "idt.h"
 
 #define MAX_CPUS    256
-// 5 entradas normais (Null, KCode, KData, UCode, UData) + 1 TSS (ocupa 2 slots de 8 bytes) = 7
-#define GDT_ENTRIES 7 
+// 5 entradas normais (Null, KCode, KData, SysretData, SysretCode, UCode, UData) + 1 TSS (ocupa 2 slots de 8 bytes) = 9
+#define GDT_ENTRIES 10
 /*
  * ============================================================================
  * PER-CPU DATA BLOCK (Alinhamento de 16 bytes forçado para estabilidade física)
  * ============================================================================
  */
-typedef struct __attribute__((aligned(16))) {
+typedef struct cpu_data_block {
+    // Topo da pilha do Kernel para este processador
+    uint64_t kernel_stack_top;
+    // Reservado para guardar a pilha do usuario do durante o syscal/sysret
+    uint64_t user_stack;
+
     // Array interno da GDT local por Core (Alinhado a 16 bytes)
     uint64_t gdt_entries[GDT_ENTRIES] __attribute__((aligned(16)));
     
@@ -46,12 +52,21 @@ typedef struct __attribute__((aligned(16))) {
     uint32_t lapic_id;
     uint32_t cpu_id;
     
-    // Topo da pilha do Kernel para este processador
-    uint64_t kernel_stack_top;
-    
     // Auto-ponteiro: Permite ler a base da estrutura via instrução asm (mov %gs:offset, %reg)
-    void *self; 
-} cpu_data_block_t;
+    void *self;
+    
+     /*
+     * ----------------------------------------------------------------------------
+     * Subsistema de Agendamento (Scheduler) por Núcleo (Per-CPU)
+     * ----------------------------------------------------------------------------
+     */
+    thread_t* current_thread;   /* Ponteiro para a thread atualmente em execução ativa neste CPU. */
+    thread_t* ready_queue_head; /* Ponteiro para o início da fila (Head) de threads prontas para este CPU. */
+    thread_t* ready_queue_tail; /* Ponteiro para o fim da fila (Tail) de threads prontas para este CPU. */
+    
+    thread_t idle_thread;       /* Thread de emergência/ociosa, executada quando não há tarefas na fila. */
+
+} __attribute__((aligned(16))) cpu_data_block_t;
 
 /*
  * ============================================================================
@@ -105,8 +120,14 @@ static inline uint32_t get_current_cpu_id(void) {
 }
 
 /**
- * @brief Thread Idle do Kernel. 
- *        Executada por cada CPU quando não existem tarefas prontas na fila.
+ * Retorna o bloco de dados de um CPU específico através do seu ID.
+ */
+cpu_data_block_t* get_cpu_data_block(uint32_t cpu_id);
+
+
+/**
+ * Thread Idle do Kernel. 
+ * Executada por cada CPU quando não existem tarefas prontas na fila.
  */
 void cpu_idle(void);
 

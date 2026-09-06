@@ -25,7 +25,7 @@ Sirius_Education/
 |   |   └── sirius/
 │   └── kernel/              # Cabeçalhos globais do Kernel
 │
-├── src/                     # Código-fonte do Kernel e subsistemas estruturais
+├── kernel/                     # Código-fonte do Kernel e subsistemas estruturais
 │   ├── boot/                # Configurações de boot, ficheiros EFI e instalações
 |   |
 │   ├── kernel/              # Core independente de arquitetura

@@ -2,14 +2,16 @@
  * ============================================================================
  *        Project: Sirius_Education
  *       Filename: vmm_scratch_window.c
- *    Description: Implementação da janela de mapeamento temporário (Scratch 
- *                 Window) de 4 KB para manipulação de páginas físicas no VMM.
+ *    Description: Implementação das janelas de mapeamento temporário (Scratch 
+ *                 Windows) de 4 KB para manipulação de páginas físicas no VMM.
+ *                 Garante suporte a slots exclusivos para evitar colisões
+ *                 durante a criação hierárquica de processos (vmm_map_page).
  * 
  *         Author: Nelson Cole
  *   Created Date: 30/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 30/08/2026
+ *  Modified Date: 05/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -21,12 +23,13 @@
 
 /*
  * ============================================================================
- * CONFIGURAÇÃO INICIAL DA JANELA TEMPORÁRIA (VMM SCRATCH WINDOW)
+ * CONFIGURAÇÃO INICIAL DA JANELA TEMPORÁRIA (VMM SCRATCH WINDOW SETUP)
  * ============================================================================
  * 
- * Prepara a infraestrutura de tabelas necessária para suportar a janela.
- * Garante que a PT que gerencia o endereço 0xFFFFFFFF803FF000UL esteja alocada
- * e vinculada estritamente ao Índice 511 da PML4, Índice 510 da PDPT e Índice 1 da PD.
+ * Prepara a infraestrutura de tabelas necessária para suportar as janelas.
+ * Garante que a PT que gerencia os endereços 0xFFFFFFFF803FF000UL e 
+ * 0xFFFFFFFF803FE000UL esteja alocada e vinculada estritamente ao 
+ * Índice 511 da PML4, Índice 510 da PDPT e Índice 1 da PD.
  */
 void vmm_scratch_setup(void) {
     PML4_TABLE* pml4                   = (PML4_TABLE*)PML4_ADDRESS;
@@ -34,7 +37,7 @@ void vmm_scratch_setup(void) {
     PAGE_DIRECTORY* pd_kernel          = (PAGE_DIRECTORY*)PD_KERNEL_ADDRESS;
     PAGE_TABLE* pt                     = (PAGE_TABLE*)PT_ADDRESS;
 
-    // Índices exatos extraídos de 0xFFFFFFFF803FF000UL
+    // Ambas as janelas partilham os mesmos caminhos superiores de diretório
     unsigned long pml4_idx = GET_PML4_INDEX(VMM_SCRATCH_WINDOW); // Índice 511
     unsigned long pdpt_idx = GET_PDPT_INDEX(VMM_SCRATCH_WINDOW); // Índice 510
     unsigned long pd_idx   = GET_PD_INDEX(VMM_SCRATCH_WINDOW);   // Índice 1
@@ -90,9 +93,9 @@ void vmm_scratch_setup(void) {
 }
 
 /*
- * OPERAÇÃO VOLÁTIL DE TROCA DE FRAME (SCRATCH MAP)
+ * OPERAÇÃO VOLÁTIL DE TROCA DE FRAME (SCRATCH MAP PADRÃO)
  * ------------------------------------------------------------------------
- * Substitui instantaneamente o frame físico mapeado na janela de 4 KB.
+ * Substitui instantaneamente o frame físico mapeado na janela primária de 4 KB.
  * Invalida a cache TLB para atualizar o acesso virtual imediatamente.
  */
 void* vmm_scratch_map(unsigned long phys_addr) {
@@ -122,4 +125,39 @@ void* vmm_scratch_map(unsigned long phys_addr) {
 
     // Retorna o ponteiro virtual fixo pronto para escrita/leitura
     return (void*)VMM_SCRATCH_WINDOW;
+}
+
+/*
+ * OPERAÇÃO VOLÁTIL EXCLUSIVA INTERNA (SCRATCH MAP INTERNAL)
+ * ------------------------------------------------------------------------
+ * Substitui o frame físico na janela secundária isolada (Índice 510).
+ * Protege a criação hierárquica de tabelas de sub-níveis contra corrupção.
+ */
+void* vmm_scratch_map_internal(unsigned long phys_addr) {
+    PAGE_DIRECTORY* pd_kernel = (PAGE_DIRECTORY*)PD_KERNEL_ADDRESS;
+    PAGE_TABLE* pt            = (PAGE_TABLE*)PT_ADDRESS;
+
+    unsigned long pd_idx = GET_PD_INDEX(VMM_SCRATCH_WINDOW_INTERNAL); // Índice 1
+    unsigned long pt_idx = GET_PT_INDEX(VMM_SCRATCH_WINDOW_INTERNAL); // Índice 510
+
+    unsigned long PT_PHYSICAL = g_boot_info->KernelAddress + PT_PHYSICAL_OFFSET;
+
+    // 1. Recupera o número absoluto da PT vinculada ao índice 1 do Diretório do Kernel
+    unsigned long current_pt_physical = (unsigned long)pd_kernel[pd_idx].phy_addr_pt << 12;
+    unsigned long pt_number = (current_pt_physical - PT_PHYSICAL) / PAGE_SIZE;
+
+    // 2. Calcula a entrada exata da PTE (PT Número * 512 + Entrada 510)
+    unsigned long pt_entry = (pt_number * 512) + pt_idx;
+
+    // 3. Injeta o novo endereço físico na PTE secundária
+    pt[pt_entry].p = 1;
+    pt[pt_entry].rw = 1;
+    pt[pt_entry].us = 0;
+    pt[pt_entry].frames = phys_addr >> 12;
+
+    // 4. Limpa a TLB local para a janela secundária protegida
+    __asm__ volatile("invlpg (%0)" :: "r"(VMM_SCRATCH_WINDOW_INTERNAL) : "memory");
+
+    // Retorna o ponteiro virtual fixo secundário
+    return (void*)VMM_SCRATCH_WINDOW_INTERNAL;
 }
