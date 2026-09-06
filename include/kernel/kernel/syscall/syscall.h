@@ -86,6 +86,6 @@ uint64_t sys_brk(void* addr);
  * 
  * @param code Código de status de finalização reportado pela aplicação.
  */
-uint64_t sys_exit(int code);
+extern uint64_t sys_exit(int code);
 
 #endif

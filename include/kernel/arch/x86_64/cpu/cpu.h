@@ -63,7 +63,8 @@ typedef struct cpu_data_block {
     thread_t* current_thread;   /* Ponteiro para a thread atualmente em execução ativa neste CPU. */
     thread_t* ready_queue_head; /* Ponteiro para o início da fila (Head) de threads prontas para este CPU. */
     thread_t* ready_queue_tail; /* Ponteiro para o fim da fila (Tail) de threads prontas para este CPU. */
-    
+    thread_t* dead_queue_head;  /* Ponteiro para o início da fila (Tail) de threads mortas para este CPU. */
+    thread_t* dead_queue_tail;  /* Ponteiro para o fim da fila (Tail) de threads mortas para este CPU. */
     thread_t idle_thread;       /* Thread de emergência/ociosa, executada quando não há tarefas na fila. */
 
 } __attribute__((aligned(16))) cpu_data_block_t;

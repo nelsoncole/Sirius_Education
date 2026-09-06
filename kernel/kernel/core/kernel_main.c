@@ -77,7 +77,7 @@ unsigned char user_program_binary[] = {
     /*
      * mov rax, 1
      *
-     * RAX = SYS_WRITE
+     * RAX = SYS_WRITE (1)
      */
     0x48, 0xC7, 0xC0,
     0x01, 0x00, 0x00, 0x00,
@@ -99,14 +99,35 @@ unsigned char user_program_binary[] = {
     0x0D, 0x00, 0x00, 0x00,
 
     /*
-     * syscall
+     * syscall (Executa o SYS_WRITE)
      */
     0x0F, 0x05,
 
     /*
-     * jmp $
+     * ============================================================
+     * ADICIONADO: SEÇÃO DE SAÍDA CONTROLADA (SYS_EXIT)
+     * ============================================================
      */
-    0xEB, 0xFE
+
+    /*
+     * mov rax, 3
+     *
+     * RAX = SYS_EXIT (Número da sua syscall de saída)
+     */
+    0x48, 0xC7, 0xC0,
+    0x03, 0x00, 0x00, 0x00,
+
+    /*
+     * xor rdi, rdi (ou mov rdi, 0)
+     *
+     * RDI = 0 (Status code de saída com sucesso)
+     */
+    0x48, 0x31, 0xFF,
+
+    /*
+     * syscall (Executa o SYS_EXIT e destrói esta tarefa voluntariamente)
+     */
+    0x0F, 0x05
 };
 
 /*
@@ -264,20 +285,21 @@ void kernel_main(BOOT_INFO *boot_info)
      * injetar o array 'user_program_binary' na base 0x400000UL e cria a thread de Ring 3.
      */
 	unsigned long user_program_size = sizeof(user_program_binary);
-    process_t* app = process_create(user_program_binary, user_program_size, 0);
+    process_t *app = process_create(user_program_binary, user_program_size, 0);
 
     if (!app)
     {
         kprintf("[Kernel] Erro critico: Falha ao carregar o aplicativo de teste.\n");
-        while(1);
+        while (1)
+            ;
     }
 
     kprintf("[Kernel] Ativando multitasking. Transitando para Ring 3...\n");
 
-	// 11.1. Liga o barramento local de interrupções com segurança
+    // 11.1. Liga o barramento local de interrupções com segurança
     __asm__ __volatile__("sti");
 
-	/*
+    /*
 	 * 13. IPC
 	 * 14. Drivers
 	 * 15. VFS

@@ -47,7 +47,9 @@ typedef struct thread {
     thread_state_t state;       // Estado atual de execução
     uint32_t cpu_id;            // ID do CPU associado (ou fixado por afinidade)
 
-    struct process* owner; /* Processo ao qual esta thread pertence */
+    int     exit_code;          //  Guarda o codigo de retorno
+
+    struct process* owner;      // Processo ao qual esta thread pertence
     
     struct thread* next;        // Ponteiro para a próxima thread na fila (Runqueue)
 } thread_t;
