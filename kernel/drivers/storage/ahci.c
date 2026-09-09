@@ -7,13 +7,13 @@
  *                 Scatter-Gather (PRDT) e otimizações de DMA nativas de 64 bits.
  *                 Mapeia permanentemente as estruturas de portas via vmm_map_device
  *                 para mitigar a troca excessiva de contextos de paginação (TLB flushes).
- * 
+ *
  *         Author: Nelson Cole
  *   Created Date: 08/09/2026
- * 
+ *
  *    Modified By: Nelson Cole
  *  Modified Date: 09/09/2026
- * 
+ *
  *        License: MIT
  * ============================================================================
  */
@@ -27,30 +27,31 @@
 #include <kernel/arch/x86_64/kapi/msi.h>
 
 /* Estados e Limites Críticos */
-#define AHCI_MAX_DEVICES         32
-#define AHCI_PRDT_PER_CMD        8    
-#define ATA_CMD_READ_DMA_EXT     0x25
-#define ATA_CMD_WRITE_DMA_EXT    0x35
-#define ATA_CMD_IDENTIFY         0xEC
+#define AHCI_MAX_DEVICES 32
+#define AHCI_PRDT_PER_CMD 8
+#define ATA_CMD_READ_DMA_EXT 0x25
+#define ATA_CMD_WRITE_DMA_EXT 0x35
+#define ATA_CMD_IDENTIFY 0xEC
 
-#define ATA_SR_BSY               0x80
-#define ATA_SR_DRQ               0x08
+#define ATA_SR_BSY 0x80
+#define ATA_SR_DRQ 0x08
 
 /* Estrutura interna de alto rendimento para controlo de DMA por dispositivo */
-typedef struct {
+typedef struct
+{
     int port_id;
     int present;
     uint64_t total_sectors;
     hba_port_t *regs;
-    
+
     /* Endereços físicos e virtuais permanentes das estruturas de paginação de hardware */
     uintptr_t clb_phys;
-    void     *clb_virt;
+    void *clb_virt;
     uintptr_t fb_phys;
-    void     *fb_virt;
-    
+    void *fb_virt;
+
     uintptr_t ctba_phys[32]; /* CORREÇÃO: Array indexado recuperado do código original */
-    void     *ctba_virt[32]; 
+    void *ctba_virt[32];
 
     /* Semáforo/Flag de controlo volátil para sincronização multi-slot */
     volatile uint8_t slot_busy[32];
@@ -71,12 +72,14 @@ static void ahci_port_stop(hba_port_t *port)
 {
     port->cmd &= ~AHCI_PxCMD_ST;
     port->cmd &= ~AHCI_PxCMD_FRE;
-    while (port->cmd & (AHCI_PxCMD_CR | AHCI_PxCMD_FR));
+    while (port->cmd & (AHCI_PxCMD_CR | AHCI_PxCMD_FR))
+        ;
 }
 
 static void ahci_port_start(hba_port_t *port)
 {
-    while (port->cmd & AHCI_PxCMD_CR);
+    while (port->cmd & AHCI_PxCMD_CR)
+        ;
     port->cmd |= AHCI_PxCMD_FRE;
     port->cmd |= AHCI_PxCMD_ST;
 }
@@ -86,7 +89,8 @@ static int ahci_find_free_slot(hba_port_t *port)
     uint32_t slots = (port->ci | port->sact);
     for (int i = 0; i < 32; i++)
     {
-        if ((slots & (1 << i)) == 0) return i;
+        if ((slots & (1 << i)) == 0)
+            return i;
     }
     return -1;
 }
@@ -94,20 +98,19 @@ static int ahci_find_free_slot(hba_port_t *port)
 /**
  * A ROTINA DE SERVIÇO DE INTERRUPÇÃO (ISR) DO AHCI
  */
-__attribute__((force_align_arg_pointer))
-void ahci_interrupt_handler(void)
+__attribute__((force_align_arg_pointer)) void ahci_interrupt_handler(void)
 {
-    for (int d = 0; d < g_storage_device_count; d++) 
+    for (int d = 0; d < g_storage_device_count; d++)
     {
         ahci_device_t *dev = &g_storage_devices[d];
         hba_port_t *port = dev->regs;
         hba_mem_t *hba_base = dev->hba_base_virt;
 
-        if (port->is != 0) 
+        if (port->is != 0)
         {
-            for (int slot = 0; slot < 32; slot++) 
+            for (int slot = 0; slot < 32; slot++)
             {
-                if ((port->ci & (1 << slot)) == 0 && dev->slot_busy[slot] == 1) 
+                if ((port->ci & (1 << slot)) == 0 && dev->slot_busy[slot] == 1)
                 {
                     dev->slot_busy[slot] = 0;
                 }
@@ -115,10 +118,10 @@ void ahci_interrupt_handler(void)
 
             /* Limpa o sinal físico de interrupção na porta específica */
             uint32_t port_is = port->is;
-            port->is = port_is; 
+            port->is = port_is;
 
             /* CORREÇÃO: Limpa o sinal no registo mestre global para não prender o barramento PCI */
-            if (hba_base) 
+            if (hba_base)
             {
                 hba_base->is = (1 << dev->port_id);
             }
@@ -129,45 +132,53 @@ void ahci_interrupt_handler(void)
 /**
  * Configuração de DMA por Porta SATA
  */
-static int ahci_setup_port_dma(ahci_device_t *dev) {
+static int ahci_setup_port_dma(ahci_device_t *dev)
+{
     hba_port_t *port = dev->regs;
 
     ahci_port_stop(port);
 
     uintptr_t clb_page = pmm_alloc_page();
-    if (!clb_page) return -1;
+    if (!clb_page)
+        return -1;
     dev->clb_phys = clb_page;
     dev->clb_virt = vmm_map_device((unsigned long)dev->clb_phys, PAGE_SIZE);
-    if (!dev->clb_virt) return -1;
+    if (!dev->clb_virt)
+        return -1;
     memset(dev->clb_virt, 0, PAGE_SIZE);
 
     uintptr_t fb_page = pmm_alloc_page();
-    if (!fb_page) return -1;
+    if (!fb_page)
+        return -1;
     dev->fb_phys = fb_page;
     dev->fb_virt = vmm_map_device((unsigned long)dev->fb_phys, PAGE_SIZE);
-    if (!dev->fb_virt) return -1;
+    if (!dev->fb_virt)
+        return -1;
     memset(dev->fb_virt, 0, PAGE_SIZE);
 
-    port->clb  = (uint32_t)(dev->clb_phys & 0xFFFFFFFF);
+    port->clb = (uint32_t)(dev->clb_phys & 0xFFFFFFFF);
     port->clbu = (uint32_t)((dev->clb_phys >> 32) & 0xFFFFFFFF);
-    port->fb   = (uint32_t)(dev->fb_phys & 0xFFFFFFFF);
-    port->fbu  = (uint32_t)((dev->fb_phys >> 32) & 0xFFFFFFFF);
+    port->fb = (uint32_t)(dev->fb_phys & 0xFFFFFFFF);
+    port->fbu = (uint32_t)((dev->fb_phys >> 32) & 0xFFFFFFFF);
 
     /* Habilita as interrupções específicas para esta porta (D2H FIS, Interrupt e PRDT) */
-    port->ie = (1 << 0) | (1 << 2) | (1 << 5); 
+    port->ie = (1 << 0) | (1 << 2) | (1 << 5);
 
-    for (int slot = 0; slot < 32; slot++) {
+    for (int slot = 0; slot < 32; slot++)
+    {
         uintptr_t ctba_page = pmm_alloc_page();
-        if (!ctba_page) return -1;
+        if (!ctba_page)
+            return -1;
         dev->ctba_phys[slot] = ctba_page;
         dev->ctba_virt[slot] = vmm_map_device((unsigned long)dev->ctba_phys[slot], PAGE_SIZE);
-        if (!dev->ctba_virt[slot]) return -1;
+        if (!dev->ctba_virt[slot])
+            return -1;
         memset(dev->ctba_virt[slot], 0, PAGE_SIZE);
 
-        hba_cmd_header_t *cmd_hdr = (hba_cmd_header_t*)(dev->clb_virt + (slot * sizeof(hba_cmd_header_t)));
-        cmd_hdr->ctba  = (uint32_t)(dev->ctba_phys[slot] & 0xFFFFFFFF);
+        hba_cmd_header_t *cmd_hdr = (hba_cmd_header_t *)(dev->clb_virt + (slot * sizeof(hba_cmd_header_t)));
+        cmd_hdr->ctba = (uint32_t)(dev->ctba_phys[slot] & 0xFFFFFFFF);
         cmd_hdr->ctbau = (uint32_t)((dev->ctba_phys[slot] >> 32) & 0xFFFFFFFF);
-        
+
         dev->slot_busy[slot] = 0;
     }
 
@@ -181,29 +192,30 @@ static int ahci_setup_port_dma(ahci_device_t *dev) {
 static int ahci_dma_io(ahci_device_t *dev, uint64_t lba, uint32_t sector_count, uintptr_t phys_buffer, int write_flag)
 {
     hba_port_t *port = dev->regs;
-    
-    int slot = ahci_find_free_slot(port);
-    if (slot == -1) return -1;
 
-    hba_cmd_header_t *cmdhdr = (hba_cmd_header_t*)(dev->clb_virt + (slot * sizeof(hba_cmd_header_t)));
+    int slot = ahci_find_free_slot(port);
+    if (slot == -1)
+        return -1;
+
+    hba_cmd_header_t *cmdhdr = (hba_cmd_header_t *)(dev->clb_virt + (slot * sizeof(hba_cmd_header_t)));
     cmdhdr->cfl = sizeof(h2d_register_fis_t) / sizeof(uint32_t);
     cmdhdr->w = write_flag ? 1 : 0;
-    cmdhdr->prdtl = 1;              
+    cmdhdr->prdtl = 1;
     cmdhdr->pmp = 0;
 
-    hba_cmd_tbl_t *cmdtable = (hba_cmd_tbl_t*)dev->ctba_virt[slot];
+    hba_cmd_tbl_t *cmdtable = (hba_cmd_tbl_t *)dev->ctba_virt[slot];
     memset(cmdtable, 0, PAGE_SIZE);
 
-    cmdtable->prdt_entry.dba  = (uint32_t)(phys_buffer & 0xFFFFFFFFUL);
+    cmdtable->prdt_entry.dba = (uint32_t)(phys_buffer & 0xFFFFFFFFUL);
     cmdtable->prdt_entry.dbau = (uint32_t)((phys_buffer >> 32) & 0xFFFFFFFFUL);
-    cmdtable->prdt_entry.dbc  = (sector_count * 512) - 1; 
-    cmdtable->prdt_entry.i    = 1;                        
+    cmdtable->prdt_entry.dbc = (sector_count * 512) - 1;
+    cmdtable->prdt_entry.i = 1;
 
-    h2d_register_fis_t *cfis = (h2d_register_fis_t*)(&cmdtable->cfis);
+    h2d_register_fis_t *cfis = (h2d_register_fis_t *)(&cmdtable->cfis);
     cfis->fis_type = FIS_TYPE_REG_H2D;
     cfis->c = 1;
     cfis->command = write_flag ? ATA_CMD_WRITE_DMA_EXT : ATA_CMD_READ_DMA_EXT;
-    cfis->device  = 1 << 6; 
+    cfis->device = 1 << 6;
 
     cfis->lba0 = lba & 0xFF;
     cfis->lba1 = (lba >> 8) & 0xFF;
@@ -223,9 +235,9 @@ static int ahci_dma_io(ahci_device_t *dev, uint64_t lba, uint32_t sector_count, 
     /* Dispara hardware */
     port->ci = (1 << slot);
 
-    while (dev->slot_busy[slot] == 1) 
+    while (dev->slot_busy[slot] == 1)
     {
-        __builtin_ia32_pause(); 
+        __builtin_ia32_pause();
     }
 
     return 0;
@@ -235,37 +247,208 @@ static int ahci_dma_io(ahci_device_t *dev, uint64_t lba, uint32_t sector_count, 
 
 int ahci_read_blocks(int device_id, uint64_t lba, uint32_t count, uintptr_t phys_buffer)
 {
-    if (device_id >= g_storage_device_count || !g_storage_devices[device_id].present) return -1;
+    if (device_id >= g_storage_device_count || !g_storage_devices[device_id].present)
+        return -1;
     return ahci_dma_io(&g_storage_devices[device_id], lba, count, phys_buffer, 0);
 }
 
 int ahci_write_blocks(int device_id, uint64_t lba, uint32_t count, uintptr_t phys_buffer)
 {
-    if (device_id >= g_storage_device_count || !g_storage_devices[device_id].present) return -1;
+    if (device_id >= g_storage_device_count || !g_storage_devices[device_id].present)
+        return -1;
     return ahci_dma_io(&g_storage_devices[device_id], lba, count, phys_buffer, 1);
 }
 
+/**
+ * @brief Executa o comando ATA IDENTIFY usando Polling síncrono.
+ *        Reutiliza o buffer permanente do FIS Base (FB) para mitigar overhead de paginação.
+ */
+static int ahci_identify_device_polling(ahci_device_t *dev)
+{
+    hba_port_t *port = dev->regs;
+
+    int slot = ahci_find_free_slot(port);
+    if (slot == -1)
+        return -1;
+
+    // ========================================================================
+    // CORREÇÃO: MASCARAR INTERRUPÇÕES DURANTE O POLLING SÍNCRONO
+    // ========================================================================
+    uint32_t saved_ie = port->ie;
+    port->ie = 0; // Silencia o hardware para não disparar interrupções concorrentes
+
+    // Usa o offset de 1024 bytes dentro da página do FB já alocada permanentemente
+    uintptr_t phys_buffer = dev->fb_phys + 1024;
+    void *virt_buffer = (void*)((uintptr_t)dev->fb_virt + 1024);
+
+    // Limpa apenas os 512 bytes que vamos usar
+    memset(virt_buffer, 0, 512);
+
+    // Configura o Command Header no Command List Base (CLB)
+    hba_cmd_header_t *cmdhdr = (hba_cmd_header_t *)(dev->clb_virt + (slot * sizeof(hba_cmd_header_t)));
+    cmdhdr->cfl = sizeof(h2d_register_fis_t) / sizeof(uint32_t);
+    cmdhdr->w = 0; // Operação de LEITURA
+    cmdhdr->prdtl = 1;
+    cmdhdr->pmp = 0;
+
+    // Configura a tabela PRDT usando o buffer persistente
+    hba_cmd_tbl_t *cmdtable = (hba_cmd_tbl_t *)dev->ctba_virt[slot];
+    memset(cmdtable, 0, PAGE_SIZE);
+
+    cmdtable->prdt_entry.dba = (uint32_t)(phys_buffer & 0xFFFFFFFFUL);
+    cmdtable->prdt_entry.dbau = (uint32_t)((phys_buffer >> 32) & 0xFFFFFFFFUL);
+    cmdtable->prdt_entry.dbc = 511; // 512 bytes (512 - 1)
+    cmdtable->prdt_entry.i = 0;     // Polling ativo (Sem interrupção do PRDT)
+
+    // Monta o FIS Host-to-Device (H2D)
+    h2d_register_fis_t *cfis = (h2d_register_fis_t *)(&cmdtable->cfis);
+    cfis->fis_type = FIS_TYPE_REG_H2D;
+    cfis->c = 1;
+    cfis->command = ATA_CMD_IDENTIFY;
+    cfis->device = 0;
+
+    // Aguarda até que o dispositivo liberte os bits BSY e DRQ
+    uint32_t spin = 0;
+    while ((port->tfd & (ATA_SR_BSY | ATA_SR_DRQ)) && spin++ < 1000000)
+    {
+        __builtin_ia32_pause();
+    }
+    if (spin >= 1000000)
+    {
+        kprintf("[AHCI] Porta [%d] ocupada antes do IDENTIFY. TFD: %X\n", dev->port_id, port->tfd);
+        port->ie = saved_ie; // Restaura antes de sair
+        return -1;
+    }
+
+    port->is = port->is;    // Limpa flags residuais
+    port->ci = (1 << slot); // Dispara o hardware
+
+    // LAÇO DE POLLING SÍNCRONO
+    uint64_t timeout = 0;
+    while (1)
+    {
+        if ((port->ci & (1 << slot)) == 0)
+        {
+            break;
+        }
+
+        if (port->tfd & (1 << 0))
+        { // Bit ERR activo
+            kprintf("[AHCI] Erro no TFD da porta [%d] durante o polling.\n", dev->port_id);
+            port->ie = saved_ie; // Restaura antes de sair
+            return -1;
+        }
+
+        __builtin_ia32_pause();
+
+        if (timeout++ > 50000000)
+        {
+            kprintf("[AHCI] Timeout por Polling no comando IDENTIFY na porta [%d]\n", dev->port_id);
+            port->ie = saved_ie; // Restaura antes de sair
+            return -1;
+        }
+    }
+
+    // 1. Limpa todas as flags de interrupção pendentes na porta específica
+    uint32_t port_is = port->is;
+    port->is = port_is;
+
+    // 2. Limpa o bit correspondente a esta porta no registrador mestre global (GHC)
+    if (dev->hba_base_virt)
+    {
+        dev->hba_base_virt->is = (1 << dev->port_id);
+    }
+
+    // ========================================================================
+    // CORREÇÃO EXIGIDA: REINICIAR O MOTOR DE COMANDOS DA PORTA (DESTRIÇÃO DE LOCKS)
+    // ========================================================================
+    // Desliga o processamento de lista de comandos (ST = 0)
+    port->cmd &= ~AHCI_PxCMD_ST;
+    while (port->cmd & AHCI_PxCMD_CR) 
+    {
+        __builtin_ia32_pause(); 
+    }
+
+    // Limpa erros pendentes gerados no encerramento da transferência
+    port->serr = 0xFFFFFFFF;
+
+    // Religa o motor (ST = 1). Agora a fila física de slots está redefinida para a ISR!
+    port->cmd |= AHCI_PxCMD_ST;
+
+    // Restaura as interrupções padrão da porta para os próximos comandos de E/S assíncronos
+    port->ie = saved_ie;
+    // ========================================================================
+
+    // Processa os dados recebidos de forma segura
+    ata_identify_t *id = (ata_identify_t *)virt_buffer;
+
+    // Corrige a inversão de bytes (Endianness string padrão ATA)
+    for (int i = 0; i < 40; i += 2)
+    {
+        char tmp = id->model_number[i];
+        id->model_number[i] = id->model_number[i + 1];
+        id->model_number[i + 1] = tmp;
+    }
+
+    // Terminação nula garantida no final real do array de tamanho 40 (índice 39)
+    id->model_number[39] = '\0';
+
+    // Captura o total de setores usando o mapeamento limpo da struct
+    dev->total_sectors = id->total_sectors_48;
+
+    // Se o SSD reportar 0 no campo de 48 bits, faz o fallback para LBA28
+    if (dev->total_sectors == 0)
+    {
+        dev->total_sectors = id->total_sectors_28;
+    }
+
+    // Nota: O cálculo de GB necessita de cast (uint64_t) para prevenir overflow aritmético de 32 bits
+    uint64_t size_in_gb = (dev->total_sectors * 512UL) / (1024UL * 1024UL * 1024UL);
+
+    kprintf("[AHCI] HDDs/SSDs SATA Identificado com Sucesso!\n");
+    kprintf("[AHCI] Modelo: %s\n", id->model_number);
+    kprintf("[AHCI] Tamanho: %llu GB (%llu setores em LBA)\n", size_in_gb, dev->total_sectors);
+
+    return 0;
+}
+
+
+/**
+ * @brief Inicializa o Controlador de Host AHCI e realiza o Probing de Dispositivos.
+ *
+ * Esta função configura o controlador global HBA e varre as 32 portas lógicas
+ * em busca de unidades de armazenamento (HDDs/SSDs SATA).
+ *
+ * Devido às especificidades de gerenciamento agressivo de energia de chipsets móveis
+ * (como o Intel Sunrise Point do HP ProBook 430 G3), a rotina implementa uma sequência
+ * estrita de inicialização de hardware:
+ *  1. Habilita o barramento AHCI e realiza um Host Reset Global (GHC.HR).
+ *  2. Configura e ativa os vetores de interrupção (MSI ou IRQ legada) de forma precoce.
+ *  3. Acorda eletricamente cada porta ativa aplicando os sinais Spin-Up (SUD) e Força
+ *     Ativa de Interface (ICC_ACTIVE) para tirar slots M.2 do estado de suspensão profunda (D3).
+ *  4. Dispara um sinal elétrico de COMRESET através do registo SCTL e limpa os registos de
+ *     erro (SERR) exigidos pelo silício da Intel.
+ *  5. Ativa temporariamente o motor de receção de FIS (PxCMD.FRE) antes de ler a assinatura,
+ *     garantindo que o registo PxSIG seja corretamente populado pelo hardware.
+ *  6. Mapeia e inicializa as estruturas internas de DMA e PRDT para portas com link estável.
+ *
+ * @param dev Ponteiro para a estrutura do dispositivo detetado no barramento PCI.
+ * @return int Retorna 0 em caso de sucesso na inicialização, ou -1 se falhar.
+ */
 int ahci_init(pci_device_t *dev)
 {
     pci_enable_mmio_busmastering(dev);
 
     uint32_t bar5 = dev->bar[5];
-    if (!bar5) return -1;
+    if (!bar5)
+        return -1;
 
     /* CORREÇÃO: Mapeia o tamanho de uma página completa (4KB) para abranger todas as portas em segurança */
     hba_mem_t *hba_mem = (hba_mem_t *)vmm_map_device((unsigned long)bar5, PAGE_SIZE);
-    if (!hba_mem) return -1;
+    if (!hba_mem)
+        return -1;
 
-    /* Inicialização fria do Controlador */
-    hba_mem->ghc |= AHCI_GHC_AE;
-    hba_mem->ghc |= AHCI_GHC_HR;
-    while (hba_mem->ghc & AHCI_GHC_HR);
-    hba_mem->ghc |= AHCI_GHC_AE;
-
-    /* CORREÇÃO: Liga as interrupções globais de imediato para evitar perdas de sinal durante o probing */
-    hba_mem->ghc |= AHCI_GHC_IE; 
-
-    if(!apic_send_msi(dev, ahci_interrupt_handler))
+    if (!apic_send_msi(dev, ahci_interrupt_handler))
     {
         kprintf("MSI enabled\n");
     }
@@ -275,30 +458,108 @@ int ahci_init(pci_device_t *dev)
         kprintf("IRQ enabled, [%d]\n", dev->irq_line);
     }
 
+    /* Inicialização fria do Controlador */
+    hba_mem->ghc |= AHCI_GHC_AE; // GHC.AE = 1 (Habilita a arquitetura AHCI)
+    hba_mem->ghc |= AHCI_GHC_HR; // GHC.HR = 1 (Aplica o Host Reset)
+
+    // Aguarda o hardware limpar o bit de Reset (GHC.HR vai para 0)
+    int timeout_hr = 0;
+    while ((hba_mem->ghc & AHCI_GHC_HR) && timeout_hr++ < 10000)
+    {
+        __builtin_ia32_pause();
+    }
+
+    hba_mem->ghc |= AHCI_GHC_AE; // Garante que continua habilitado após o reset
+
+    hba_mem->ghc |= AHCI_GHC_AE; // Habilita interrupções globais (IE)
+
+    /* CORREÇÃO: Liga as interrupções globais de imediato para evitar perdas de sinal durante o probing */
+    hba_mem->ghc |= AHCI_GHC_IE;
+
     uint32_t pi = hba_mem->pi;
     for (int i = 0; i < 32; i++)
     {
         if (pi & (1 << i))
         {
             hba_port_t *port = &hba_mem->ports[i];
+
+            // Força o Power On e o Spin-Up do dispositivo no barramento físico
+            port->cmd |= AHCI_PxCMD_ICC_ACTIVE; // POD: Power On Device
+            port->cmd |= AHCI_PxCMD_SUD;        // SUD: Spin-Up Device (Gatilha a transmissão do sinal elétrico SATA)
+            for (volatile int d = 0; d < 4000000; d++)
+                ; // Janela de tempo elétrico
+
+            // 1. Para o motor se estiver rodando
+            port->cmd &= ~(AHCI_PxCMD_FRE | AHCI_PxCMD_ST); // Limpa FRE (bit 4) e ST (bit 0)
+            while (port->cmd & AHCI_PxCMD_CR)
+                ; // Aguarda bit CR apagar
+
+            // Desativa modos agressivos de economia de energia Intel
+            port->cmd &= ~(AHCI_PxCMD_ASP | AHCI_PxCMD_ALPE); // Limpa PxCMD.ALPE e PxCMD.APSTE
+
+            // 2. Dispara o COMRESET físico
+            port->sctl = (port->sctl & ~0x0F) | 1;
+
+            // Loop de atraso para o pulso elétrico na linha
+            for (volatile int d = 0; d < 2000000; d++)
+                ;
+
+            // 3. Finaliza o reset elétrico
+            port->sctl = (port->sctl & ~0x0F);
+
+            // Pausa de 10ms exigida pela especifica;\ao antes da leitura
+            for (volatile int d = 0; d < 5000000; d++)
+                ;
+
+            // 4. Aguarda a estabilização da camada física (Timeout de até 50ms)
+            int timeout_phy = 0;
+            while (timeout_phy++ < 50000)
+            {
+                if ((port->ssts & 0x0F) == 3)
+                    break;
+                for (volatile int d = 0; d < 1000; d++)
+                    ;
+            }
+
+            // Limpeza do registo de errros SERR
+            port->serr = 0xFFFFFFFF;
+
+            port->cmd |= (1 << 4); // Ativa o bit PxCMD.FRE (Fis Receive Enable)
+
+            // Pequeno delay para o chip Intel atualizar o registrador port->sig
+            for (volatile int d = 0; d < 1000000; d++)
+                ;
+
             uint32_t ssts = port->ssts;
             uint8_t det = ssts & 0x0F;
             uint8_t ipm = (ssts >> 8) & 0x0F;
 
+            // ... código anterior de verificação de assinaturas ...
             if (det == HBA_PORT_DET_PRESENT && ipm == HBA_PORT_IPM_ACTIVE && port->sig == AHCI_SATA_SIG_ATA)
             {
-                if (g_storage_device_count >= AHCI_MAX_DEVICES) break;
+                if (g_storage_device_count >= AHCI_MAX_DEVICES)
+                    break;
 
                 ahci_device_t *sata_dev = &g_storage_devices[g_storage_device_count];
                 sata_dev->port_id = i;
                 sata_dev->regs = port;
-                sata_dev->hba_base_virt = hba_mem; /* CORREÇÃO: Atribuído ANTES do setup da porta dma */
+                sata_dev->hba_base_virt = hba_mem;
                 sata_dev->present = 1;
 
                 if (ahci_setup_port_dma(sata_dev) == 0)
                 {
                     kprintf("[AHCI] Porta [%d]: Armazenamento mapeado de forma permanente via VMM.\n", i);
+
+                    // CORREÇÃO: Incrementa o contador ANTES do identify para a ISR reconhecer o dispositivo
                     g_storage_device_count++;
+
+                    if (ahci_identify_device_polling(sata_dev) != 0)
+                    {
+                        // Se o polling falhar, desfaz o registro por segurança
+                        g_storage_device_count--;
+                        sata_dev->present = 0;
+                        kprintf("[AHCI] Erro ao identificar dispositivo na porta [%d]\n", i);
+                    }
                 }
             }
         }
@@ -315,7 +576,7 @@ void ahci_driver_init(void)
 {
     g_storage_device_count = 0;
 
-    /* 
+    /*
      * Procura e carrega todos os controladores compatíveis com a especificação.
      * Classe 0x01 (Mass Storage), Subclasse 0x06 (SATA).
      */

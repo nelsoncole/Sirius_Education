@@ -43,11 +43,33 @@
 
 /* Bits do Registo de Comando da Porta (CMD) */
 #define AHCI_PxCMD_ST           (1 << 0)    // Start (Ativa o processamento da lista de comandos)
-#define AHCI_PxCMD_SUD          (1 << 1)    // Spin-Up Device (Acorda o disco se necessário)
-#define AHCI_PxCMD_POD          (1 << 2)    // Power On Device
-#define AHCI_PxCMD_FRE          (1 << 4)    // FIS Receive Enable (Permite receber estruturas FIS)
-#define AHCI_PxCMD_FR           (1 << 14)   // FIS Receive Running (Indica se a receção de FIS está ativa)
-#define AHCI_PxCMD_CR           (1 << 15)   // Command List Running (Indica se a lista de comandos está ativa)
+#define AHCI_PxCMD_SUD          (1 << 1)    // Spin-Up Device (Acorda o disco/Gatilha sinal elétrico no M.2)
+#define AHCI_PxCMD_POD          (1 << 2)    // Power On Device (Reservado em muitas plataformas, controlado via bit 28)
+#define AHCI_PxCMD_CLO          (1 << 3)    // Command List Override (Força a limpeza do estado BSY/DRQ ocupado)
+#define AHCI_PxCMD_FRE          (1 << 4)    // FIS Receive Enable (Permite receber estruturas FIS em memória)
+#define AHCI_PxCMD_CCS          (0x1F << 8) // Current Command Slot (Máscara de bits 8-12: Slot em execução)
+#define AHCI_PxCMD_MPSS         (1 << 13)   // Mechanical Presence Switch State (Estado do switch mecânico)
+#define AHCI_PxCMD_FR           (1 << 14)   // FIS Receive Running (Indica se a receção de FIS do hardware está ativa)
+#define AHCI_PxCMD_CR           (1 << 15)   // Command List Running (Indica se o motor de comandos DMA está ativo)
+#define AHCI_PxCMD_CPS          (1 << 16)   // Cold Presence State (Indica se um dispositivo foi detetado a frio)
+#define AHCI_PxCMD_PMA          (1 << 17)   // Port Multiplier Attached (Dispositivo é um multiplicador de portas)
+#define AHCI_PxCMD_HPCP         (1 << 18)   // Hot Plug Capable Port (Sinaliza se a porta suporta troca a quente)
+#define AHCI_PxCMD_MPSP         (1 << 19)   // Mechanical Presence Switch Attached (Porta tem trava mecânica)
+#define AHCI_PxCMD_CPD          (1 << 20)   // Cold Presence Detection (Suporta deteção de inserção a frio)
+#define AHCI_PxCMD_ESP          (1 << 21)   // External SATA Port (Porta mapeada como eSATA externa)
+#define AHCI_PxCMD_FBSCP        (1 << 22)   // FIS-based Switching Capable Port (Suporta comutação baseada em FIS)
+#define AHCI_PxCMD_APSTE        (1 << 23)   // Automatic Partial to Slumber Transition Enabled (Economia agressiva)
+#define AHCI_PxCMD_ATAPI        (1 << 24)   // Device is ATAPI (Indica se o dispositivo na porta é um leitor de CD/DVD)
+#define AHCI_PxCMD_DLAE         (1 << 25)   // Drive LED At On Transition Enabled (Ativa LED de atividade)
+#define AHCI_PxCMD_ALPE         (1 << 26)   // Aggressive Link Power Management Enable (Ativa modo de economia ALPM)
+#define AHCI_PxCMD_ASP          (1 << 27)   // Aggressive Slumber / Partial (Define preferência Slumber se ALPE=1)
+#define AHCI_PxCMD_ICC          (0x0F << 28)// Interface Communication Control (Máscara bits 28-31: Estado elétrico da interface)
+
+/* Estados Avançados de Energia usando a máscara ICC (Bits 28-31) */
+#define AHCI_PxCMD_ICC_IDLE     (0 << 28)   // Interface em estado Idle (Normal)
+#define AHCI_PxCMD_ICC_ACTIVE   (1 << 28)   // Força Interface Ativa / POD (Acorda canais elétricos em chipsets Intel)
+#define AHCI_PxCMD_ICC_PARTIAL  (2 << 28)   // Coloca a interface em modo Partial (Baixo consumo)
+#define AHCI_PxCMD_ICC_SLUMBER  (6 << 28)   // Coloca a interface em modo Slumber (Suspensão profunda)
 
 /**
  * Estrutura do Frame Information Structure (FIS) de Registo Host-to-Device.
@@ -159,6 +181,22 @@ typedef struct {
     uint8_t  vendor[96];// 0xA0 ~ 0xFF, Vendor Specific
     hba_port_t ports[32]; // 0x100, Até 32 portas físicas implementadas
 } __attribute__((packed)) hba_mem_t;
+
+
+typedef struct {
+    uint16_t general_config;          // Palavra 0
+    uint16_t reserved1[9];            // Palavras 1-9
+    char     serial_number[20];       // Palavras 10-19 (Número de série)
+    uint16_t reserved2[3];            // Palavras 20-22
+    char     firmware_revision[8];    // Palavras 23-26 (Firmware)
+    char     model_number[40];        // Palavras 27-46 (Modelo do SSD)
+    uint16_t reserved3[13];           // Palavras 47-59
+    uint32_t total_sectors_28;        // Palavras 60-61 (LBA28 antigo)
+    uint16_t reserved4[38];           // Palavras 62-99
+    uint64_t total_sectors_48;        // Palavras 100-103 (LBA48 para SSDs modernos)
+    uint16_t reserved5[152];          // Palavras 104-255 (Restante do bloco de 512 bytes)
+} __attribute__((packed)) ata_identify_t;
+
 
 /* Interfaces Públicas Exportadas */
 int ahci_init(pci_device_t *dev);

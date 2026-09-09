@@ -22,7 +22,9 @@ void test_read_gpt_table(void)
     if (target_phys_buffer == 0)
     {
         kprintf("[Storage Test] Erro: Falha ao alocar pagina fisica para DMA.\n");
-        return;
+        while (1) {
+            __asm__ __volatile__("hlt");
+        }
     }
 
     /* 
@@ -36,7 +38,9 @@ void test_read_gpt_table(void)
     {
         kprintf("[Storage Test] Erro critico: Falha na transferencia DMA do LBA 1.\n");
         pmm_free_page(target_phys_buffer);
-        return;
+        while (1) {
+            __asm__ __volatile__("hlt");
+        }
     }
 
     kprintf("[Storage Test] DMA do LBA 1 concluido. Mapeando buffer virtual...\n");
@@ -47,7 +51,9 @@ void test_read_gpt_table(void)
     {
         kprintf("[Storage Test] Erro: Falha ao mapear virtualmente a pagina de dados.\n");
         pmm_free_page(target_phys_buffer);
-        return;
+        while (1) {
+            __asm__ __volatile__("hlt");
+        }
     }
 
     /* 

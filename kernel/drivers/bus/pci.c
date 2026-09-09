@@ -366,6 +366,7 @@ void pci_enable_mmio_busmastering(pci_device_t *dev)
      */
     pci_cmd |= (1 << 1); // Ativa Memory Space MMIO
     pci_cmd |= (1 << 2); // Ativa Bus Mastering DMA
+    pci_cmd &= ~(1<<10); // Enable interrupts
 
     /* Grava a nova palavra de controlo estável no espaço de configuração */
     pci_config_write_dword(dev->address.bus, dev->address.device, dev->address.function, PCI_REG_COMMAND, pci_cmd);
