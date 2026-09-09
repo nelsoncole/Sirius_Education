@@ -53,11 +53,19 @@ C_OBJ := \
 	$(BUILD_DIR)/acpi.o \
 	$(BUILD_DIR)/lapic.o \
 	$(BUILD_DIR)/ioapic.o \
+	$(BUILD_DIR)/irq.o \
+	$(BUILD_DIR)/msi.o \
 	$(BUILD_DIR)/smp.o \
 	$(BUILD_DIR)/scheduler.o \
 	$(BUILD_DIR)/thread.o \
 	$(BUILD_DIR)/process.o \
-	$(BUILD_DIR)/syscall.o
+	$(BUILD_DIR)/syscall.o \
+	$(BUILD_DIR)/pci.o \
+	$(BUILD_DIR)/keyboard.o \
+	$(BUILD_DIR)/mouse.o \
+	$(BUILD_DIR)/ahci.o \
+	$(BUILD_DIR)/test.o
+
 
 
 # ============================================================
@@ -218,6 +226,20 @@ $(BUILD_DIR)/idt.o: $(ARCH_DIR)/x86_64/cpu/idt.c | $(BUILD_DIR)
 $(BUILD_DIR)/isr.o: $(ARCH_DIR)/x86_64/cpu/isr.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# ============================================================
+# Compile irq.c
+# ============================================================
+
+$(BUILD_DIR)/irq.o: $(ARCH_DIR)/x86_64/kapi/irq.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile msi.c
+# ============================================================
+
+$(BUILD_DIR)/msi.o: $(ARCH_DIR)/x86_64/kapi/msi.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 
 # ============================================================
 # Compile string.c
@@ -234,6 +256,13 @@ $(BUILD_DIR)/string.o: $(LIB_DIR)/string.c | $(BUILD_DIR)
 $(BUILD_DIR)/video.o: $(DRIVERS_DIR)/video/video.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# ============================================================
+# Compile pci.c
+# ============================================================
+
+$(BUILD_DIR)/pci.o: $(DRIVERS_DIR)/bus/pci.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 
 # ============================================================
 # Compile char.c
@@ -248,6 +277,34 @@ $(BUILD_DIR)/char.o: $(DRIVERS_DIR)/char/char.c | $(BUILD_DIR)
 # ============================================================
 
 $(BUILD_DIR)/font.o: $(DRIVERS_DIR)/char/font.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile keyboard.c
+# ============================================================
+
+$(BUILD_DIR)/keyboard.o: $(DRIVERS_DIR)/char/keyboard.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile mouse.c
+# ============================================================
+
+$(BUILD_DIR)/mouse.o: $(DRIVERS_DIR)/char/mouse.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile ahci.c
+# ============================================================
+
+$(BUILD_DIR)/ahci.o: $(DRIVERS_DIR)/storage/ahci.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile test.c
+# ============================================================
+
+$(BUILD_DIR)/test.o: $(DRIVERS_DIR)/storage/test.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 

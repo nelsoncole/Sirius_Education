@@ -21,6 +21,8 @@
 #include <kernel/arch/x86_64/cpu/cpu.h>
 #include <kernel/lib/stdio.h>
 #include <kernel/kernel/sched/scheduler.h>
+#include <kernel/arch/x86_64/kapi/irq.h>
+#include <kernel/arch/x86_64/kapi/msi.h>
 
 // Variável global para contar os tiques do sistema
 unsigned long g_system_ticks = 0;
@@ -120,36 +122,7 @@ void* interrupt_handler_c(registers_t *regs)
         kprintf("  * R8 : 0x%lX  |  R9 : 0x%lX  |  R10   : 0x%lX  |  R11: 0x%lX\n", regs->r8, regs->r9, regs->r10, regs->r11);
         kprintf("  * R12: 0x%lX  |  R13: 0x%lX  |  R14   : 0x%lX  |  R15: 0x%lX\n", regs->r12, regs->r13, regs->r14, regs->r15);
         kprintf("------------------------------------------------------------------------\n");
-        struct gdtr
-        {
-            uint16_t limit;
-            uint64_t base;
-        } __attribute__((packed));
-
-        struct gdtr gdtr;
-
-        __asm__ __volatile__("sgdt %0" : "=m"(gdtr));
-
-        kprintf("GDTR.base  = 0x%016lX\n", gdtr.base);
-        kprintf("GDTR.limit = 0x%04X\n", gdtr.limit);
-
-        uint64_t *gdt = (uint64_t *)gdtr.base;
-
-        kprintf("GDT[5] = 0x%016lX\n", gdt[5]);
-        kprintf("GDT[6] = 0x%016lX\n", gdt[6]);
-
-        uint32_t lo, hi;
-
-        __asm__ __volatile__(
-            "mov $0xC0000081, %%ecx\n"
-            "rdmsr\n"
-            : "=a"(lo), "=d"(hi)
-            :
-            : "ecx");
-
-        uint64_t star = ((uint64_t)hi << 32) | lo;
-
-        kprintf("IA32_STAR = 0x%016lX\n", star);
+        
         // Se for um Page Fault (#PF, Vetor 14), capturamos o endereço linear falho no CR2
         if (regs->int_no == 14)
         {
@@ -210,6 +183,42 @@ void* interrupt_handler_c(registers_t *regs)
 
         // Retorna a nova pilha para o interrupt.asm fazer o "mov rsp, rax"
         return next_stack;
+    }
+
+    // DESPACHANTE ESTENDIDO DO IOAPIC (Vetores 33 a 80 -> Pinos 0 a 47) */
+    if(regs->int_no >= 33 && regs->int_no < 81)
+    {
+        // Subtrai a base 33 para mapear o vetor de volta ao pino real do IOAPIC
+        uint8_t irq_index = regs->int_no - 33;
+
+        // Executa o callback do driver caso tenha sido atracado
+        if (g_interrupt_handlers[irq_index] != NULL)
+        {
+            g_interrupt_handlers[irq_index]();
+        }
+
+
+        lapic_eoi(); // Avisa o chip que a interrupção foi processada
+        return regs;
+    }
+
+
+    /* 
+     * 🛰️ DESPACHANTE UNIFORME PARA INTERRUPÇÕES MENSAGEM (MSI: Vetores 81 a 112)
+     * Desvia as interrupções de hardware de alta performance para os drivers atracados.
+     */
+    if (regs->int_no >= 81 && regs->int_no < 113)
+    {
+        uint8_t msi_index = regs->int_no - 81;
+
+        if (fnvetors_handler_msi[msi_index] != NULL)
+        {
+            /* Chama diretamente o handler em C do driver (ex: ahci_interrupt_handler) */
+            fnvetors_handler_msi[msi_index]();
+        }
+
+        lapic_eoi();
+        return regs;
     }
 
     // TRATAMENTO DO ERRO DO LOCAL APIC (Vetor 254)

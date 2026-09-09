@@ -22,7 +22,6 @@ Sirius_Education/
 │
 ├── include/                 # Cabeçalhos globais e públicos
 │   ├── uapi/                # User Space API (usado pelas syscalls e programas)
-|   |   └── sirius/
 │   └── kernel/              # Cabeçalhos globais do Kernel
 │
 ├── kernel/                     # Código-fonte do Kernel e subsistemas estruturais
@@ -32,7 +31,7 @@ Sirius_Education/
 │   │   ├── core/            # Inicialização geral (kernelmain.c, panic.c)
 │   │   ├── mm/              # Gestão de memória genérica (PMM, Heap)
 │   │   ├── sched/           # Escalonador e controlo de processos
-│   │   ├── ipc/             # Comunicação entre processos (Pipes, Sinais)
+│   │   ├── ipc/             # Comunicação entre processos (Sinais, Shared Memory, Message Passing)
 │   │   └── syscall/         # Interface de chamadas de sistema
 |   |
 │   ├── arch/                # Código estritamente dependente de hardware
@@ -45,7 +44,7 @@ Sirius_Education/
 │   ├── drivers/             # Controladores de hardware embutidos (Char, Block, Net, Bus)
 │   │   ├── bus/             # PCI, USB Core, ACPI
 │   │   ├── char/            # Teclado (input), Displays de texto, Serial (UART)
-│   │   ├── block/           # Storage (IDE, AHCI, Ramdisk)
+│   │   ├── storage/         # Storage (IDE, AHCI, Ramdisk)
 │   │   ├── net/             # Placas de rede (e1000, rtl8139)
 │   │   └── video/           # Displays
 |   |

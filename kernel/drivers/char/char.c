@@ -16,8 +16,8 @@
  * ============================================================================
  */
 
-#include <kernel/drivers/video.h>
-#include <kernel/drivers/font.h>
+#include <kernel/drivers/video/video.h>
+#include <kernel/drivers/char/font.h>
 
 
 /*

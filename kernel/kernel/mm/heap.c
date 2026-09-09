@@ -17,8 +17,8 @@
 
 #include <kernel/kernel/mm/heap.h>
 #include <kernel/kernel/mm/pmm.h>
-#include <kernel/arch/x86_64/mm/paging.h>
-#include <kernel/arch/x86_64/mm/vmm.h>
+#include <kernel/kpaging.h>
+#include <kernel/kvmm.h>
 
 // Ponteiro global que indica a raiz (início) da lista encadeada do Heap
 static HEAP_HEADER* g_heap_start = (void*)0;

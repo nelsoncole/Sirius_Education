@@ -82,9 +82,102 @@ ISR_NO_ERR_CODE 31 ; Reserved
 ; ============================================================================
 ; VETORES EXCLUSIVOS DO CONTROLADOR DE INTERRUPÇÕES (LAPIC)
 ; ============================================================================
-ISR_NO_ERR_CODE 32  ; isr32:  Handler do LAPIC Timer (O Relógio Mestre)
 ISR_NO_ERR_CODE 254 ; isr254: Handler de Erros Internos do LAPIC
 ISR_NO_ERR_CODE 255 ; isr255: Handler de Interrupções Espúrias do LAPIC
+
+; ============================================================================
+; VETORES DO CONTROLADOR DE INTERRUPÇÕES (LAPIC HARDWARE)
+; ============================================================================
+ISR_NO_ERR_CODE 32  ; isr32:  Handler do LAPIC Timer (O Relógio Mestre)
+
+; ============================================================================
+; VETORES DO CONTROLADOR DE INTERRUPÇÕES IRQS DE HARDWARE EXTERNAS (Roteadas via IOAPIC)
+; ============================================================================
+ISR_NO_ERR_CODE 33  ; isr33:  IRQ 1 - Teclado PS/2 (Mapeado de forma padrão)
+ISR_NO_ERR_CODE 34  ; isr34:  IRQ 2 - Cascata (PIC/APIC interno)
+ISR_NO_ERR_CODE 35  ; isr35:  IRQ 3 - Porta Série UART2
+ISR_NO_ERR_CODE 36  ; isr36:  IRQ 4 - Porta Série UART1
+ISR_NO_ERR_CODE 37  ; isr37:  IRQ 5 - Placa de Som / Paralela
+ISR_NO_ERR_CODE 38  ; isr38:  IRQ 6 - Controlador de Disquetes
+ISR_NO_ERR_CODE 39  ; isr39:  IRQ 7 - Porta Paralela
+ISR_NO_ERR_CODE 40  ; isr40:  IRQ 8 - Real Time Clock (RTC)
+ISR_NO_ERR_CODE 41  ; isr41:  IRQ 9 - Redirecionamento ACPI
+ISR_NO_ERR_CODE 42  ; isr42:  IRQ 10 - Periféricos PCI / Controladores USB
+ISR_NO_ERR_CODE 43  ; isr43:  IRQ 11 - Periféricos PCI / Rede / AHCI
+ISR_NO_ERR_CODE 44  ; isr44:  IRQ 12 - Rato PS/2 (Mouse)
+ISR_NO_ERR_CODE 45  ; isr45:  IRQ 13 - Coprocessador Matemático
+ISR_NO_ERR_CODE 46  ; isr46:  IRQ 14 - Disco Rígido ATA/IDE / AHCI Primário
+ISR_NO_ERR_CODE 47  ; isr47:  IRQ 15 - Disco Rígido ATA/IDE Secundário
+ISR_NO_ERR_CODE 48  ; isr48:  GSI 16 - Barramento PCIe Slot 1 (Ex: GPU Emulada)
+ISR_NO_ERR_CODE 49  ; isr49:  GSI 17 - Barramento PCIe Slot 2 (Ex: Controladores xHCI)
+ISR_NO_ERR_CODE 50  ; isr50:  GSI 18 - Barramento PCIe / Canais SMBus adicionais
+ISR_NO_ERR_CODE 51  ; isr51:  GSI 19 - Barramento PCIe / Reservado Hardware
+ISR_NO_ERR_CODE 52  ; isr52:  GSI 20 - Barramento PCIe / Som de Alta Definição (HDA)
+ISR_NO_ERR_CODE 53  ; isr53:  GSI 21 - Barramento PCIe / Dispositivos VirtIO adicionais
+ISR_NO_ERR_CODE 54  ; isr54:  GSI 22 - Barramento PCIe / Pontes secundárias
+ISR_NO_ERR_CODE 55  ; isr55:  GSI 23 - Barramento PCIe / Interfaces USB adicionais
+ISR_NO_ERR_CODE 56  ; isr56:  GSI 24 - Alocação Dinâmica Chipset / ACPI PCI Routing
+ISR_NO_ERR_CODE 57  ; isr57:  GSI 25 - Alocação Dinâmica Chipset
+ISR_NO_ERR_CODE 58  ; isr58:  GSI 26 - Alocação Dinâmica Chipset
+ISR_NO_ERR_CODE 59  ; isr59:  GSI 27 - Alocação Dinâmica Chipset
+ISR_NO_ERR_CODE 60  ; isr60:  GSI 28 - Alocação Dinâmica Chipset
+ISR_NO_ERR_CODE 61  ; isr61:  GSI 29 - Alocação Dinâmica Chipset
+ISR_NO_ERR_CODE 62  ; isr62:  GSI 30 - Alocação Dinâmica Chipset
+ISR_NO_ERR_CODE 63  ; isr63:  GSI 31 - Alocação Dinâmica Chipset
+ISR_NO_ERR_CODE 64  ; isr64:  GSI 32 - Extensão MSI-X Mapeada por Hardware
+ISR_NO_ERR_CODE 65  ; isr65:  GSI 33 - Extensão MSI-X
+ISR_NO_ERR_CODE 66  ; isr66:  GSI 34 - Extensão MSI-X
+ISR_NO_ERR_CODE 67  ; isr67:  GSI 35 - Extensão MSI-X
+ISR_NO_ERR_CODE 68  ; isr68:  GSI 36 - Extensão MSI-X
+ISR_NO_ERR_CODE 69  ; isr69:  GSI 37 - Extensão MSI-X
+ISR_NO_ERR_CODE 70  ; isr70:  GSI 38 - Extensão MSI-X
+ISR_NO_ERR_CODE 71  ; isr71:  GSI 39 - Extensão MSI-X
+ISR_NO_ERR_CODE 72  ; isr72:  GSI 40 - Extensão Placas Multi-Dispositivo
+ISR_NO_ERR_CODE 73  ; isr73:  GSI 41 - Extensão Placas Multi-Dispositivo
+ISR_NO_ERR_CODE 74  ; isr74:  GSI 42 - Extensão Placas Multi-Dispositivo
+ISR_NO_ERR_CODE 75  ; isr75:  GSI 43 - Extensão Placas Multi-Dispositivo
+ISR_NO_ERR_CODE 76  ; isr76:  GSI 44 - Extensão Placas Multi-Dispositivo
+ISR_NO_ERR_CODE 77  ; isr77:  GSI 45 - Extensão Placas Multi-Dispositivo
+ISR_NO_ERR_CODE 78  ; isr78:  GSI 46 - Extensão Placas Multi-Dispositivo
+ISR_NO_ERR_CODE 79  ; isr79:  GSI 47 - Extensão Placas Multi-Dispositivo / Teto Máximo
+ISR_NO_ERR_CODE 80  ; isr80:  Vetor de Guarda de Transbordo (Fim da Janela do IOAPIC)
+
+; ============================================================================
+; JANELA NATIVA DE VETORES MSI (MAPEADOS DE 81 A 112)
+; ============================================================================
+ISR_NO_ERR_CODE 81  ; msi0:  Corresponde ao índice 0 da fnvetors_handler_msi (ex: AHCI)
+ISR_NO_ERR_CODE 82  ; msi1:  Índice 1
+ISR_NO_ERR_CODE 83  ; msi2
+ISR_NO_ERR_CODE 84  ; msi3
+ISR_NO_ERR_CODE 85  ; msi4
+ISR_NO_ERR_CODE 86  ; msi5
+ISR_NO_ERR_CODE 87  ; msi6
+ISR_NO_ERR_CODE 88  ; msi7
+ISR_NO_ERR_CODE 89  ; msi8
+ISR_NO_ERR_CODE 90  ; msi9
+ISR_NO_ERR_CODE 91  ; msi10
+ISR_NO_ERR_CODE 92  ; msi11
+ISR_NO_ERR_CODE 93  ; msi12
+ISR_NO_ERR_CODE 94  ; msi13
+ISR_NO_ERR_CODE 95  ; msi14
+ISR_NO_ERR_CODE 96  ; msi15
+ISR_NO_ERR_CODE 97  ; msi16
+ISR_NO_ERR_CODE 98  ; msi17
+ISR_NO_ERR_CODE 99  ; msi18
+ISR_NO_ERR_CODE 100 ; msi19
+ISR_NO_ERR_CODE 101 ; msi20
+ISR_NO_ERR_CODE 102 ; msi21
+ISR_NO_ERR_CODE 103 ; msi22
+ISR_NO_ERR_CODE 104 ; msi23
+ISR_NO_ERR_CODE 105 ; msi24
+ISR_NO_ERR_CODE 106 ; msi25
+ISR_NO_ERR_CODE 107 ; msi26
+ISR_NO_ERR_CODE 108 ; msi27
+ISR_NO_ERR_CODE 109 ; msi28
+ISR_NO_ERR_CODE 110 ; msi29
+ISR_NO_ERR_CODE 111 ; msi30
+ISR_NO_ERR_CODE 112 ; msi31 : Canal máximo alocado no subsistema msi.c
+
 
 ; ============================================================================
 ; STUB CENTRAL DE PRESERVAÇÃO E CHAVEAMENTO DE CONTEXTO

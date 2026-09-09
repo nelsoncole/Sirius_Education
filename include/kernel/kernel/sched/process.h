@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 05/09/2026
+ *  Modified Date: 07/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -23,6 +23,14 @@
 #include "thread.h"
 #include "scheduler.h"
 
+#define MAX_SHARED_REGIONS 8
+#define MAX_SIGNALS        32
+#define MAX_SIGNALS            32
+#define MAX_FILES_PER_PROCESS  32
+
+// Estrutura abstrata do VFS (Virtual File System) definida em fs/vfs/
+// struct file; 
+
 typedef uint32_t pid_t;
 
 typedef enum {
@@ -33,6 +41,7 @@ typedef enum {
 
 typedef struct process {
     pid_t pid;                      /* Identificador único do processo (PID) */
+    pid_t ppid;                     /* ID do processo pai (Parent PID) */
     process_state_t state;          /* Estado de execução atual do processo */
     uint64_t cr3;                   /* Endereço físico do PML4 (Espaço de Memória) */
     
@@ -45,6 +54,21 @@ typedef struct process {
 
     struct process* parent;         /* Ponteiro para o processo pai */
     thread_t* main_thread;          /* Ponteiro para a thread principal do processo */
+
+    /*
+     * TABELA DE FDs (Para Sockets, Pipes e Ficheiros) 
+     * Ex: fd = 0 (stdin), fd = 1 (stdout), fd = 2 (stderr), fd = 3 (Socket/Ficheiro)
+     */
+    // struct file* file_descriptor_table[MAX_FILES_PER_PROCESS];
+
+    /* IPC: MEMÓRIA PARTILHADA */
+    void* shm_virtual_addresses[MAX_SHARED_REGIONS];
+    int   shm_ids[MAX_SHARED_REGIONS];
+
+    /* IPC: SINAIS ASSÍNCRONOS */
+    uint32_t pending_signals;
+    void* signal_handlers[MAX_SIGNALS];
+
 } process_t;
 
 /**

@@ -44,6 +44,16 @@
 #define USER_HEAP_VIRTUAL_BASE      0x0000000008000000UL
 
 /*
+ * MEMÓRIA PARTILHADA DO UTILIZADOR (USER SHARED MEMORY BASE)
+ * ------------------------------------------------------------------------
+ * Ponto de entrada virtual para o mapeamento de segmentos IPC (shm).
+ * Posicionado estrategicamente a meio do espaço canónico inferior, 
+ * garantindo isolamento total contra a expansão ascendente do Heap 
+ * e protegendo a descida dinâmica da Pilha (Stack) do utilizador.
+ */
+#define USER_SHM_VIRTUAL_BASE       0x0000700000000000UL
+
+/*
  * TOPO DA PILHA DO UTILIZADOR (USER STACK TOP)
  * ------------------------------------------------------------------------
  * Base de inicialização da pilha privada em Ring 3 para variáveis locais.

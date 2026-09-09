@@ -17,7 +17,7 @@
  * ============================================================================
  */
 
-#include <kernel/drivers/font.h>
+#include <kernel/drivers/char/font.h>
 
 const uint8_t g_font_bitmap[128][16] = {
     [0]  = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, // '^@'
