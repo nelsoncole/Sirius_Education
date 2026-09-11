@@ -19,6 +19,7 @@
 #define _VMM_H_
 
 #include "paging.h"
+#include <kernel/lib/stdint.h>
 
 // Macros para extração de índices retiradas do conceito x86_64
 #define GET_PML4_INDEX(virt) (((virt) >> 39) & 0x1FF)
@@ -58,7 +59,7 @@ void vmm_switch_pml4(unsigned long pml4_phys);
  * Prepara a infraestrutura de tabelas necessária para suportar a janela.
  * Garante a alocação da PT vinculada aos índices altos da MMU.
  */
-void vmm_scratch_setup(void);
+void vmm_scratch_setup();
 
 /*
  * OPERAÇÃO VOLÁTIL DE TROCA DE FRAME (SCRATCH MAP)
@@ -74,7 +75,7 @@ void* vmm_scratch_map(unsigned long phys_addr);
  * Substitui o frame físico na janela secundária isolada (Índice 510).
  * Protege a criação hierárquica de tabelas de sub-níveis contra corrupção.
  */
-void* vmm_scratch_map_internal(unsigned long phys_addr);
+void* vmm_scratch_map_internal(unsigned long phys_addr, int window);
 
 /**
  * Cria um novo espaço de endereçamento virtual (PML4).
@@ -83,6 +84,10 @@ void* vmm_scratch_map_internal(unsigned long phys_addr);
  * @return O endereço físico do novo PML4 (pronto para ser guardado no proc->cr3).
  */
 unsigned long vmm_create_address_space(void);
+
+unsigned long vmm_get_physical_address(PML4_TABLE* pml4, unsigned long page_va);
+
+uintptr_t vmm_get_physical(uintptr_t virtual_address);
 
 #endif /* _VMM_H_ */
 

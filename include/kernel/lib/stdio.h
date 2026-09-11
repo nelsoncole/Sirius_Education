@@ -17,6 +17,15 @@
 #ifndef _STDIO_H_
 #define _STDIO_H_
 
+#include <kernel/lib/stdarg.h>
+#include <kernel/lib/stdint.h>
+#include <kernel/lib/stddef.h>
+#include <kernel/lib/stdbool.h>
+
+int kvsnprintf(char *buf, size_t max_len, const char *format, va_list ap);
+
+int ksprintf(char *buf, const char *format, ...);
+
 /*
  * Função principal de formatação e exibição de texto no terminal do kernel.
  */

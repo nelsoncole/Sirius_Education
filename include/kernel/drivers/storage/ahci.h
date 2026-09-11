@@ -202,7 +202,7 @@ typedef struct {
 int ahci_init(pci_device_t *dev);
 void ahci_driver_init(void);
 
-int ahci_read_blocks(int device_id, uint64_t lba, uint32_t count, uintptr_t phys_buffer);
-int ahci_write_blocks(int device_id, uint64_t lba, uint32_t count, uintptr_t phys_buffer);
+int ahci_block_read(int device_id, uint64_t lba, uint32_t count, uintptr_t phys_buffer);
+int ahci_block_write(int device_id, uint64_t lba, uint32_t count, uintptr_t phys_buffer);
 
 #endif /* _AHCI_H_ */

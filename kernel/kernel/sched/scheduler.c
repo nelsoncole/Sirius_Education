@@ -172,8 +172,8 @@ uint64_t sys_exit(int code)
     cpu_data_block_t *cpu = get_current_cpu();
     thread_t *current = cpu->current_thread;
 
-    kprintf("\n[SCI] sys_exit: Aplicativo (TID: %u) encerrou com status %d.\n", 
-            current ? current->tid : 0, code);
+    //kprintf("\n[SCI] sys_exit: Aplicativo (TID: %u) encerrou com status %d.\n", 
+    //        current ? current->tid : 0, code);
 
     if (cpu && current)
     {
@@ -184,14 +184,14 @@ uint64_t sys_exit(int code)
         enqueue_dead_thread(cpu, current);
     }
 
-    kprintf("[Kernel] Escolhendo proxima tarefa de forma voluntaria...\n");
+    //kprintf("[Kernel] Escolhendo proxima tarefa de forma voluntaria...\n");
 
     thread_t *next = NULL;
 
     /* 
-     * CICLO DE EXPURGO DE SEGURANÇA:
-     * Remove tarefas da fila até encontrar uma que NÃO seja a thread que acabou de morrer.
-     * Isto previne que ponteiros duplicados ou fantasmas façam a thread ressuscitar.
+     * CICLO DE EXPURGO CORRIGIDO:
+     * Remove referências mortas da cabeça da fila, mas para assim
+     * que encontra a primeira thread legítima (evita esvaziar a fila).
      */
     while (1) 
     {
@@ -204,44 +204,69 @@ uint64_t sys_exit(int code)
 
         if (next == current || next->state == THREAD_DEAD) 
         {
-            /* Encontrou a si mesma ou outra thread morta na fila! Ignora e descarta. */
-            kprintf("[Kernel Warning] Ignorando referencia fantasma do TID %u na ready_queue.\n", next->tid);
+            //kprintf("[Kernel Warning] Ignorando referencia fantasma do TID %u na ready_queue.\n", next->tid);
             continue; 
         }
 
-        /* Encontrou uma thread legítima e pronta para rodar */
-        break; 
+        break; /* Encontrou uma thread válida! */
     }
     
-    /* 2. VERIFICAÇÃO SE CAI EM IDLE (Se a fila ficou vazia após o expurgo) */
+        /* 2. SE A FILA FICOU VAZIA: Cortamos o fluxo e saltamos direto para a Idle */
     if (next == NULL)
     {
         next = &cpu->idle_thread;
         next->state = THREAD_RUNNING;
         cpu->current_thread = next;
 
-        kprintf("[Kernel] Sem mais tarefas prontas. Saltando para a Idle Routine...\n");
+        //kprintf("[Kernel] Sem tarefas prontas. Saltando diretamente para a Idle Routine...\n");
 
-        __asm__ __volatile__("sti");
-        idle_thread_routine(); 
-        
-        while(1); 
+        /* 
+         * Replicamos a lógica exata de salvaguarda da TSS do seu task_switch,
+         * mas apontando para o topo estável inicial da pilha da Idle.
+         */
+        cpu->tss.rsp0 = (uint64_t)next->kernel_stack + sizeof(stack_frame_t);
+
+        /*
+         * COMO VIEMOS DE UMA SYSCALL: 
+         * O 'swapgs' já colocou o CPU no espaço do Kernel.
+         * Não usamos o 'interrupt_exit_stub' porque ele tentaria fazer um 'iretq' 
+         * ou devolver os privilégios para Ring 3, o que gera o #GP.
+         *
+         * Mudamos o RSP para a pilha da Idle, ligamos as interrupções (sti) 
+         * e saltamos nativamente para a rotina.
+         */
+        __asm__ __volatile__(
+            "mov %0, %%rsp\n"         // Altera para a pilha segura da Idle Task
+            "sti\n"                   // Reativa o Timer para permitir preempção futura
+            "jmp %1\n"                // Salta direto para o loop infinito de 'hlt'
+            :
+            : "r"(cpu->tss.rsp0), "r"(idle_thread_routine)
+            : "memory"
+        );
+
+        while (1); 
     }
 
-    /* 3. FLUXO PADRÃO (Se existir OUTRA aplicação real e diferente na fila) */
+    /* 3. FLUXO PADRÃO (Apenas se existir OUTRA aplicação REAL de Ring 3 na fila) */
     next->state = THREAD_RUNNING;
     cpu->current_thread = next;
 
-    cpu->tss.rsp0 = (uint64_t)next->kernel_stack + sizeof(stack_frame_t);
-
-    kprintf("[Kernel] Alternando para a proxima tarefa REAL (TID: %u)...\n", next->tid);
-
-    if (next->owner != NULL && next->owner->cr3 != 0)
+    if (next->owner != NULL && next->owner->cr3 != 0) 
     {
-        /* Troca de espaço de endereçamento (MMU CR3) */
-        vmm_switch_pml4(next->owner->cr3);
+        if (current == NULL || current->owner == NULL || current->owner->cr3 != next->owner->cr3) 
+        {
+            vmm_switch_pml4(next->owner->cr3);
+        }
     }
 
+    cpu->tss.rsp0 = (uint64_t)next->kernel_stack + sizeof(stack_frame_t);
+
+    //kprintf("[Kernel] Alternando para a proxima tarefa REAL (TID: %u)...\n", next->tid);
+
+    /* 
+     * Como a próxima tarefa é REAL (Ring 3), ela foi pausada pelo Timer anteriormente.
+     * O 'interrupt_exit_stub' vai fazer o 'iretq' legítimo para restaurar o Ring 3 dela.
+     */
     __asm__ __volatile__(
         "mov %0, %%rsp\n"
         "jmp interrupt_exit_stub\n"
@@ -250,11 +275,9 @@ uint64_t sys_exit(int code)
         : "memory"
     );
 
-    // numca sera executado
     while (1);
     return 0;
 }
-
 
 /**
  * Realiza a troca de contexto local do núcleo por preempção (Task Switch).

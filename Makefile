@@ -10,6 +10,7 @@ KERNEL_DIR  := kernel/kernel
 ARCH_DIR    := kernel/arch
 LIB_DIR     := kernel/lib
 DRIVERS_DIR := kernel/drivers
+FS_DIR 		:= kernel/fs
 BUILD_DIR   := build
 LINKER      := scripts/linker/x86_64.ld
 APLINKER    := scripts/linker/x86_64_ap.ld
@@ -50,6 +51,7 @@ C_OBJ := \
 	$(BUILD_DIR)/kprintf.o \
 	$(BUILD_DIR)/pmm.o \
 	$(BUILD_DIR)/heap.o \
+	$(BUILD_DIR)/pool.o \
 	$(BUILD_DIR)/acpi.o \
 	$(BUILD_DIR)/lapic.o \
 	$(BUILD_DIR)/ioapic.o \
@@ -64,6 +66,8 @@ C_OBJ := \
 	$(BUILD_DIR)/keyboard.o \
 	$(BUILD_DIR)/mouse.o \
 	$(BUILD_DIR)/ahci.o \
+	$(BUILD_DIR)/block.o \
+	$(BUILD_DIR)/vfs.o \
 	$(BUILD_DIR)/test.o
 
 
@@ -301,10 +305,17 @@ $(BUILD_DIR)/ahci.o: $(DRIVERS_DIR)/storage/ahci.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================
+# Compile block.c
+# ============================================================
+
+$(BUILD_DIR)/block.o: $(DRIVERS_DIR)/storage/block.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
 # Compile test.c
 # ============================================================
 
-$(BUILD_DIR)/test.o: $(DRIVERS_DIR)/storage/test.c | $(BUILD_DIR)
+$(BUILD_DIR)/test.o: $(KERNEL_DIR)/core/test.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 
@@ -329,6 +340,13 @@ $(BUILD_DIR)/pmm.o: $(KERNEL_DIR)/mm/pmm.c | $(BUILD_DIR)
 # ============================================================
 
 $(BUILD_DIR)/heap.o: $(KERNEL_DIR)/mm/heap.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile pool.c
+# ============================================================
+
+$(BUILD_DIR)/pool.o: $(KERNEL_DIR)/mm/pool.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================
@@ -385,6 +403,13 @@ $(BUILD_DIR)/process.o: $(KERNEL_DIR)/sched/process.c | $(BUILD_DIR)
 # ============================================================
 
 $(BUILD_DIR)/syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile vfs.c
+# ============================================================
+
+$(BUILD_DIR)/vfs.o: $(FS_DIR)/vfs/vfs.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================

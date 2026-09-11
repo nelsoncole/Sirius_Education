@@ -12,13 +12,14 @@
  *   Created Date: 08/09/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 09/09/2026
+ *  Modified Date: 10/09/2026
  *
  *        License: MIT
  * ============================================================================
  */
 
 #include <kernel/drivers/storage/ahci.h>
+#include <kernel/drivers/storage/block.h>
 #include <kernel/kvmm.h>
 #include <kernel/kernel/mm/pmm.h>
 #include <kernel/klib.h>
@@ -68,6 +69,11 @@ static int g_storage_device_count = 0;
 void ahci_interrupt_handler(void);
 static int ahci_setup_port_dma(ahci_device_t *dev);
 
+/**
+ * Publica uma porta SATA ativa utilizando os metadados reais obtidos do hardware.
+ */
+static void ahci_register_block(ahci_device_t *ahci_dev, int port_index, ata_identify_t *identify);
+
 static void ahci_port_stop(hba_port_t *port)
 {
     port->cmd &= ~AHCI_PxCMD_ST;
@@ -98,7 +104,8 @@ static int ahci_find_free_slot(hba_port_t *port)
 /**
  * A ROTINA DE SERVIÇO DE INTERRUPÇÃO (ISR) DO AHCI
  */
-__attribute__((force_align_arg_pointer)) void ahci_interrupt_handler(void)
+__attribute__((force_align_arg_pointer)) 
+void ahci_interrupt_handler(void)
 {
     for (int d = 0; d < g_storage_device_count; d++)
     {
@@ -245,14 +252,14 @@ static int ahci_dma_io(ahci_device_t *dev, uint64_t lba, uint32_t sector_count, 
 
 /* Interfaces Públicas Exportadas pelo Driver de Bloco */
 
-int ahci_read_blocks(int device_id, uint64_t lba, uint32_t count, uintptr_t phys_buffer)
+int ahci_block_read(int device_id, uint64_t lba, uint32_t count, uintptr_t phys_buffer)
 {
     if (device_id >= g_storage_device_count || !g_storage_devices[device_id].present)
         return -1;
     return ahci_dma_io(&g_storage_devices[device_id], lba, count, phys_buffer, 0);
 }
 
-int ahci_write_blocks(int device_id, uint64_t lba, uint32_t count, uintptr_t phys_buffer)
+int ahci_block_write(int device_id, uint64_t lba, uint32_t count, uintptr_t phys_buffer)
 {
     if (device_id >= g_storage_device_count || !g_storage_devices[device_id].present)
         return -1;
@@ -382,6 +389,14 @@ static int ahci_identify_device_polling(ahci_device_t *dev)
     // Processa os dados recebidos de forma segura
     ata_identify_t *id = (ata_identify_t *)virt_buffer;
 
+    // Inversão de bytes (Endianness) para o SERIAL NUMBER (20 bytes / 10 palavras)
+    for (int i = 0; i < 20; i += 2)
+    {
+        char tmp = id->serial_number[i];
+        id->serial_number[i] = id->serial_number[i + 1];
+        id->serial_number[i + 1] = tmp;
+    }
+
     // Corrige a inversão de bytes (Endianness string padrão ATA)
     for (int i = 0; i < 40; i += 2)
     {
@@ -389,9 +404,6 @@ static int ahci_identify_device_polling(ahci_device_t *dev)
         id->model_number[i] = id->model_number[i + 1];
         id->model_number[i + 1] = tmp;
     }
-
-    // Terminação nula garantida no final real do array de tamanho 40 (índice 39)
-    id->model_number[39] = '\0';
 
     // Captura o total de setores usando o mapeamento limpo da struct
     dev->total_sectors = id->total_sectors_48;
@@ -402,12 +414,14 @@ static int ahci_identify_device_polling(ahci_device_t *dev)
         dev->total_sectors = id->total_sectors_28;
     }
 
+    /*
     // Nota: O cálculo de GB necessita de cast (uint64_t) para prevenir overflow aritmético de 32 bits
     uint64_t size_in_gb = (dev->total_sectors * 512UL) / (1024UL * 1024UL * 1024UL);
 
     kprintf("[AHCI] HDDs/SSDs SATA Identificado com Sucesso!\n");
     kprintf("[AHCI] Modelo: %s\n", id->model_number);
     kprintf("[AHCI] Tamanho: %llu GB (%llu setores em LBA)\n", size_in_gb, dev->total_sectors);
+    */
 
     return 0;
 }
@@ -553,13 +567,24 @@ int ahci_init(pci_device_t *dev)
                     // CORREÇÃO: Incrementa o contador ANTES do identify para a ISR reconhecer o dispositivo
                     g_storage_device_count++;
 
+                    // Aloca ou aponta para o buffer onde a sua função preencheu os 512 bytes obtidos do hardware
+                    // Nota: Verifique se a sua função 'ahci_identify_device_polling' escreve internamente no slot,
+                    // ou se precisa de passar o ponteiro. Presumimos aqui que ela guarda os dados na tabela ctba_virt[0].
+                    ata_identify_t *identify_data = (ata_identify_t *)(sata_dev->fb_virt + 1024);
+
                     if (ahci_identify_device_polling(sata_dev) != 0)
                     {
-                        // Se o polling falhar, desfaz o registro por segurança
+                        // Se o polling falhar, desfaz o registo por segurança
                         g_storage_device_count--;
                         sata_dev->present = 0;
                         kprintf("[AHCI] Erro ao identificar dispositivo na porta [%d]\n", i);
                     }
+                    else
+                    {
+                        // CORREÇÃO DE SINTAXE: Passagem correta dos argumentos para a função
+                        ahci_register_block(sata_dev, i, identify_data);
+                    }
+
                 }
             }
         }
@@ -582,4 +607,86 @@ void ahci_driver_init(void)
      */
 
     pci_load_devices_by_class(PCI_CLASS_STORAGE, PCI_SUBCLASS_SATA, ahci_init);
+}
+
+
+
+
+/**
+ * =============================================================================================
+ * Publica uma porta SATA ativa do AHCI como um Dispositivo de Blocos para o Kernel.
+ */
+
+ /* Wrappers e Conversor de Paginação Virtual/Física */
+static uintptr_t ahci_virtual_to_physical(void* virtual_addr) {
+    extern uintptr_t vmm_get_physical(uintptr_t virtual_address);
+    return vmm_get_physical((uintptr_t)virtual_addr);
+}
+
+static int ahci_backend_read_blocks(struct block_device* dev, uint64_t lba, uint32_t count, void* buffer) {
+    if (!dev || !dev->private_data || !buffer) return -1;
+    ahci_device_t* ahci_dev = (ahci_device_t*)dev->private_data;
+    uintptr_t phys_buf = ahci_virtual_to_physical(buffer);
+    if (!phys_buf) return -3;
+    return ahci_block_read(ahci_dev->port_id, lba, count, phys_buf);
+}
+
+static int ahci_backend_write_blocks(struct block_device* dev, uint64_t lba, uint32_t count, void* buffer) {
+    if (!dev || !dev->private_data || !buffer) return -1;
+    ahci_device_t* ahci_dev = (ahci_device_t*)dev->private_data;
+    uintptr_t phys_buf = ahci_virtual_to_physical(buffer);
+    if (!phys_buf) return -3;
+    return ahci_block_write(ahci_dev->port_id, lba, count, phys_buf);
+}
+
+/**
+ * Publica uma porta SATA ativa utilizando os metadados reais obtidos do hardware.
+ */
+static void ahci_register_block(ahci_device_t *ahci_dev, int port_index, ata_identify_t *identify)
+{
+    if (!ahci_dev || !identify) return;
+
+    block_device_t *bdev = (block_device_t *)kmalloc(sizeof(block_device_t));
+    if (!bdev) return;
+
+    memset(bdev, 0, sizeof(block_device_t));
+    ksprintf(bdev->name, "ahci%d", port_index);
+
+    char cleaned_model[41];
+    char cleaned_serial[21];
+
+    memcpy(cleaned_model, identify->model_number, 40);
+    memcpy(cleaned_serial, identify->serial_number, 20);
+    cleaned_model[40] = '\0';
+    cleaned_serial[20] = '\0';
+
+    uint64_t capacity = 0;
+    if (identify->total_sectors_48 > 0) {
+        capacity = identify->total_sectors_48;
+    } else {
+        capacity = identify->total_sectors_28;
+    }
+
+    ahci_dev->total_sectors = capacity;
+    bdev->total_sectors     = capacity;
+    bdev->sector_size       = 512; 
+
+    bdev->read_blocks   = ahci_backend_read_blocks;
+    bdev->write_blocks  = ahci_backend_write_blocks;
+    bdev->ioctl         = NULL; 
+    bdev->private_data  = (void *)ahci_dev;
+
+    int assigned_id = register_block_device(bdev);
+
+    if (assigned_id >= 0) {
+        kprintf("[AHCI] Disco '%s' Registado [ID: %d]\n"
+                "       Modelo: %s\n"
+                "       S/N:    %s\n"
+                "       Tam:    %lu setores (~%lu MB)\n",
+                bdev->name, assigned_id, cleaned_model, cleaned_serial, 
+                (unsigned long)bdev->total_sectors,
+                (unsigned long)((bdev->total_sectors * 512) / (1024 * 1024)));
+    } else {
+        kfree(bdev);
+    }
 }

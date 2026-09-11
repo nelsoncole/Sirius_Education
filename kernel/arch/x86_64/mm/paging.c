@@ -85,16 +85,20 @@ setup_paging(
     unsigned long PML4_PHYSICAL;
     unsigned long PDPT_PHYSICAL;
     unsigned long PDPT_IDENTITY_PHYSICAL;
+    unsigned long PDPT_256_PHYSICAL;
     unsigned long PD_PHYSICAL;
     unsigned long PD_IDENTITY_PHYSICAL;
+    unsigned long PD_VIDEO_PHYSICAL;
     unsigned long PT_PHYSICAL;
 
 
     PML4_TABLE *pml4;
     PAGE_DIRECTORY_POINTER_TABLE *pdpt;
     PAGE_DIRECTORY_POINTER_TABLE *pdpt_identity;
+    PAGE_DIRECTORY_POINTER_TABLE *pdpt_256;
     PAGE_DIRECTORY *pd;
     PAGE_DIRECTORY *pd_identity;
+    PAGE_DIRECTORY *pd_video;
     PAGE_TABLE *pt;
 
 
@@ -115,6 +119,10 @@ setup_paging(
     PDPT_IDENTITY_PHYSICAL =
         boot_info->KernelAddress +
         PDPT_IDENTITY_PHYSICAL_OFFSET;
+    
+    PDPT_256_PHYSICAL =
+        boot_info->KernelAddress +
+        PDPT_256_PHYSICAL_OFFSET;
 
     PD_PHYSICAL =
         boot_info->KernelAddress +
@@ -123,6 +131,10 @@ setup_paging(
     PD_IDENTITY_PHYSICAL =
         boot_info->KernelAddress +
         PD_IDENTITY_PHYSICAL_OFFSET;
+
+    PD_VIDEO_PHYSICAL =
+        boot_info->KernelAddress +
+        PD_VIDEO_PHYSICAL_OFFSET;
 
     PT_PHYSICAL =
         boot_info->KernelAddress +
@@ -148,11 +160,17 @@ setup_paging(
     pdpt_identity =
         (PAGE_DIRECTORY_POINTER_TABLE *)PDPT_IDENTITY_ADDRESS;
 
+    pdpt_256 =
+        (PAGE_DIRECTORY_POINTER_TABLE *)PDPT_256_ADDRESS;
+
     pd =
         (PAGE_DIRECTORY *)PD_KERNEL_ADDRESS;
 
     pd_identity =
         (PAGE_DIRECTORY *)PD_IDENTITY_ADDRESS;
+
+    pd_video =
+        (PAGE_DIRECTORY *)PD_VIDEO_ADDRESS;
 
     pt =
         (PAGE_TABLE *)PT_ADDRESS;
@@ -189,6 +207,12 @@ setup_paging(
         sizeof(PAGE_DIRECTORY_POINTER_TABLE) * 512
     );
 
+    memset(
+        pdpt_256,
+        0,
+        sizeof(PAGE_DIRECTORY_POINTER_TABLE) * 512
+    );
+
 
     /*
      * ========================================================
@@ -204,6 +228,12 @@ setup_paging(
 
     memset(
         pd_identity,
+        0,
+        sizeof(PAGE_DIRECTORY) * 512
+    );
+
+    memset(
+        pd_video,
         0,
         sizeof(PAGE_DIRECTORY) * 512
     );
@@ -520,7 +550,7 @@ setup_paging(
     pml4[256].us = 0;
 
     pml4[256].phy_addr_pdpt =
-        PDPT_PHYSICAL >> 12;
+        PDPT_256_PHYSICAL >> 12;
 
 
     /*
@@ -543,12 +573,12 @@ setup_paging(
      * ========================================================
      */
 
-    pdpt[framebuffer_pdpt_index].p  = 1;
-    pdpt[framebuffer_pdpt_index].rw = 1;
-    pdpt[framebuffer_pdpt_index].us = 0;
+    pdpt_256[framebuffer_pdpt_index].p  = 1;
+    pdpt_256[framebuffer_pdpt_index].rw = 1;
+    pdpt_256[framebuffer_pdpt_index].us = 0;
 
-    pdpt[framebuffer_pdpt_index].phy_addr_pd =
-        PD_PHYSICAL >> 12;
+    pdpt_256[framebuffer_pdpt_index].phy_addr_pd =
+        PD_VIDEO_PHYSICAL >> 12;
 
 
     /*
@@ -642,12 +672,12 @@ setup_paging(
          * ====================================================
          */
 
-        pd[pd_index].p  = 1;
-        pd[pd_index].rw = 1;
-        pd[pd_index].us = 0;
-        pd[pd_index].ps = 0;
+        pd_video[pd_index].p  = 1;
+        pd_video[pd_index].rw = 1;
+        pd_video[pd_index].us = 0;
+        pd_video[pd_index].ps = 0;
 
-        pd[pd_index].phy_addr_pt =
+        pd_video[pd_index].phy_addr_pt =
             current_pt_physical >> 12;
 
 

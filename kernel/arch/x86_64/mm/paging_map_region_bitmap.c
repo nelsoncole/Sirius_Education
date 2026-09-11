@@ -11,7 +11,7 @@
  *   Created Date: 29/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 29/08/2026
+ *  Modified Date: 10/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -30,18 +30,15 @@ unsigned long paging_map_region_bitmap(BOOT_INFO *boot_info,
     PML4_TABLE *pml4;
     PAGE_DIRECTORY_POINTER_TABLE *pdpt;
     PAGE_DIRECTORY *pd_bitmap;
-    PAGE_TABLE *pt;
 
     pml4      = (PML4_TABLE *)PML4_ADDRESS;
-    pdpt      = (PAGE_DIRECTORY_POINTER_TABLE *)PDPT_ADDRESS;
+    pdpt      = (PAGE_DIRECTORY_POINTER_TABLE *)PDPT_256_ADDRESS;
     pd_bitmap = (PAGE_DIRECTORY *)PD_BITMAP_ADDRESS; // Uso estrito do diretório exclusivo do Bitmap
-    pt        = (PAGE_TABLE *)PT_ADDRESS;
 
-    unsigned long PDPT_PHYSICAL = boot_info->KernelAddress + PDPT_PHYSICAL_OFFSET;
+    unsigned long PDPT_PHYSICAL = boot_info->KernelAddress + PDPT_256_PHYSICAL_OFFSET;
     unsigned long PD_BITMAP_PHYSICAL = boot_info->KernelAddress + PD_BITMAP_PHYSICAL_OFFSET;
     unsigned long PT_PHYSICAL   = boot_info->KernelAddress + PT_PHYSICAL_OFFSET;
 
-   
     // Tamanho em bytes
     bitmap_size = ram_size_bytes;
 
@@ -58,7 +55,6 @@ unsigned long paging_map_region_bitmap(BOOT_INFO *boot_info,
     pml4[256].p  = 1;
     pml4[256].rw = 1;
     pml4[256].us = 0;
-
     pml4[256].phy_addr_pdpt = PDPT_PHYSICAL >> 12;
 
     /*
@@ -67,7 +63,6 @@ unsigned long paging_map_region_bitmap(BOOT_INFO *boot_info,
      * ========================================================
      */
     unsigned long bitmap_virtual = KERNEL_BITMAP_VIRTUAL_BASE; // 0xFFFF800000000000
-
     unsigned long bitmap_pdpt_index = (bitmap_virtual >> 30) & 0x1FF; // Será índice 0
 
     /*
@@ -78,8 +73,6 @@ unsigned long paging_map_region_bitmap(BOOT_INFO *boot_info,
     pdpt[bitmap_pdpt_index].p  = 1;
     pdpt[bitmap_pdpt_index].rw = 1;
     pdpt[bitmap_pdpt_index].us = 0;
-
-    // Vincula a entrada 0 da PDPT à tabela PD_BITMAP física dedicada
     pdpt[bitmap_pdpt_index].phy_addr_pd = PD_BITMAP_PHYSICAL >> 12;
 
     /*
@@ -132,31 +125,32 @@ unsigned long paging_map_region_bitmap(BOOT_INFO *boot_info,
         pd_bitmap[pd_index].rw = 1;
         pd_bitmap[pd_index].us = 0;
         pd_bitmap[pd_index].ps = 0;
-
         pd_bitmap[pd_index].phy_addr_pt = current_pt_physical >> 12;
 
         /*
          * ====================================================
-         * PT ENTRY -> Injeta o frame físico da RAM
+         * PT ENTRY -> Injeta o frame físico da RAM mudando de PT
+         * caso o tamanho ultrapasse blocos múltiplos de 2 MB.
          * ====================================================
          */
-        unsigned long pt_entry = (pt_number * 512) + pt_index;
+        // CORREÇÃO: Reposiciona dinamicamente a base virtual da PT correspondente
+        PAGE_TABLE *local_pt = (PAGE_TABLE *)(PT_ADDRESS + (pt_number * PAGE_SIZE));
 
-        pt[pt_entry].p  = 1;
-        pt[pt_entry].rw = 1;
-        pt[pt_entry].us = 0;
-        pt[pt_entry].frames = physical >> 12;
+        local_pt[pt_index].p  = 1;
+        local_pt[pt_index].rw = 1;
+        local_pt[pt_index].us = 0;
+        local_pt[pt_index].frames = physical >> 12;
 
         /*
          * Bitmap armazena metadados de controlo (NX = 1)
          */
-        pt[pt_entry].nx = 1;
+        local_pt[pt_index].nx = 1;
         
-        // Invalida a cache TLB para este endereço virtual
+        // Invalida a cache TLB para este endereço virtual específico
         __asm__ volatile("invlpg (%0)" :: "r"(virtual_addr) : "memory");
     }
 
-        /*
+    /*
      * ========================================================
      * ATUALIZAR CONTADOR GLOBAL DE TABELAS LIVRES
      * 

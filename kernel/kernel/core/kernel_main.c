@@ -9,7 +9,7 @@
  *   Created Date: 25/08/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 07/09/2026
+ *  Modified Date: 11/09/2026
  *
  *        License: MIT
  * ============================================================================
@@ -20,6 +20,7 @@
 #include <kernel/kernel/mm/pmm.h>
 #include <kernel/arch/x86_64/mm/vmm.h>
 #include <kernel/kernel/mm/heap.h>
+#include <kernel/kernel/mm/pool.h>
 #include <kernel/arch/x86_64/cpu/cpu.h>
 #include <kernel/kernel/syscall/syscall.h>
 #include <kernel/arch/x86_64/cpu/idt.h>
@@ -32,10 +33,13 @@
 #include <kernel/drivers/char/keyboard.h>
 #include <kernel/drivers/char/mouse.h>
 #include <kernel/drivers/storage/ahci.h>
+#include <kernel/drivers/storage/block.h>
 #include <kernel/arch/x86_64/kapi/msi.h>
+#include <kernel/fs/vfs/vfs.h>
 #include <kernel/klib.h>
 
 extern void test_read_gpt_table(void);
+extern void test_pool_reusability(void);
 
 unsigned char user_program_binary[] = {
 
@@ -221,6 +225,7 @@ void kernel_main(BOOT_INFO *boot_info)
     kprintf("[INIT] Inicializando o Gestor de Memoria Virtual (VMM) e Heap...\n");
     vmm_init();
     kheap_init();
+    pool_init();
 
     /*
      * 5. Inicializando estruturas Per-CPU (CpuDataBlock) para o BSP
@@ -289,8 +294,8 @@ void kernel_main(BOOT_INFO *boot_info)
      * Cria o processo, aloca o PML4 isolado, usa a scratch window para
      * injetar o array 'user_program_binary' na base 0x400000UL e cria a thread de Ring 3.
      */
-    /*unsigned long user_program_size = sizeof(user_program_binary);
-    process_t *app = process_create(user_program_binary, user_program_size, 0);
+    unsigned long user_program_size = sizeof(user_program_binary);
+    process_t *app = process_create(user_program_binary, user_program_size, 1);
 
     if (!app)
     {
@@ -299,24 +304,35 @@ void kernel_main(BOOT_INFO *boot_info)
             ;
     }
 
-    kprintf("[Kernel] Ativando multitasking. Transitando para Ring 3...\n");*/
+    kprintf("[Kernel] Ativando multitasking. Transitando para Ring 3...\n");
 
     // 11.1. Liga o barramento local de interrupções com segurança
     //__asm__ __volatile__("sti");
+
 
     // 14. Driveres
     pci_bus_init();
     msi_init();
     keyboard_ps2_init();
     mouse_ps2_init();
+    block_subsystem_init();
     ahci_driver_init();
+
+    // 15. VFS
+    vfs_init();
 
 
     /* 3. Cria a thread mestre passando o topo da stack devidamente blindado */
     thread_t *test_th = thread_create(test_read_gpt_table, 0);
     if (!test_th)
     {
-        kprintf("[Thread] Erro: Falha ao criar a thread\n");
+        kprintf("[Thread] Erro: Falha ao criar a thread (test_read_gpt_table)\n");
+    }
+
+    test_th = thread_create(test_pool_reusability, 0);
+    if (!test_th)
+    {
+        kprintf("[Thread] Erro: Falha ao criar a thread (test_pool_reusability)\n");
     }
     
     /*

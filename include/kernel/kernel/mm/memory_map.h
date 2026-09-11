@@ -85,20 +85,20 @@
 #define KERNEL_TRAMPOLINE_VIRTUAL_BASE (KERNEL_VIRTUAL_BASE + 0x300000UL) // 0xFFFFFFFF80300000UL
 
 /*
- * JANELA TEMPORÁRIA DO VMM (SCRATCH WINDOW)
- * ------------------------------------------------------------------------
- * Mapeado no índice 511 da PML4, Índice 510 da PDPT, Índice 1 da PD e Índice 511 da PT.
- * Endereço virtual isolado para manipulação volátil de tabelas físicas.
+ * ========================================================================
+ * SUBSISTEMA DE JANELAS TEMPORÁRIAS DO VMM (COMPLETAMENTE ISOLADO)
+ * ========================================================================
+ * Alocado na região do Kernel Base no endereço virtual 0xFFFFFFFF803F0000UL.
+ * Mapeado no índice 511 da PML4, Índice 510 da PDPT, Índice 1 da PD e Índice 496 da PT.
+ * Ocupa os slots sequenciais 496, 497 e 498 da mesma Tabela de Páginas (PT).
  */
-#define VMM_SCRATCH_WINDOW          0xFFFFFFFF803FF000UL
+#define VMM_SCRATCH_ISOLATED_BASE    0xFFFFFFFF803F0000UL
 
-/*
- * JANELA TEMPORÁRIA DO VMM EXCLUSIVA (SCRATCH WINDOW INTERNAL)
- * ------------------------------------------------------------------------
- * Mapeado no índice 511 da PML4, Índice 510 da PDPT, Índice 1 da PD e Índice 510 da PT.
- * Slot protegido reservado exclusivamente para preenchimento de tabelas no vmm_map_page.
- */
-#define VMM_SCRATCH_WINDOW_INTERNAL 0xFFFFFFFF803FE000UL
+// Mapeamento linear direto dos slots contíguos na PT vinculada ao Índice 1 da PD
+#define VMM_SCRATCH_WINDOW           (VMM_SCRATCH_ISOLATED_BASE)        // Slot / PT Índice 496 (Legado)
+#define VMM_SCRATCH_WINDOW_0         (VMM_SCRATCH_WINDOW + PAGE_SIZE)   // Slot / PT Índice 497 (Janela 0)
+#define VMM_SCRATCH_WINDOW_1         (VMM_SCRATCH_WINDOW_0 + PAGE_SIZE) // Slot / PT Índice 498 (Janela 1)
+
 
 /*
  * DISPOSITIVOS DE HARDWARE E MMIO GLOBAL (ACPI, LAPIC, IOAPIC, PCI)
@@ -119,10 +119,21 @@
  */
 #define KERNEL_BITMAP_VIRTUAL_BASE  0xFFFF800000000000UL
 
+
+/*
+ * ALLOC_POOL 
+ * ----------------------------------------------------------------------------------------------
+ * Regiao de memoria para uso geral do kernel como ex: memoria alocada para read().
+ * Mapeado no índice 256 da PML4, Índice 0 da PDPT, Índice 128 da PD e Índice 0 da PT.
+ */
+#define KERNEL_POOL_VIRTUAL_BASE 0xFFFF800010000000ULL // Mapeia a janela de buffers dinâmicos
+#define KERNEL_POOL_MAX_PAGES    131072                // Janela de 512 MB 
+
+
 /*
  * HEAP DO KERNEL
  * ------------------------------------------------------------------------
- * Mapeado no índice 256 da PML4, Índice 0 da PDPT, Índice 512 da PD e Índice 0 da PT.
+ * Mapeado no índice 256 da PML4, Índice 1 da PDPT, Índice 0 da PD e Índice 0 da PT.
  * Espaço de memória virtual reservado para alocações dinâmicas (kmalloc).
  */
 #define KERNEL_HEAP_VIRTUAL_BASE    0xFFFF800040000000UL

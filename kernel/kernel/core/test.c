@@ -9,22 +9,33 @@
  */
 
 #include <kernel/klib.h>
-#include <kernel/drivers/storage/ahci.h>
-#include <kernel/kvmm.h>
-#include <kernel/kernel/mm/pmm.h>
+#include <kernel/drivers/storage/block.h>
+#include <kernel/kernel/mm/pool.h>
 
 void test_read_gpt_table(void)
 {
+    block_list_devices();
+
     kprintf("[Storage Test] Iniciando teste de leitura GPT por DMA...\n");
 
     /* 1. Aloca uma página física livre (4KB) na RAM para o DMA */
-    uintptr_t target_phys_buffer = pmm_alloc_page();
-    if (target_phys_buffer == 0)
+    size_t memory_size = 0x1000;
+    uint8_t *sector_data = pool_alloc(memory_size);
+    if (sector_data == NULL)
     {
-        kprintf("[Storage Test] Erro: Falha ao alocar pagina fisica para DMA.\n");
+        kprintf("[Storage Test] Erro: Falha ao alocar memoria.\n");
         while (1) {
             __asm__ __volatile__("hlt");
         }
+    }
+    
+
+    // Localiza o dispositivo de blocos registado pelo AHCI através do nome literal
+    //block_device_t* disco = block_get_device_by_name("ahci0");
+    block_device_t* disco = block_get_device(0);
+    if (!disco) {
+        kprintf("[ERRO] Dispositivo 'ahci0' não encontrado no catálogo global.\n");
+        return;
     }
 
     /* 
@@ -32,12 +43,12 @@ void test_read_gpt_table(void)
      * Na especificação GPT, o cabeçalho principal fica obrigatoriamente no LBA 1.
      * Solicitamos 1 setor (512 bytes).
      */
-    int status = ahci_read_blocks(0, 1, 1, target_phys_buffer);
+    int status = disco->read_blocks(disco, 1, 1, sector_data);
 
     if (status != 0)
     {
         kprintf("[Storage Test] Erro critico: Falha na transferencia DMA do LBA 1.\n");
-        pmm_free_page(target_phys_buffer);
+        pool_free(sector_data, memory_size);
         while (1) {
             __asm__ __volatile__("hlt");
         }
@@ -45,16 +56,6 @@ void test_read_gpt_table(void)
 
     kprintf("[Storage Test] DMA do LBA 1 concluido. Mapeando buffer virtual...\n");
 
-    /* 3. Mapeia a página física de dados para um endereço virtual do CPU */
-    uint8_t *sector_data = (uint8_t *)vmm_map_device((unsigned long)target_phys_buffer, PAGE_SIZE);
-    if (sector_data == NULL)
-    {
-        kprintf("[Storage Test] Erro: Falha ao mapear virtualmente a pagina de dados.\n");
-        pmm_free_page(target_phys_buffer);
-        while (1) {
-            __asm__ __volatile__("hlt");
-        }
-    }
 
     /* 
      * 4. Valida a assinatura mágica da GPT nos primeiros 8 bytes do LBA 1.
@@ -117,10 +118,60 @@ void test_read_gpt_table(void)
     }
 
     /* 5. Limpeza de recursos após o uso */
-    // vmm_unmap_device(sector_data, PAGE_SIZE); 
-    pmm_free_page(target_phys_buffer);
+    pool_free(sector_data, memory_size);
 
     kprintf("[Storage Test] Fim do teste. Sistema em halt controlado.\n");
+    while (1) {
+        __asm__ __volatile__("hlt");
+    }
+}
+
+
+
+void test_pool_reusability(void)
+{
+    kprintf("\n--- [Pool Test] Verificação de Reutilização de Endereço ---\n");
+
+    // 1. Primeira Alocação
+    kprintf("[Pool] 1. Alocando primeira pagina...\n");
+    void* addr1 = pool_alloc(PAGE_SIZE);
+    kprintf("[Pool] Endereco 1: 0x%lx\n", (unsigned long)addr1);
+
+    if (addr1 == NULL) {
+        kprintf("[Pool] ERRO: Falha na alocacao inicial.\n");
+        while (1) {
+            __asm__ __volatile__("hlt");
+        }
+    }
+
+    // 2. Libertação da Primeira Alocação
+    kprintf("[Pool] 2. Liberando primeira pagina (free_pool)...\n");
+    pool_free(addr1, PAGE_SIZE);
+
+    // 3. Segunda Alocação (Deverá reciclar o mesmo bit do bitmap se o free_pool funcionou)
+    kprintf("[Pool] 3. Alocando segunda pagina imediatamente...\n");
+    void* addr2 = pool_alloc(PAGE_SIZE);
+    kprintf("[Pool] Endereco 2: 0x%lx\n", (unsigned long)addr2);
+
+    if (addr2 == NULL) {
+        kprintf("[Pool] ERRO: Falha na segunda alocacao.\n");
+        while (1) {
+            __asm__ __volatile__("hlt");
+        }
+    }
+
+    // 4. Comparação e Validação do Resultado
+    if (addr1 == addr2) {
+        kprintf("[Pool] SUCESSO: O endereco foi perfeitamente reciclado! (0x%lx == 0x%lx)\n", 
+                (unsigned long)addr1, (unsigned long)addr2);
+    } else {
+        kprintf("[Pool] AVISO/FALHA: O bitmap nao reciclou o espaco virtual libertado! (Enderecos diferentes).\n");
+    }
+
+    // Limpeza final do teste
+    pool_free(addr2, PAGE_SIZE);
+    kprintf("--- [Pool Test] Fim do teste de reciclagem ---\n\n");
+
     while (1) {
         __asm__ __volatile__("hlt");
     }

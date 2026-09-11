@@ -93,70 +93,85 @@ void vmm_map_page(PML4_TABLE* pml4, unsigned long virt, unsigned long phys, unsi
 
     unsigned char flag_rw = (flags & (1ULL << 1)) ? 1 : 0;
     unsigned char flag_us = (flags & (1ULL << 2)) ? 1 : 0;
-
     /*
      * 1. GARANTE A EXISTÊNCIA DA PDPT
      * ------------------------------------------------------------------------
      */
+    unsigned long pdpt_phys = 0;
     if (!pml4[pml4_idx].p) {
         unsigned long new_table_phys = pmm_alloc_page();
-        
-        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map_internal(new_table_phys);
+        // Limpa na Janela 1 para não interferir com mais nada
+        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map_internal(new_table_phys, 0);
         for (int i = 0; i < 512; i++) virt_ptr[i] = 0;
         
         pml4[pml4_idx].p = 1;
         pml4[pml4_idx].rw = flag_rw;
         pml4[pml4_idx].us = flag_us;
         pml4[pml4_idx].phy_addr_pdpt = (new_table_phys >> 12);
-    }
-    unsigned long pdpt_phys = (unsigned long)pml4[pml4_idx].phy_addr_pdpt << 12;
 
+        pdpt_phys = new_table_phys;
+    }
+    else
+    {
+        pdpt_phys = (unsigned long)pml4[pml4_idx].phy_addr_pdpt << 12;
+    }
+    
     /*
      * 2. GARANTE A EXISTÊNCIA DO DIRETÓRIO DE PÁGINAS (PD)
      * ------------------------------------------------------------------------
      */
-    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys);
+    // Abre a PDPT na Janela 0
+    unsigned long pd_phys = 0;
+    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys, 0);
     if (!pdpt[pdpt_idx].p) {
+
         unsigned long new_table_phys = pmm_alloc_page();
         
-        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map_internal(new_table_phys);
+        // Limpa a nova tabela na Janela 1
+        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map_internal(new_table_phys, 1);
         for (int i = 0; i < 512; i++) virt_ptr[i] = 0;
-        
-        // Reabre a PDPT para salvar o vínculo do novo frame físico
-        pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys);
         pdpt[pdpt_idx].p = 1;
         pdpt[pdpt_idx].rw = flag_rw;
         pdpt[pdpt_idx].us = flag_us;
         pdpt[pdpt_idx].phy_addr_pd = (new_table_phys >> 12);
+        pd_phys = new_table_phys;
     }
-    unsigned long pd_phys = (unsigned long)pdpt[pdpt_idx].phy_addr_pd << 12;
+    else
+    {
+        pd_phys = (unsigned long)pdpt[pdpt_idx].phy_addr_pd << 12 &0xFFFFFFFFF;
+    }
 
     /*
      * 3. GARANTE A EXISTÊNCIA DA TABELA DE PÁGINAS (PT)
      * ------------------------------------------------------------------------
      */
-    PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys);
+    // Abre o PD na Janela 0
+    unsigned long pt_phys = 0;
+    PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys, 0);
     if (!pd[pd_idx].p) {
         unsigned long new_table_phys = pmm_alloc_page();
         
-        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map_internal(new_table_phys);
+        // Limpa a nova PT na Janela 1
+        unsigned long long* virt_ptr = (unsigned long long*)vmm_scratch_map_internal(new_table_phys, 1);
         for (int i = 0; i < 512; i++) virt_ptr[i] = 0;
-        
-        // Reabre a PD para salvar o vínculo do novo frame físico da PT
-        pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys);
         pd[pd_idx].p = 1;
         pd[pd_idx].rw = flag_rw;
         pd[pd_idx].us = flag_us;
         pd[pd_idx].ps = 0; 
         pd[pd_idx].phy_addr_pt = (new_table_phys >> 12);
+        pt_phys = new_table_phys;
     }
-    unsigned long pt_phys = (unsigned long)pd[pd_idx].phy_addr_pt << 12;
+    else
+    {
+        pt_phys = (unsigned long)pd[pd_idx].phy_addr_pt << 12;
+    }
 
     /*
      * 4. CONFIGURAÇÃO FINAL DO DESCRITOR DE PÁGINA (PTE)
      * ------------------------------------------------------------------------
      */
-    PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys);
+    // Abre a PT na Janela 0 para fazer a escrita final do mapeamento
+    PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys, 0);
     pt[pt_idx].p = 1;
     pt[pt_idx].rw = flag_rw;
     pt[pt_idx].us = flag_us;
@@ -166,7 +181,6 @@ void vmm_map_page(PML4_TABLE* pml4, unsigned long virt, unsigned long phys, unsi
     // Sincroniza imediatamente a cache MMU do processador para o endereço virtual alvo
     __asm__ __volatile__("invlpg (%0)" :: "r"(virt) : "memory");
 }
-
 
 /*
  * REMOÇÃO DE MAPEAMENTO DE PÁGINAS VIRTUAIS
@@ -185,17 +199,17 @@ void vmm_unmap_page(PML4_TABLE* pml4, unsigned long virt) {
     unsigned long pdpt_phys = (unsigned long)pml4[pml4_idx].phy_addr_pdpt << 12;
     
     // 2. Verifica se o PD existe
-    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys);
+    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys, 0);
     if (!pdpt[pdpt_idx].p) return;
     unsigned long pd_phys = (unsigned long)pdpt[pdpt_idx].phy_addr_pd << 12;
 
     // 3. Verifica se a PT existe
-    PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys);
+    PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys, 0);
     if (!pd[pd_idx].p) return;
     unsigned long pt_phys = (unsigned long)pd[pd_idx].phy_addr_pt << 12;
 
     // 4. Mapeia a PT final para inspecionar e modificar a entrada da página
-    PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys);
+    PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys, 0);
     if (!pt[pt_idx].p) return;
 
     // Recupera o endereço físico do frame antes de anular a entrada
@@ -314,7 +328,7 @@ unsigned long vmm_create_address_space(void)
     unsigned long long kernel_entries_buffer[256];
 
     /* Mapeia o PML4 do Kernel na janela temporária para leitura */
-    unsigned long long* current_pml4_raw = (unsigned long long*)vmm_scratch_map_internal(current_pml4_phys);
+    unsigned long long* current_pml4_raw = (unsigned long long*)vmm_scratch_map_internal(current_pml4_phys, 0);
     
     /* Salva com segurança a metade superior do Kernel no stack local */
     for (int i = 256; i < 512; i++) 
@@ -326,7 +340,7 @@ unsigned long vmm_create_address_space(void)
      * 2. Mapeia a nova página PML4 alocada na Janela Temporária 
      * substituindo o mapeamento antigo.
      */
-    unsigned long long* new_pml4_raw = (unsigned long long*)vmm_scratch_map_internal(new_pml4_phys);
+    unsigned long long* new_pml4_raw = (unsigned long long*)vmm_scratch_map_internal(new_pml4_phys, 0);
 
     /* 3. Limpa a metade inferior (Índices 0 a 255 -> Espaço do Utilizador) */
     for (int i = 0; i < 256; i++) 
@@ -342,4 +356,127 @@ unsigned long vmm_create_address_space(void)
 
     /* Retorna o endereço físico perfeitamente alinhado a 4KB */
     return (new_pml4_phys & ~0xFFFUL);
+}
+
+/*
+ * TRADUÇÃO DE ENDEREÇO VIRTUAL PARA FÍSICO (VMM GET PHYSICAL ADDRESS)
+ * ------------------------------------------------------------------------
+ * Percorre a árvore de paginação (PML4 -> PDPT -> PD -> PT) para encontrar
+ * o endereço físico mapeado para um determinado endereço virtual.
+ * 
+ * @param pml4    Ponteiro para a tabela raíz PML4 ativa do sistema.
+ * @param page_va Endereço virtual base que se deseja traduzir.
+ * @return        O endereço físico bruto (RAM) ou 0 se não estiver mapeado.
+ */
+unsigned long vmm_get_physical_address(PML4_TABLE* pml4, unsigned long page_va) {
+    unsigned long pml4_idx = GET_PML4_INDEX(page_va);
+    unsigned long pdpt_idx = GET_PDPT_INDEX(page_va);
+    unsigned long pd_idx   = GET_PD_INDEX(page_va);
+    unsigned long pt_idx   = GET_PT_INDEX(page_va);
+
+    // 1. Caminha até à PDPT
+    if (!pml4[pml4_idx].p) {
+        return 0; // Entrada PML4 não está presente
+    }
+    unsigned long pdpt_phys = (unsigned long)pml4[pml4_idx].phy_addr_pdpt << 12;
+
+    // 2. Caminha até ao Diretorio de Páginas (PD)
+    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys, 0);
+    if (!pdpt[pdpt_idx].p) {
+        return 0; // Entrada PDPT não está presente
+    }
+    unsigned long pd_phys = (unsigned long)pdpt[pdpt_idx].phy_addr_pd << 12;
+
+    // 3. Caminha até à Tabela de Páginas (PT)
+    PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys, 0);
+    if (!pd[pd_idx].p) {
+        return 0; // Entrada PD não está presente
+    }
+    
+    // NOTA: Se suportares Huge Pages de 2MB no teu kernel (bit PS ativo), 
+    // o endereço físico base estaria diretamente aqui no diretório de páginas.
+    if (pd[pd_idx].ps) {
+        unsigned long huge_phys = (unsigned long)pd[pd_idx].phy_addr_pt << 12; // Em Huge Pages, este campo aponta para o frame de 2MB
+        return huge_phys;
+    }
+    
+    unsigned long pt_phys = (unsigned long)pd[pd_idx].phy_addr_pt << 12;
+
+    // 4. Lê o descritor de página final (PTE) da Tabela de Páginas
+    PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys, 0);
+    if (!pt[pt_idx].p) {
+        return 0; // Página não está presente na memória
+    }
+
+    // Reconstrói o endereço físico base de 4KB correspondente
+    unsigned long phys_frame = (unsigned long)pt[pt_idx].frames << 12;
+
+    return phys_frame;
+}
+
+/*
+ * TRADUÇÃO DE ENDEREÇOS VIRTUAIS PARA FÍSICOS (VMM GET PHYSICAL)
+ * ------------------------------------------------------------------------
+ * Caminha manualmente pela árvore de paginação ativa do sistema utilizando
+ * a Janela Temporária (Scratch) para decodificar os descritores PML4, PDPT,
+ * PD e PT. Retorna o endereço físico bruto mapeado, ou 0 se for inválido.
+ * 
+ * @param virtual_address  O endereço virtual a ser inspecionado.
+ * @return                 O endereço físico real correspondente ou 0 (NULL).
+ */
+uintptr_t vmm_get_physical(uintptr_t virtual_address) {
+    // 1. Extrai os índices e o offset de alinhamento do endereço virtual
+    unsigned long pml4_idx = GET_PML4_INDEX(virtual_address);
+    unsigned long pdpt_idx = GET_PDPT_INDEX(virtual_address);
+    unsigned long pd_idx   = GET_PD_INDEX(virtual_address);
+    unsigned long pt_idx   = GET_PT_INDEX(virtual_address);
+    unsigned long offset   = virtual_address & 0xFFFUL;
+
+    // 2. Acede à PML4 raiz através do endereço fixo definido pelo bootloader
+    PML4_TABLE* pml4 = (PML4_TABLE*)PML4_ADDRESS;
+    if (!pml4[pml4_idx].p) {
+        return 0; // Estrutura ou página não presente
+    }
+
+    // 3. Lê o endereço físico da PDPT e mapeia-a na Janela Temporária 0
+    unsigned long pdpt_phys = (unsigned long)pml4[pml4_idx].phy_addr_pdpt << 12;
+    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys, 0);
+    if (!pdpt[pdpt_idx].p) {
+        return 0;
+    }
+
+    // Suporte a Páginas Gigantes de 1 GB (Se houver suporte no seu Bootloader)
+    // O bit 7 indica se o descritor aponta diretamente para o frame final
+    if (((unsigned long long*)pdpt)[pdpt_idx] & (1ULL << 7)) {
+        unsigned long page_offset_1gb = virtual_address & 0x3FFFFFFFULL;
+        unsigned long base_1gb = ((unsigned long long*)pdpt)[pdpt_idx] & 0x000FFFFFFFFFF000ULL;
+        return base_1gb | page_offset_1gb;
+    }
+
+    // 4. Lê o endereço físico do PD e mapeia-o na Janela Temporária 0
+    unsigned long pd_phys = (unsigned long)pdpt[pdpt_idx].phy_addr_pd << 12;
+    PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys, 0);
+    if (!pd[pd_idx].p) {
+        return 0;
+    }
+
+    // SUPORTE CRÍTICO: Páginas Grandes de 2 MB (Bit PS ativo no Page Directory)
+    // Muitos loaders UEFI mapeiam o Kernel Core e regiões físicas em blocos de 2 MB
+    if (pd[pd_idx].ps) {
+        unsigned long page_offset_2mb = virtual_address & 0x1FFFFFULL;
+        // O campo phy_addr_pt numa página de 2MB guarda na verdade a base física de 2MB
+        unsigned long base_2mb = (unsigned long)pd[pd_idx].phy_addr_pt << 12;
+        return base_2mb | page_offset_2mb;
+    }
+
+    // 5. Lê o endereço físico da PT final e mapeia-a na Janela Temporária 0
+    unsigned long pt_phys = (unsigned long)pd[pd_idx].phy_addr_pt << 12;
+    PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys, 0);
+    if (!pt[pt_idx].p) {
+        return 0;
+    }
+
+    // 6. Extrai o frame físico final de 4 KB e combina com o offset original
+    unsigned long phys_frame = (unsigned long)pt[pt_idx].frames << 12;
+    return phys_frame | offset;
 }
