@@ -42,7 +42,8 @@ static void vfs_release_lock(void) {
 // INICIALIZAÇÃO DO SUBSISTEMA VFS
 //-----------------------------------------------------------------------------
 void vfs_init(void) {
-    vfs_acquire_lock();
+    
+    vfs_release_lock(); // limpar spinloock
 
     // 1. Limpa o catálogo de drivers de sistemas de ficheiros
     for (int i = 0; i < FS_MAX_REG_DRIVERS; i++) {
@@ -66,8 +67,6 @@ void vfs_init(void) {
     } else {
         kprintf("[VFS] CRÍTICO: Falha catastrófica ao alocar o nó raiz do sistema.\n");
     }
-
-    vfs_release_lock();
 }
 
 //-----------------------------------------------------------------------------

@@ -11,7 +11,7 @@
  *   Created Date: 29/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 10/09/2026
+ *  Modified Date: 11/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -19,6 +19,7 @@
 
 #include <kernel/arch/x86_64/mm/paging.h>
 #include <kernel/kernel.h>
+#include <kernel/lib/stdint.h>
 
 unsigned long paging_map_region_bitmap(BOOT_INFO *boot_info, 
     unsigned long bitmap_phys_addr, 
@@ -33,23 +34,18 @@ unsigned long paging_map_region_bitmap(BOOT_INFO *boot_info,
 
     pml4      = (PML4_TABLE *)PML4_ADDRESS;
     pdpt      = (PAGE_DIRECTORY_POINTER_TABLE *)PDPT_256_ADDRESS;
-    pd_bitmap = (PAGE_DIRECTORY *)PD_BITMAP_ADDRESS; // Uso estrito do diretório exclusivo do Bitmap
+    pd_bitmap = (PAGE_DIRECTORY *)PD_BITMAP_ADDRESS; 
 
     unsigned long PDPT_PHYSICAL = boot_info->KernelAddress + PDPT_256_PHYSICAL_OFFSET;
     unsigned long PD_BITMAP_PHYSICAL = boot_info->KernelAddress + PD_BITMAP_PHYSICAL_OFFSET;
     unsigned long PT_PHYSICAL   = boot_info->KernelAddress + PT_PHYSICAL_OFFSET;
 
-    // Tamanho em bytes
     bitmap_size = ram_size_bytes;
-
-    /*
-     * Quantidade de páginas de 4 KB necessárias para cobrir o Bitmap.
-     */
     bitmap_pages = (bitmap_size + PAGE_SIZE - 1) / PAGE_SIZE;
 
     /*
      * ========================================================
-     * PML4 -> PARTILHADO COM O KERNEL E VÍDEO (Índice Higher Half)
+     * CONEXÃO DOS RAMOS SUPERIORES (SEM SHIFTS PARA BITFIELDS)
      * ========================================================
      */
     pml4[256].p  = 1;
@@ -57,68 +53,41 @@ unsigned long paging_map_region_bitmap(BOOT_INFO *boot_info,
     pml4[256].us = 0;
     pml4[256].phy_addr_pdpt = PDPT_PHYSICAL >> 12;
 
-    /*
-     * ========================================================
-     * CALCULAR ÍNDICES DO BASE VIRTUAL DO BITMAP
-     * ========================================================
-     */
-    unsigned long bitmap_virtual = KERNEL_BITMAP_VIRTUAL_BASE; // 0xFFFF800000000000
-    unsigned long bitmap_pdpt_index = (bitmap_virtual >> 30) & 0x1FF; // Será índice 0
+    unsigned long bitmap_virtual = KERNEL_BITMAP_VIRTUAL_BASE; 
+    unsigned long bitmap_pdpt_index = (bitmap_virtual >> 30) & 0x1FF; 
 
-    /*
-     * ========================================================
-     * PDPT -> DIRECIONA O ÍNDICE 0 PARA A PD EXCLUSIVA DO BITMAP
-     * ========================================================
-     */
     pdpt[bitmap_pdpt_index].p  = 1;
     pdpt[bitmap_pdpt_index].rw = 1;
     pdpt[bitmap_pdpt_index].us = 0;
     pdpt[bitmap_pdpt_index].phy_addr_pd = PD_BITMAP_PHYSICAL >> 12;
 
-    /*
-     * ========================================================
-     * PRIMEIRA PT DISPONÍVEL NO MOMENTO
-     * ========================================================
-     */
     unsigned long bitmap_pt_start = g_next_pt_number;
 
     /*
      * ========================================================
-     * MAPEAR BITMAP (Escrita inicia do índice 0 da PD)
+     * MAPEAR BITMAP
      * ========================================================
      */
     for (unsigned long page = 0; page < bitmap_pages; page++)
     {
         unsigned long pt_number = bitmap_pt_start + (page / 512);
 
-        /*
-         * Verificar limite das PTs (252 disponíveis).
-         */
         if (pt_number >= NUM_PT_TABLES)
         {
             break;
         }
 
-        /* Endereço físico do bloco do bitmap na RAM */
         unsigned long physical = bitmap_phys_addr + page * PAGE_SIZE;
-
-        /* Endereço virtual contínuo */
         unsigned long virtual_addr = KERNEL_BITMAP_VIRTUAL_BASE + page * PAGE_SIZE;
 
-        /*
-         * COMO A PD É EXCLUSIVA:
-         * Calculamos os índices de forma sequencial com base no número da página atual.
-         * Garante que a primeira iteração (page = 0) use obrigatoriamente pd_index = 0 e pt_index = 0.
-         */
         unsigned long pd_index = (page / 512) & 0x1FF;
         unsigned long pt_index = page & 0x1FF;
 
-        /* Endereço físico da PT atual dentro do array g_pt */
         unsigned long current_pt_physical = PT_PHYSICAL + pt_number * PAGE_SIZE;
 
         /*
          * ====================================================
-         * PD_BITMAP -> PT (Preenche a partir do índice 0)
+         * PD_BITMAP -> PT 
          * ====================================================
          */
         pd_bitmap[pd_index].p  = 1;
@@ -129,35 +98,23 @@ unsigned long paging_map_region_bitmap(BOOT_INFO *boot_info,
 
         /*
          * ====================================================
-         * PT ENTRY -> Injeta o frame físico da RAM mudando de PT
-         * caso o tamanho ultrapasse blocos múltiplos de 2 MB.
+         * PT ENTRY -> CORREÇÃO DA ARITMÉTICA DE PONTEIROS
          * ====================================================
+         * O cast para (uintptr_t) força a soma a ser feita em bytes puros,
+         * evitando que o compilador multiplique o deslocamento por sizeof(PAGE_TABLE).
          */
-        // CORREÇÃO: Reposiciona dinamicamente a base virtual da PT correspondente
-        PAGE_TABLE *local_pt = (PAGE_TABLE *)(PT_ADDRESS + (pt_number * PAGE_SIZE));
+        PAGE_TABLE *local_pt = (PAGE_TABLE *)((uintptr_t)PT_ADDRESS + (pt_number * PAGE_SIZE));
 
         local_pt[pt_index].p  = 1;
         local_pt[pt_index].rw = 1;
         local_pt[pt_index].us = 0;
         local_pt[pt_index].frames = physical >> 12;
-
-        /*
-         * Bitmap armazena metadados de controlo (NX = 1)
-         */
-        local_pt[pt_index].nx = 1;
+        local_pt[pt_index].nx = 1; 
         
-        // Invalida a cache TLB para este endereço virtual específico
         __asm__ volatile("invlpg (%0)" :: "r"(virtual_addr) : "memory");
     }
 
-    /*
-     * ========================================================
-     * ATUALIZAR CONTADOR GLOBAL DE TABELAS LIVRES
-     * 
-     * Soma 1 ao g_next_pt_number a cada bloco de 512 páginas 
-     * (arredondado para cima), garantindo o alinhamento.
-     * ========================================================
-     */
+    // Atualiza o contador de tabelas cheias
     g_next_pt_number += (bitmap_pages + 511UL) / 512UL;
 
     return KERNEL_BITMAP_VIRTUAL_BASE;

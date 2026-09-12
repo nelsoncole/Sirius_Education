@@ -50,7 +50,7 @@
  *      + 0x100000 -> PML4
  *      + 0x101000 -> PDPT
  *      + 0x102000 -> PD
- *      + 0x103000 -> PT
+ *      + 0x108000 -> PT
  *
  * ============================================================
  */
@@ -129,19 +129,20 @@ typedef struct _PAGE_TABLE
 
 typedef struct _PAGE_DIRECTORY
 {
-    unsigned long long p :1;
-	unsigned long long rw :1;
-	unsigned long long us :1;
-	unsigned long long pwt :1;
-	unsigned long long pcd :1;
-	unsigned long long a :1;
-	unsigned long long ign1 :1;
-	unsigned long long ps :1;
-	unsigned long long ign2 :4;
-	unsigned long long phy_addr_pt :40;
-	unsigned long long rs2 :12;
-
+    unsigned long long p           :1;  // Bit 0
+    unsigned long long rw          :1;  // Bit 1
+    unsigned long long us          :1;  // Bit 2
+    unsigned long long pwt         :1;  // Bit 3
+    unsigned long long pcd         :1;  // Bit 4
+    unsigned long long a           :1;  // Bit 5
+    unsigned long long d           :1;  // Bit 6
+    unsigned long long ps          :1;  // Bit 7  (0 para tabela de 4KB, 1 para 2MB)
+    unsigned long long g           :1;  // Bit 8  (Global)
+    unsigned long long ign2        :3;  // Bits 9, 10, 11 (Disponíveis/Ignorados)
+    unsigned long long phy_addr_pt :40; // Bits 12 a 51 (Endereço Físico correto)
+    unsigned long long rs2         :12; // Bits 52 a 63 (Reservados)
 } __attribute__((packed)) PAGE_DIRECTORY;
+
 
 
 

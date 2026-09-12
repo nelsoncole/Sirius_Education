@@ -51,15 +51,7 @@ void pmm_init(BOOT_INFO *boot_info) {
         }
     }
     
-    // 1. Calcular o total de páginas com base na RAM Instalada
-    // Nelson, como seguraça devemos calcular o pmm_total_pages a partir da ultima regiao mapeada
-    // pmm_total_pages = map->InstalledRAM / PAGE_SIZE;
-
-    // -------------------------------------------------------------------------
-    // CORREÇÃO: Varredura para encontrar o endereço físico absoluto mais alto.
-    // Isso é vital porque a UEFI não entrega as regiões ordenadas e o remapeamento
-    // joga blocos para cima de 4GB (0x100000000).
-    // -------------------------------------------------------------------------
+    // 1. Encontrar o endereço físico absoluto mais alto
     unsigned long highest_physical_address = 0;
     for (unsigned long i = 0; i < map->MemoryRegionCount; i++) {
         unsigned long region_end = map->MemoryRegions[i].Start + map->MemoryRegions[i].Size;
@@ -68,31 +60,27 @@ void pmm_init(BOOT_INFO *boot_info) {
         }
     }
 
-    // Calcula o total de páginas reais de ponta a ponta (do endereço 0x0 até o topo)
+    // Calcula o total de páginas reais de ponta a ponta
     pmm_total_pages = highest_physical_address / PAGE_SIZE;
     
-    // Cada byte do bitmap controla 8 páginas.
+    // Cada byte do bitmap controla 8 páginas
     pmm_bitmap_size = pmm_total_pages / 8;
     if (pmm_total_pages % 8) pmm_bitmap_size++;
-
-    //pmm_bitmap_size = 524288;
 
     kprintf("[PMM] Total de RAM: %d MB (%d paginas de 4KB).\n", map->InstalledRAM / 1024 / 1024, pmm_total_pages);
     kprintf("[PMM] Tamanho do Bitmap necessario: %d bytes.\n", pmm_bitmap_size);
 
-    // 2. Encontrar um local seguro para colocar o Bitmap
-    // Precisamos de uma região MEMORY_FREE grande o suficiente para o pmm_bitmap_size
+    // 2. Encontrar um local seguro para colocar o Bitmap (Evitando Overlap com o Kernel)
     unsigned long bitmap_phys_addr = 0;
+    unsigned long kernel_end = boot_info->KernelAddress + boot_info->KernelMemorySize;
     
     for (unsigned long i = 0; i < map->MemoryRegionCount; i++) {
         MEMORY_REGION reg = map->MemoryRegions[i];
+        unsigned long reg_end = reg.Start + reg.Size;
         
         if (reg.Type == MEMORY_FREE && reg.Size >= pmm_bitmap_size) {
-            // Garante que não colide com o endereço do próprio Kernel.
-            // O bootloader UEFI já subtraiu e marcou a região da memória do kernel
-            // como reservada (removendo-a de MEMORY_FREE)
-            if (!(boot_info->KernelAddress >= reg.Start && 
-                  boot_info->KernelAddress < (reg.Start + reg.Size))) {
+            // CORREÇÃO 1: Validação de intervalo completo. O bitmap e o kernel não podem cruzar-se!
+            if (!(reg.Start < kernel_end && reg_end > boot_info->KernelAddress)) {
                 bitmap_phys_addr = reg.Start;
                 break;
             }
@@ -104,24 +92,18 @@ void pmm_init(BOOT_INFO *boot_info) {
         for(;;);
     }
 
-    /*
-     * O mapeador agora recebe o tamanho total da bytes (pmm_bitmap_size)
-     * e retorna o endereço virtual mapeado na árvore de páginas x86_64.
-     */
+    // Mapeia o bitmap na árvore de páginas virtuais
     unsigned long bitmap_virt_addr = paging_map_region_bitmap(boot_info, bitmap_phys_addr, pmm_bitmap_size);
-
-    // Atribuição direta através do retorno da função
     pmm_bitmap = (unsigned char *) bitmap_virt_addr;
-    kprintf("[PMM] Bitmap alocado no endereco fisico: 0x%x mapeado em %p\n", bitmap_phys_addr, pmm_bitmap);
+    kprintf("[PMM] Bitmap alocado no endereco fisico: 0x%lX mapeado em %p\n", bitmap_phys_addr, pmm_bitmap);
     
-    // 3. Inicializar o Bitmap completo como "Ocupado" (Prevenção por segurança)
+    // 3. Inicializar o Bitmap completo como "Ocupado" (Prevenção segura)
     memset(pmm_bitmap, 0xFF, pmm_bitmap_size);
     
-    // 4. Mapear o estado real da RAM com base nas regiões do Bootloader
+    // 4. Mapear o estado real da RAM Livre
     for (unsigned long i = 0; i < map->MemoryRegionCount; i++) {
         MEMORY_REGION reg = map->MemoryRegions[i];
         
-        // Se a região for explicitamente utilizável (Livre)
         if (reg.Type == MEMORY_FREE) {
             unsigned long start_page = reg.Start / PAGE_SIZE;
             unsigned long num_pages = reg.Size / PAGE_SIZE;
@@ -132,18 +114,19 @@ void pmm_init(BOOT_INFO *boot_info) {
         }
     }
 
-    // 5. Reservar as páginas onde o próprio Kernel e o Bitmap estão localizados
+    // 5. RESERVAS DE SEGURANÇA (Subscreve o Passo 4 garantindo isolamento)
+    // Reserva o Kernel
     unsigned long kernel_start_page = boot_info->KernelAddress / PAGE_SIZE;
-    unsigned long kernel_num_pages = boot_info->KernelMemorySize / PAGE_SIZE;
-    if (boot_info->KernelMemorySize % PAGE_SIZE) kernel_num_pages++;
+    unsigned long kernel_num_pages = (boot_info->KernelMemorySize + PAGE_SIZE - 1) / PAGE_SIZE;
 
     for (unsigned long p = 0; p < kernel_num_pages; p++) {
         bitmap_set_bit(kernel_start_page + p);
     }
 
+    // CORREÇÃO 2: Força a proteção estrita das páginas do próprio bitmap.
+    // Garante que o Passo 4 não deixou o endereço do bitmap marcado como livre por engano.
     unsigned long bitmap_start_page = bitmap_phys_addr / PAGE_SIZE;
-    unsigned long bitmap_num_pages = pmm_bitmap_size / PAGE_SIZE;
-    if (pmm_bitmap_size % PAGE_SIZE) bitmap_num_pages++;
+    unsigned long bitmap_num_pages = (pmm_bitmap_size + PAGE_SIZE - 1) / PAGE_SIZE;
 
     for (unsigned long p = 0; p < bitmap_num_pages; p++) {
         bitmap_set_bit(bitmap_start_page + p);
@@ -166,7 +149,6 @@ unsigned long pmm_alloc_page(void)
     for (unsigned long i = 0; i < pmm_bitmap_size; i++)
     {
         // Se o byte for 0xFF, significa que as 8 páginas deste bloco estão ocupadas.
-        // Saltamos o byte imediatamente para acelerar a busca por hardware.
         if (pmm_bitmap[i] == 0xFF) {
             continue;
         }
@@ -174,8 +156,8 @@ unsigned long pmm_alloc_page(void)
         // Se o byte tem pelo menos um bit em 0, descobrimos qual é
         for (int bit = 0; bit < 8; bit++)
         {
-            // Verifica se o bit atual está livre (0)
-            if (!(pmm_bitmap[i] & (1 << bit)))
+            // CORREÇÃO 1: Usa 1ULL (64-bit Unsigned Long Long) para evitar Sign Extension e lixo de 32-bit
+            if (!(pmm_bitmap[i] & (1ULL << bit)))
             {
                 // Calcula o índice global da página na RAM
                 unsigned long page_index = (i * 8) + bit;
@@ -188,8 +170,8 @@ unsigned long pmm_alloc_page(void)
                 // Aloca a página marcando o bit como 1 (Ocupado)
                 bitmap_set_bit(page_index);
 
-                // Converte o índice da página de volta para o endereço físico real (page * 4KB)
-                unsigned long phys_address = page_index * PAGE_SIZE;
+                // CORREÇÃO 2: Garante que a multiplicação usa aritmética estrita de 64 bits (PAGE_SIZE forçado a ULL)
+                unsigned long phys_address = page_index * (unsigned long)PAGE_SIZE;
                 return phys_address;
             }
         }
@@ -221,7 +203,7 @@ void pmm_free_page(unsigned long phys_address)
         return;
     }
 
-    // Liberta a página no bitmap resetando o bit correspondente para 0
+    // Liberta a página no bitmap resetando o bit correspondente
     bitmap_clear_bit(page_index);
 }
 

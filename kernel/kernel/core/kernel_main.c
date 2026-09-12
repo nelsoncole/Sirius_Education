@@ -295,7 +295,7 @@ void kernel_main(BOOT_INFO *boot_info)
      * injetar o array 'user_program_binary' na base 0x400000UL e cria a thread de Ring 3.
      */
     unsigned long user_program_size = sizeof(user_program_binary);
-    process_t *app = process_create(user_program_binary, user_program_size, 1);
+    process_t *app = process_create(user_program_binary, user_program_size, 0);
 
     if (!app)
     {

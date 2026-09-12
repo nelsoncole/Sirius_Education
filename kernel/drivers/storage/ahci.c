@@ -127,7 +127,7 @@ void ahci_interrupt_handler(void)
             uint32_t port_is = port->is;
             port->is = port_is;
 
-            /* CORREÇÃO: Limpa o sinal no registo mestre global para não prender o barramento PCI */
+            /* Limpa o sinal no registo mestre global para não prender o barramento PCI */
             if (hba_base)
             {
                 hba_base->is = (1 << dev->port_id);
@@ -555,7 +555,7 @@ int ahci_init(pci_device_t *dev)
                     break;
 
                 ahci_device_t *sata_dev = &g_storage_devices[g_storage_device_count];
-                sata_dev->port_id = i;
+                sata_dev->port_id = g_storage_device_count; //i;
                 sata_dev->regs = port;
                 sata_dev->hba_base_virt = hba_mem;
                 sata_dev->present = 1;
@@ -564,7 +564,7 @@ int ahci_init(pci_device_t *dev)
                 {
                     kprintf("[AHCI] Porta [%d]: Armazenamento mapeado de forma permanente via VMM.\n", i);
 
-                    // CORREÇÃO: Incrementa o contador ANTES do identify para a ISR reconhecer o dispositivo
+                    // Incrementa o contador ANTES do identify para a ISR reconhecer o dispositivo
                     g_storage_device_count++;
 
                     // Aloca ou aponta para o buffer onde a sua função preencheu os 512 bytes obtidos do hardware
@@ -581,8 +581,8 @@ int ahci_init(pci_device_t *dev)
                     }
                     else
                     {
-                        // CORREÇÃO DE SINTAXE: Passagem correta dos argumentos para a função
-                        ahci_register_block(sata_dev, i, identify_data);
+                        // Passagem correta dos argumentos para a função
+                        ahci_register_block(sata_dev, sata_dev->port_id, identify_data);
                     }
 
                 }

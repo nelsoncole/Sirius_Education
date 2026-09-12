@@ -14,10 +14,11 @@
 
 void test_read_gpt_table(void)
 {
-    block_list_devices();
-
     kprintf("[Storage Test] Iniciando teste de leitura GPT por DMA...\n");
 
+    block_list_devices();
+
+    
     /* 1. Aloca uma página física livre (4KB) na RAM para o DMA */
     size_t memory_size = 0x1000;
     uint8_t *sector_data = pool_alloc(memory_size);
@@ -28,7 +29,6 @@ void test_read_gpt_table(void)
             __asm__ __volatile__("hlt");
         }
     }
-    
 
     // Localiza o dispositivo de blocos registado pelo AHCI através do nome literal
     //block_device_t* disco = block_get_device_by_name("ahci0");
