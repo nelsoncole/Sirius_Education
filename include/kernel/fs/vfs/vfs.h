@@ -21,6 +21,7 @@
 
 #include <kernel/lib/stdint.h>
 #include <kernel/drivers/storage/block.h>
+#include <kernel/kernel.h>
 
 #define VFS_NAME_MAX 256
 
@@ -36,9 +37,17 @@
 #define VFS_MODE_READ   0x01
 #define VFS_MODE_WRITE  0x02
 #define VFS_MODE_CREATE 0x04
+#define VFS_MODE_TRUNC  0x08
+
+/* Diretrizes nativas para o vfs_seek (Padrão POSIX) */
+#define VFS_SEEK_SET  0
+#define VFS_SEEK_CUR  1
+#define VFS_SEEK_END  2
 
 struct vfs_node;
+struct vfs_stat;
 struct vfs_filesystem;
+
 
 /**
  * Tabela de Operações do VFS (Polimorfismo em C)
@@ -48,17 +57,34 @@ typedef struct vfs_operations {
     int (*open)(struct vfs_node* node, uint32_t flags);
     int (*close)(struct vfs_node* node);
     
-    // Leitura e escrita baseadas em offset de bytes (Trabalho do VFS/Driver de FS)
+    // Leitura e escrita baseadas em offset de bytes
     int (*read)(struct vfs_node* node, uint64_t offset, uint32_t size, void* buffer);
     int (*write)(struct vfs_node* node, uint64_t offset, uint32_t size, void* buffer);
     
-    // Operações específicas para diretórios
+    // Força a sincronização de caches da RAM com o HDD/SSD
+    int (*flush)(struct vfs_node* node);
+    
+    // Operações específicas para diretórios e ciclo de vida
     struct vfs_node* (*finddir)(struct vfs_node* node, const char* name);
     int (*readdir)(struct vfs_node* node, uint32_t index, struct vfs_node* out_node);
     
     int (*mkdir)(struct vfs_node* node, const char* name, uint16_t permissions);
     int (*create)(struct vfs_node* node, const char* name, uint16_t permissions);
+    
+    // Remoção
+    int (*unlink)(struct vfs_node* node, const char* name);
+    int (*rmdir)(struct vfs_node* node, const char* name);
+    
+    // Preenche uma estrutura 'stat' com datas e atributos reais do disco
+    int (*stat)(struct vfs_node* node, struct vfs_stat* buf);
+    
+    // Altera permissões/atributos (ex: ativar/desativar Read-Only no FAT32, NTFS, DevFS)
+    int (*chmod)(struct vfs_node* node, uint16_t mode);
+    
+    // Move ou renomeia um arquivo/pasta de forma nativa no sistema de arquivos
+    int (*rename)(struct vfs_node* node, const char* old_name, const char* new_name);
 } vfs_operations_t;
+
 
 /**
  * O Nó do Sistema de Ficheiros Virtual (VFS Node / Inode Genérico)
@@ -78,18 +104,44 @@ typedef struct vfs_node {
     struct vfs_node* ptr_mount;     /* Se for um ponto de montagem, aponta para a raiz mapeada */
 } vfs_node_t;
 
+/* Estrutura de controlo de sessão de ficheiro para o processo */
+typedef struct vfs_file {
+    vfs_node_t* node;     // Ponteiro para o nó do VFS correspondente
+    uint64_t    offset;   // Posição atual de leitura/escrita em bytes
+    uint32_t    flags;    // Flags com que o ficheiro foi aberto (READ, WRITE, etc)
+} vfs_file_t;
+
+typedef struct vfs_stat {
+    uint32_t st_ino;       /* Número do Inode (No FAT32, mapeamos para o Cluster Inicial) */
+    uint64_t st_size;      /* Tamanho real do ficheiro em Bytes */
+    uint32_t st_mode;      /* Tipo e permissões lógicas (Diretório ou Ficheiro) */
+    uint32_t st_uid;       /* ID do utilizador (Donos - Fixo como 0 no FAT32) */
+    uint32_t st_gid;       /* ID do grupo (Fixo como 0 no FAT32) */
+    uint16_t st_attr;      /* Atributos nativos brutos do hardware FAT32 (Hidden, System, etc) */
+} vfs_stat_t;
+
+
 /**
  * Estrutura de Definição de um Sistema de Ficheiros (FS Driver Descriptor)
  */
 typedef struct vfs_filesystem {
-    const char* name;               /* Nome do driver (ex: "fat32", "ntfs", "devfs") */
+    const char* name; /* Nome do driver. Ex: "fat32" */
     
-    // Função chamada quando 'vfs_mount' liga um disco a este sistema de ficheiros
-    vfs_node_t* (*mount)(block_device_t* dev, const char* mount_point);
-    int (*unmount)(vfs_node_t* root_node);
+    // Callback de Montagem: Lê o hardware e aloca a raiz do disco
+    struct vfs_node* (*mount)(block_device_t* dev, const char* mount_path);
+    
+    // Callback de Desmontagem: Liberta as estruturas do volume e fecha o hardware
+    int (*unmount)(struct vfs_node* root_node);
+
 } vfs_filesystem_t;
 
+
 /* --- Interfaces Públicas do Núcleo do VFS --- */
+/* 
+ * VARIÁVEL GLOBAL DE INICIALIZAÇÃO EXPORTADA:
+ * Permite que qualquer módulo consulte o nome da partição ativa de boot.
+ */
+extern char g_boot_partition_name[32];
 
 /**
  * Inicializa la árvore virtual do VFS e monta a estrutura '/' RAM elementar.
@@ -100,21 +152,35 @@ void vfs_init(void);
  * Regista um driver de sistema de ficheiros (ex: chamado dentro de fat_init()).
  */
 int vfs_register_filesystem(vfs_filesystem_t* fs);
-
+/**
+ * Varre iterativamente todo o catálogo de armazenamento global, localiza todas as
+ * unidades de disco físicas brutas registadas e dispara o scanner síncrono MBR/GPT
+ * para mapear dinamicamente todas as partições existentes na memória RAM.
+ * 
+ * @return 0 em caso de sucesso (pelo menos um disco processado), ou -1 se nenhum for encontrado.
+ */
+int vfs_init_partitions(void);
 /**
  * Monta um dispositivo de bloco num caminho virtual usando um sistema de ficheiros específico.
  * Ex: vfs_mount("ahci0.1", "/", "fat32");
  */
 int vfs_mount(const char* device_name, const char* mount_path, const char* fs_type);
-
-/**
- * Resolve caminhos absolutos e abre um descritor de nó virtual.
- */
-vfs_node_t* vfs_open(const char* path, uint32_t flags);
+int vfs_umount(const char* mount_path);
 
 /* Operações Genéricas de E/S expostas para as Syscalls do Kernel */
+vfs_node_t* vfs_open(const char* path, uint32_t flags);
 int vfs_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
 int vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
 void vfs_close(vfs_node_t* node);
+uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence);
+
+/* Sincronização, Remoção e Metadados Avançados */
+int vfs_flush(vfs_node_t* node);
+int vfs_stat(vfs_node_t* node, vfs_stat_t* buf);
+int vfs_chmod(vfs_node_t* node, uint16_t mode);
+int vfs_unlink(vfs_node_t* parent, const char* name);
+int vfs_rmdir(vfs_node_t* parent, const char* name);
+int vfs_rename(vfs_node_t* parent, const char* old_name, const char* new_name);
+
 
 #endif /* _VFS_H_ */

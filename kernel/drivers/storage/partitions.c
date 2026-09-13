@@ -48,7 +48,11 @@ static int partition_write_blocks(block_device_t* dev, uint64_t lba, uint32_t co
 //-----------------------------------------------------------------------------
 // AUXILIAR DE REGISTO DE PARTIÇÃO VIRTUAL
 //-----------------------------------------------------------------------------
-static void create_virtual_partition(block_device_t* phys_dev, const char* part_name, uint64_t start_lba, uint64_t total_sectors) {
+static void create_virtual_partition(block_device_t* phys_dev, const char* part_name, 
+                                     uint64_t start_lba, uint64_t total_sectors,
+                                     uint32_t part_num, uint8_t mbr_type, 
+                                     uint8_t sig_type, const uint8_t* sig_data)
+{
     // 1. Aloca as estruturas de controlo lógicas na Heap (Não exigem alinhamento DMA)
     block_device_t* virt_dev = (block_device_t*)kmalloc(sizeof(block_device_t));
     partition_ctx_t* ctx = (partition_ctx_t*)kmalloc(sizeof(partition_ctx_t));
@@ -63,6 +67,14 @@ static void create_virtual_partition(block_device_t* phys_dev, const char* part_
     ctx->phys_dev = phys_dev;
     ctx->start_lba = start_lba;
     ctx->total_sectors = total_sectors;
+    ctx->partition_num  = part_num;
+    ctx->mbr_type       = mbr_type;
+    ctx->signature_type = sig_type;
+    if (sig_data) {
+        memcpy(ctx->signature, sig_data, 16);
+    } else {
+        memset(ctx->signature, 0, 16);
+    }
 
     // 3. Preenche a interface abstrata compatível com o block.h e o FAT32
     memset(virt_dev, 0, sizeof(block_device_t));
@@ -72,13 +84,16 @@ static void create_virtual_partition(block_device_t* phys_dev, const char* part_
     virt_dev->read_blocks   = partition_read_blocks;  
     virt_dev->write_blocks  = partition_write_blocks; 
     virt_dev->ioctl         = phys_dev->ioctl;
-    virt_dev->private_data  = ctx;                    
+    virt_dev->private_data  = ctx;
+    virt_dev->is_raw        = false;               
 
     // 4. Regista no seu catálogo global (block.c)
     int p_id = register_block_device(virt_dev);
     if (p_id >= 0) {
-        kprintf("[PARTITION] Partição '%s' [LBA %lld - %lld] registada com ID %d.\n", 
-                virt_dev->name, start_lba, start_lba + total_sectors - 1, p_id);
+        // Converte o código numérico na string correspondente para o log
+        const char* table_type_str = (mbr_type == 2) ? "GPT" : "MBR";
+        kprintf("[PARTITION] Partição '%s' [ID %u, Tabela: %s] registada com ID %d.\n", 
+                virt_dev->name, part_num, table_type_str, p_id);
     } else {
         kfree(ctx);
         kfree(virt_dev);
@@ -155,10 +170,16 @@ void partition_scan_device(block_device_t* phys_dev) {
                         static const uint8_t zero_guid[16] = {0};
                         if (memcmp(entry->partition_type_guid, zero_guid, 16) != 0) {
                             char part_name[32];
-                            ksprintf(part_name, "%s.%d", phys_dev->name, part_index++);
+                            ksprintf(part_name, "%s.%d", phys_dev->name, part_index);
                             
                             uint64_t size = (entry->ending_lba - entry->starting_lba) + 1;
-                            create_virtual_partition(phys_dev, part_name, entry->starting_lba, size);
+                            
+                            // =========================================================================
+                            // ATRIBUIÇÃO GPT: Passa part_index, MBRType=2, SigType=2 e o GUID único
+                            // =========================================================================
+                            create_virtual_partition(phys_dev, part_name, entry->starting_lba, size,
+                                                     part_index, 2, 2, entry->unique_partition_guid);
+                            part_index++;
                         }
                     }
                 }
@@ -177,9 +198,19 @@ void partition_scan_device(block_device_t* phys_dev) {
         for (int i = 0; i < 4; i++) {
             if (mbr_table[i].partition_type != 0x00 && mbr_table[i].total_sectors > 0) {
                 char part_name[32];
-                ksprintf(part_name, "%s.%d", phys_dev->name, part_index++);
-                
-                create_virtual_partition(phys_dev, part_name, mbr_table[i].start_lba, mbr_table[i].total_sectors);
+                ksprintf(part_name, "%s.%d", phys_dev->name, part_index);
+
+                // Extrai os 4 bytes da assinatura única da MBR guardados no offset 0x1B8 do setor de boot
+                uint8_t mbr_sig[16];
+                memset(mbr_sig, 0, 16);
+                memcpy(mbr_sig, &buffer[0x1B8], 4);
+
+                // =========================================================================
+                // ATRIBUIÇÃO MBR: Passa part_index, MBRType=1, SigType=1 e a assinatura MBR
+                // =========================================================================
+                create_virtual_partition(phys_dev, part_name, mbr_table[i].start_lba, mbr_table[i].total_sectors,
+                                         part_index, 1, 1, mbr_sig);
+                part_index++;
             }
         }
     }

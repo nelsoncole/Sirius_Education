@@ -43,6 +43,8 @@ typedef struct block_device {
     int (*ioctl)(struct block_device* dev, uint32_t cmd, unsigned long arg);
 
     void* private_data;          /* Contexto privado do driver (ex: apontador para ahci_device_t) */
+
+    uint8_t is_raw;
 } block_device_t;
 
 /* --- Interfaces Públicas de Gestão de Dispositivos --- */
@@ -66,7 +68,7 @@ int unregister_block_device(uint32_t id);
 /**
  * Procura um dispositivo de blocos registado pelo seu ID único.
  */
-block_device_t* block_get_device(uint32_t id);
+block_device_t* block_get_device_by_index(uint32_t id);
 
 /**
  * Procura um dispositivo de blocos registado pelo seu nome literal.

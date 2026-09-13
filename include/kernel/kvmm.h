@@ -23,6 +23,9 @@
 
 #include <kernel/kernel/mm/memory_map.h>
 
+#define VMM_PAGE_USER    0x04  /* Flag fictícia padrão x86: Mapeia em espaço User Ring 3 */
+#define VMM_PAGE_WRITE   0x02  /* Flag fictícia padrão x86: Permissão de escrita */
+
 #if defined(__x86_64__) || defined(_M_X64)
     #include <kernel/arch/x86_64/mm/vmm.h>
 #elif defined(__aarch64__)

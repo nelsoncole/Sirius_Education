@@ -63,6 +63,13 @@ typedef struct {
     block_device_t* phys_dev;  /* Ponteiro para o disco rígido físico bruto (ex: sda) */
     uint64_t start_lba;        /* Offset inicial de setores no hardware */
     uint64_t total_sectors;    /* Capacidade lógica restrita da partição */
+
+    /* Metadados físicos obrigatórios para a validação do boot UEFI */
+    uint32_t        partition_num;  /* Número lógico da partição (.1, .2, etc) */
+    uint8_t         mbr_type;       /* Tipo de MBR (0x01 = MBR Clássico, 0x02 = GPT/Protective) */
+    uint8_t         signature_type; /* Tipo de assinatura reportada (GUID ou MBR Signature) */
+    uint8_t         signature[16];  /* 16 bytes: UUID da partição GPT ou Assinatura MBR */
+    
 } partition_ctx_t;
 
 /**

@@ -163,9 +163,14 @@ void scheduler_init(void)
 }
 
 /**
- * Interrupção de saída voluntária de um programa (System Call Exit).
+ * Encerra voluntariamente o processo atual, liberta o seu espaço de endereçamento 
+ * e remove-o permanentemente da fila de execução do Escalonador (Scheduler).
+ * 
+ * NOTA DE ARQUITETURA: Esta função assume o controlo da Stack e NUNCA mais retorna.
+ * 
+ * @param code Código de status de finalização que será reportado ao processo pai.
  */
-uint64_t sys_exit(int code)
+void scheduler_exit(int code)
 {
     __asm__ __volatile__("cli");
 
@@ -276,7 +281,6 @@ uint64_t sys_exit(int code)
     );
 
     while (1);
-    return 0;
 }
 
 /**

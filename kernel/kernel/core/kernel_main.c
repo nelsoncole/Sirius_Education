@@ -39,108 +39,9 @@
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/fs/fat/fat32.h>
 #include <kernel/klib.h>
+#include <kernel/kernel/sched/elf.h>
 
 extern void test(void);
-extern void test_read_gpt_table(void);
-extern void test_pool_reusability(void);
-
-unsigned char user_program_binary[] = {
-
-    /*
-     * ============================================================
-     * PROGRAMA USER RING 3 - x86_64
-     *
-     * Base virtual: 0x0000000000400000
-     * ============================================================
-     */
-
-    /*
-     * 0x400000
-     *
-     * jmp +14
-     *
-     * Salta para 0x400010
-     */
-    0xEB, 0x0E,
-
-    /*
-     * ============================================================
-     * 0x400002
-     *
-     * "Hello Ring3!\n"
-     * 13 bytes
-     *
-     * ============================================================
-     */
-    'H', 'e', 'l', 'l', 'o', ' ',
-    'R', 'i', 'n', 'g', '3', '!', '\n',
-
-    /*
-     * Padding para o código começar em 0x400010
-     */
-    0x00,
-
-    /*
-     * ============================================================
-     * 0x400010
-     * CÓDIGO x86-64
-     * ============================================================
-     */
-
-    /*
-     * mov rax, 1
-     *
-     * RAX = SYS_WRITE (1)
-     */
-    0x48, 0xC7, 0xC0,
-    0x01, 0x00, 0x00, 0x00,
-
-    /*
-     * mov rdi, 0x400002
-     *
-     * RDI = endereço da string
-     */
-    0x48, 0xC7, 0xC7,
-    0x02, 0x00, 0x40, 0x00,
-
-    /*
-     * mov rsi, 13
-     *
-     * RSI = tamanho da string
-     */
-    0x48, 0xC7, 0xC6,
-    0x0D, 0x00, 0x00, 0x00,
-
-    /*
-     * syscall (Executa o SYS_WRITE)
-     */
-    0x0F, 0x05,
-
-    /*
-     * ============================================================
-     * ADICIONADO: SEÇÃO DE SAÍDA CONTROLADA (SYS_EXIT)
-     * ============================================================
-     */
-
-    /*
-     * mov rax, 3
-     *
-     * RAX = SYS_EXIT (Número da sua syscall de saída)
-     */
-    0x48, 0xC7, 0xC0,
-    0x03, 0x00, 0x00, 0x00,
-
-    /*
-     * xor rdi, rdi (ou mov rdi, 0)
-     *
-     * RDI = 0 (Status code de saída com sucesso)
-     */
-    0x48, 0x31, 0xFF,
-
-    /*
-     * syscall (Executa o SYS_EXIT e destrói esta tarefa voluntariamente)
-     */
-    0x0F, 0x05};
 
 /*
  * IMPORTANTE: Declara o rótulo do Assembly como um símbolo externo.
@@ -288,30 +189,7 @@ void kernel_main(BOOT_INFO *boot_info)
 
     // 11. Inicializa o Scheduler para o BSP (Core 0)
     scheduler_init();
-
     // 12. PCB OK
-
-    kprintf("[Kernel] Criando processo isolado a partir de binario bruto...\n");
-
-    /*
-     * Cria o processo, aloca o PML4 isolado, usa a scratch window para
-     * injetar o array 'user_program_binary' na base 0x400000UL e cria a thread de Ring 3.
-     */
-    unsigned long user_program_size = sizeof(user_program_binary);
-    process_t *app = process_create(user_program_binary, user_program_size, 0);
-
-    if (!app)
-    {
-        kprintf("[Kernel] Erro critico: Falha ao carregar o aplicativo de teste.\n");
-        while (1)
-            ;
-    }
-
-    kprintf("[Kernel] Ativando multitasking. Transitando para Ring 3...\n");
-
-    // 11.1. Liga o barramento local de interrupções com segurança
-    //__asm__ __volatile__("sti");
-
 
     // 14. Driveres
     pci_bus_init();
@@ -333,35 +211,98 @@ void kernel_main(BOOT_INFO *boot_info)
     // dando-lhe o nome literal de "ahci%d".
     ahci_driver_init();
 
+    // Aqui vamos inicializar as particoes de disco
+    // vamos identificar o nome da particao de boot
+    vfs_init_partitions();
+    if (g_boot_partition_name[0] == '\0') 
+    {
+        kprintf("[BOOT] Erro Fatal: Partição física de boot não encontrada por assinatura.\n");
+        kprintf("[BOOT] Kernel travado em segurança para impedir falhas de hardware.\n");
+        while (1) {
+            __asm__ __volatile__("hlt");
+        }
+    }
+
+    kprintf("[BOOT] Montando a partição de boot como raiz do VFS...\n");
+    int status = vfs_mount(g_boot_partition_name, "/", "fat32");
+
+    if (status != 0)
+    {
+        kprintf("[BOOT] Erro Fatal: Falha crítica ao montar a partição '%s' usando o driver 'fat32' (Código: %d).\n",
+                g_boot_partition_name, status);
+        kprintf("[BOOT] Kernel travado em segurança para impedir pânicos de hardware no VFS.\n");
+
+        while (1)
+        {
+            __asm__ __volatile__("hlt");
+        }
+    }
 
     /* 3. Cria a thread mestre passando o topo da stack devidamente blindado */
-    thread_t *test_th = thread_create(test_read_gpt_table, 0);
-    if (!test_th)
-    {
-        kprintf("[Thread] Erro: Falha ao criar a thread (test_read_gpt_table)\n");
-    }
-
-    test_th = thread_create(test_pool_reusability, 0);
-    if (!test_th)
-    {
-        kprintf("[Thread] Erro: Falha ao criar a thread (test_pool_reusability)\n");
-    }
-
-    test_th = thread_create(test, 0);
+    /*thread_t *test_th = thread_create(test, 0);
     if (!test_th)
     {
         kprintf("[Thread] Erro: Falha ao criar a thread (test)\n");
-    }
-    
+    }*/
+
     /*
 	 * 16. Modules
 	 */
 
-
-
 	kprintf("\n========================================================================\n");
 	kprintf("Sirius OS carregado com sucesso. Sistema pronto.\n");
 	kprintf("========================================================================\n");
+
+    /*
+     * ============================================================================
+     * ARRANQUE DO PROCESSO INICIAL DO ESPAÇO DE UTILIZADOR (INIT / USER.ELF)
+     * ============================================================================
+     * A responsabilidade do Kernel cessa na inicialização do Hardware e do VFS. 
+     * Daqui em diante, o controlo do ecossistema é delegado ao executável nativo
+     * '/System/user.elf' em Ring 3, que criará o ambiente do utilizador (Shell).
+     * 
+     * DADOS VITAIS TRANSFERIDOS VIA ARGC/ARGV PARA A CRIAÇÃO DO AMBIENTE:
+     * ----------------------------------------------------------------------------
+     * 1. Origem de Boot (argv[1]): Passa o nome do volume ativo (ex: g_boot_partition_name)
+     *    para que as aplicações saibam de onde ler ficheiros de configuração secundários.
+     * 
+     * 2. Modo de Operação (argv[2]): Sinaliza o estado do arranque (ex: "vga_mode", 
+     *    "text_mode", "safe_mode" ou "single_user") orientando a Shell sobre se deve 
+     *    ou não carregar interfaces gráficas complexas.
+     * 
+     * 3. Terminal TTY Alvo (argv[3]): Especifica qual a porta serial ou console virtual
+     *    ativa (ex: "/dev/tty0") para direcionar os descritores padrões (stdout/stdin).
+     * 
+     * 4. Resolução de Ecrã (argv[4]): Passa a largura e altura detetadas pela UEFI
+     *    (ex: "1024x768") para que as ferramentas do utilizador alinhem o texto perfeitamente.
+     * ============================================================================
+     */
+
+    // Buffer local na RAM para armazenar a string de resolução formatada (ex: "1024x768")
+    char uefi_res_str[32];
+    memset(uefi_res_str, 0, sizeof(uefi_res_str));
+    if (g_boot_info != NULL) {
+        ksprintf(uefi_res_str, "%ux%u", g_boot_info->Graphics.Width, g_boot_info->Graphics.Height);
+    } else {
+        // Fallback de segurança académica caso o bloco g_boot_info falhe
+        strncpy(uefi_res_str, "800x600", sizeof(uefi_res_str) - 1);
+    }
+
+    // MONTAGEM DINÂMICA DOS ARGUMENTOS:
+    int init_argc = 5;
+    char* init_argv[] = {
+        "/System/user.elf",          // argv[0]: Caminho do executável
+        g_boot_partition_name,       // argv[1]: Ex: "ahci0.1" (Origem de persistência)
+        "text_mode",                 // argv[2]: Modo gráfico/texto base
+        "/dev/tty0",                 // argv[3]: Terminal padrão do sistema
+        uefi_res_str                 // argv[4]: Resolução de tela REAL e dinâmica da UEFI!
+    };
+
+    kprintf("[BOOT] Lancando o processo mestre de User Space '/System/user.elf'...\n");
+    elf_load_and_create_process("/System/user.elf", init_argc, init_argv, 0);
+
+    // Liga o barramento local de interrupções com segurança
+    __asm__ __volatile__("sti");
 
 	/*
      * ============================================================================

@@ -24,7 +24,7 @@ Sirius_Education/
 │   ├── uapi/                # User Space API (usado pelas syscalls e programas)
 │   └── kernel/              # Cabeçalhos globais do Kernel
 │
-├── kernel/                     # Código-fonte do Kernel e subsistemas estruturais
+├── kernel/                  # Código-fonte do Kernel e subsistemas estruturais
 │   ├── boot/                # Configurações de boot, ficheiros EFI e instalações
 |   |
 │   ├── kernel/              # Core independente de arquitetura
@@ -63,7 +63,19 @@ Sirius_Education/
 ├── mods/                    # Módulos/Drivers dinâmicos compilados à parte (.ko)
 │   ├── sample_mod/
 │   └── build/
-|   |
+|
+├── user/                    # Espaço do utilizador (Ring 3)
+│   ├── lib/                 # Biblioteca padrão das aplicações (ulib / libc elementar)
+│   │   ├── crt0.asm         # Ponto de entrada asm que prepara os argumentos e chama main()
+│   │   ├── ustdio.c         # printf/kprintf do user space (converte strings e chama sys_write)
+│   │   └── usyscall.asm     # Stubs em Assembly que executam a instrução física 'syscall'
+│   │
+│   └── apps/                # Seus programas binários isolados Ring 3
+│       ├── shell/           # Código-fonte da sua linha de comandos
+│       │   └── shell.c
+│       └── init/            # O primeiríssimo processo inicial do user space
+│           └── init.c
+│  
 ├── build/                   # Ficheiros de objetos temporários (.o, .d) - [Esvaziado no clean]
 ├── sysroot/                 # Árvore do sistema de ficheiros final (Gera a imagem ISO)
 │

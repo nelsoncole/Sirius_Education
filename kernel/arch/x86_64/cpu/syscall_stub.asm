@@ -41,6 +41,8 @@ syscall_entry_stub:
     push r10                    ; 5. [rsp + 8]  Salva o R10 (Antigo RSP ou argumento)
     push qword 0                ; 6. [rsp + 0]  PADDING final de alinhamento de 16 bytes
 
+    sti                         ; Habilita IRQs durante o processamento da Syscall
+
     ; ============================================================================
     ; 2. CONVERSÃO DE ARGUMENTOS
     ;
@@ -54,6 +56,8 @@ syscall_entry_stub:
     mov rdi, rax                ; RAX (Nº Syscall) -> RDI (1º Param C)       
 
     call syscall_dispatcher     ; Chamada ao dispatcher C
+
+    cli                         ; Desativa interrupções antes de desfazer a pilha do kernel!
     
     ; ============================================================================
     ; 3. RESTAURO DO CONTEXTO DE RING 3 (Ordem Inversa Estrita e Perfeita)

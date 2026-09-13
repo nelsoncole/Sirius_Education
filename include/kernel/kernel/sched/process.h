@@ -79,7 +79,7 @@ typedef struct process {
  * @param cpu_id ID do núcleo onde a tarefa principal será inicialmente injetada.
  * @return Ponteiro para a estrutura PCB criada ou NULL em caso de falha.
  */
-process_t* process_create(void* binary_buffer, unsigned long binary_size, uint32_t cpu_id);
+process_t* process_create(void* binary_buffer, unsigned long binary_size, int argc, char** argv, uint32_t cpu_id);
 
 /**
  * Destrói e liberta as estruturas e recursos associados a um processo.

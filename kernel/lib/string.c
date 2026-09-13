@@ -111,3 +111,13 @@ int memcmp(const void *s1, const void *s2, unsigned long n)
 
 	return 0; // Blocos idênticos, retorna 0
 }
+
+char* strchr(const char* s, int c) {
+    while (*s != (char)c) {
+        if (*s == '\0') {
+            return NULL; // Chegou ao fim e não encontrou
+        }
+        s++;
+    }
+    return (char*)s; // Retorna o ponteiro para o caractere encontrado
+}

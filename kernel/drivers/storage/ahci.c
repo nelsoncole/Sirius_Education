@@ -690,6 +690,8 @@ static void ahci_register_block(ahci_device_t *ahci_dev, int port_index, ata_ide
     bdev->write_blocks  = ahci_backend_write_blocks;
     bdev->ioctl         = NULL; 
     bdev->private_data  = (void *)ahci_dev;
+    
+    bdev->is_raw        = true;
 
     int assigned_id = register_block_device(bdev);
 

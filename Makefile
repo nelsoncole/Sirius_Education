@@ -13,10 +13,8 @@ DRIVERS_DIR := kernel/drivers
 FS_DIR 		:= kernel/fs
 BUILD_DIR   := build
 LINKER      := scripts/linker/x86_64.ld
-APLINKER    := scripts/linker/x86_64_ap.ld
 
 TARGET := $(BUILD_DIR)/kernel.elf
-
 
 # ============================================================
 # Objetos Assembly
@@ -61,6 +59,7 @@ C_OBJ := \
 	$(BUILD_DIR)/scheduler.o \
 	$(BUILD_DIR)/thread.o \
 	$(BUILD_DIR)/process.o \
+	$(BUILD_DIR)/elf.o \
 	$(BUILD_DIR)/syscall.o \
 	$(BUILD_DIR)/pci.o \
 	$(BUILD_DIR)/keyboard.o \
@@ -72,10 +71,23 @@ C_OBJ := \
 	$(BUILD_DIR)/fat32.o \
 	$(BUILD_DIR)/test.o
 
+# ============================================================================
+# Definições do Espaço de Utilizador (User Space)
+# ============================================================================
+USER_DIR        := user
+USER_LINKER     := $(USER_DIR)/lib/user_x86_64.ld
+USER_BUILD_DIR  := $(BUILD_DIR)/user
+
+# Mantém o binário na diretoria temporária de builds
+USER_TARGET     := $(USER_BUILD_DIR)/user.elf
+
+USER_OBJS := \
+	$(USER_BUILD_DIR)/crt0.o \
+	$(USER_BUILD_DIR)/user.o
 
 
 # ============================================================
-# Compiler flags
+# Compiler & Linker Flags
 # ============================================================
 
 CFLAGS := -m64 \
@@ -91,28 +103,62 @@ CFLAGS := -m64 \
           -Wextra \
           -I./include
 
+# Flags Otimizadas do Aplicativo do Utilizador (Ring 3) - Sem mcmodel=kernel
+USER_CFLAGS := -m64 \
+               -ffreestanding \
+               -fno-pie \
+               -fno-stack-protector \
+               -fno-omit-frame-pointer \
+               -mno-red-zone \
+               -nostdlib \
+               -nostdinc \
+               -Wall \
+               -Wextra \
+               -I./include
+
 ASFLAGS := -f elf64
 
 LDFLAGS := -m elf_x86_64 \
            -Map kernel.map -T $(LINKER)
 
+USER_LDFLAGS := -m elf_x86_64 \
+                -T $(USER_LINKER)
 
 # ============================================================
-# Default target
+# Regras de Target Principal
 # ============================================================
 
-.PHONY: all clean
+.PHONY: all clean user_space
 
-all: $(TARGET) $(BUILD_DIR)/trampoline.bin
+all: $(TARGET) $(USER_TARGET) $(BUILD_DIR)/trampoline.bin
 
 
 # ============================================================
 # Criar pasta build
 # ============================================================
 
+# Cria a pasta principal de builds do Kernel
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
+# Cria a subpasta isolada para os objetos do espaço de utilizador
+$(USER_BUILD_DIR): | $(BUILD_DIR)
+	mkdir -p $(USER_BUILD_DIR)
+
+
+# ============================================================
+# Compilar o codigo do user.elf
+# ============================================================
+$(USER_TARGET): $(USER_OBJS) $(USER_LINKER) | $(USER_BUILD_DIR)
+	@mkdir -p $(USER_BUILD_DIR)
+	
+	$(LD) $(USER_LDFLAGS) $(USER_OBJS) -o $@
+
+$(USER_BUILD_DIR)/crt0.o: $(USER_DIR)/lib/crt0.asm | $(USER_BUILD_DIR)
+	$(AS) $(ASFLAGS) $< -o $@
+
+$(USER_BUILD_DIR)/user.o: $(USER_DIR)/user.c | $(USER_BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 # ============================================================
 # Assemble trampoline.asm
@@ -405,6 +451,13 @@ $(BUILD_DIR)/thread.o: $(KERNEL_DIR)/sched/thread.c | $(BUILD_DIR)
 # ============================================================
 
 $(BUILD_DIR)/process.o: $(KERNEL_DIR)/sched/process.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile elf.c
+# ============================================================
+
+$(BUILD_DIR)/elf.o: $(KERNEL_DIR)/sched/elf.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================

@@ -18,6 +18,7 @@
 
 #include <kernel/kernel/sched/process.h>
 #include <kernel/kernel/sched/scheduler.h>
+#include <kernel/kernel/sched/elf.h>
 
 /* 
  * Evita conflitos de dependências cíclicas com cpu.h garantindo 
@@ -42,37 +43,33 @@ typedef struct cpu_data_block cpu_data_block_t;
 static pid_t g_next_pid = 1;
 
 /**
- * Aloca um novo processo, isola o espaço de memória (CR3), carrega o binário
- * da aplicação e instancia a thread principal em Ring 3.
- * 
- * @parametro binary_buffer Ponteiro em memória do Kernel onde está o binário bruto.
- * @param binary_size   Tamanho em bytes do binário.
- * @param cpu_id        ID do núcleo onde o processo será inicialmente agendado.
- * @return Ponteiro para a estrutura PCB criada ou NULL em caso de erro.
+ * Aloca um novo processo, isola o espaço de memória (CR3), faz o parse e
+ * carregamento dinâmico das seções ELF64, injeta os argumentos na pilha e
+ * instancia a thread principal em Ring 3.
  */
-process_t* process_create(void* binary_buffer, unsigned long binary_size, uint32_t cpu_id)
+process_t* process_create(void* binary_buffer, unsigned long binary_size, int argc, char** argv, uint32_t cpu_id)
 {
-    /* 3. PARSE E CARREGAMENTO DO ELF (O novo bloco futuro)
-     * Em vez de fazermos um memcpy cego de 4KB, chamaremos uma função auxiliar:
-     * 
-     * if (elf_load(proc, elf_buffer, elf_size) != 0) { desfaz_tudo; return NULL; }
-     * 
-     * Esta função vai ler os cabeçalhos do ELF (Program Headers), alocar as páginas 
-     * físicas necessárias para cada seção (.text, .data, .bss) e mapeá-las nos 
-     * endereços virtuais que o próprio compilador definiu no binário.
-     */
-
-    /* 4. Cria a Thread Principal em Ring 3 
-     * O RIP inicial deixará de ser uma macro fixa (USER_CODE_VIRTUAL_BASE) 
-     * e passará a usar o Entry Point real lido do cabeçalho ELF:
-     * 
-     * thread_t* main_th = user_thread_create((void(*)(void))proc->elf_entry, ...);
-     */
-
-    /* Validação defensiva do binário */
-    if (!binary_buffer || binary_size == 0)
+    /* Validação defensiva do binário e tamanho mínimo do cabeçalho */
+    if (!binary_buffer || binary_size < sizeof(elf64_ehdr_t))
     {
         kprintf("[Process] Erro: Ponteiro ou tamanho do binario invalido.\n");
+        return NULL;
+    }
+
+    // Mapeia o cabeçalho principal ELF64 diretamente em cima do buffer da Pool
+    elf64_ehdr_t* ehdr = (elf64_ehdr_t*)binary_buffer;
+
+    /* VALIDAÇÃO DE INTEGRIDADE DA ASSINATURA ELF64 */
+    if (ehdr->e_ident[0] != ELF_MAGIC_0 || ehdr->e_ident[1] != 'E' ||
+        ehdr->e_ident[2] != 'L' || ehdr->e_ident[3] != 'F')
+    {
+        kprintf("[Process] Erro Fatal: O buffer nao contem um executavel ELF64 valido.\n");
+        return NULL;
+    }
+
+    if (ehdr->e_machine != 0x3E) // Mapeia x86_64 Long Mode
+    {
+        kprintf("[Process] Erro: Executavel nao e compativel com a arquitetura x86_64.\n");
         return NULL;
     }
 
@@ -98,101 +95,155 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, uint32
     }
 
     /* 
-     * 3. MAPEAMENTO E CONFIGURAÇÃO DA MEMÓRIA DO APLICATIVO
+     * 3. CONFIGURAÇÃO DA MEMÓRIA LÓGICA DO APLICATIVO
      * ------------------------------------------------------------------------
      */
-    proc->code_base   = USER_CODE_VIRTUAL_BASE;
+    proc->code_base   = ehdr->e_entry; // RIP dinâmico lido do Entry Point real do ELF!
     proc->heap_start  = USER_HEAP_VIRTUAL_BASE;
-    proc->heap_end    = USER_HEAP_VIRTUAL_BASE; // Tamanho Inicial = 0 Bytes (Dinâmico via sys_brk)
+    proc->heap_end    = USER_HEAP_VIRTUAL_BASE; 
     proc->stack_top   = USER_STACK_VIRTUAL_TOP;
     proc->stack_limit = USER_STACK_VIRTUAL_TOP - USER_STACK_INITIAL_SIZE;
 
-    // A) Aloca a página física para o Código
-    unsigned long user_code_phys = pmm_alloc_page();
-    if (!user_code_phys)
+    /*
+     * ============================================================================
+     * PARSE ELF: MAPEAMENTO E CONFIGURAÇÃO DINÂMICA DE SEGMENTOS PT_LOAD
+     * ============================================================================
+     */
+    elf64_phdr_t* phdr_table = (elf64_phdr_t*)((uint8_t*)binary_buffer + ehdr->e_phoff);
+
+    for (uint16_t i = 0; i < ehdr->e_phnum; i++) 
     {
-        kprintf("[Process] Erro: Falha ao alocar pagina fisica para o codigo.\n");
-        // pmm_free_page(user_stack_phys);
-        pmm_free_page(proc->cr3);
-        kfree(proc);
-        return NULL;
+        elf64_phdr_t* phdr = &phdr_table[i];
+
+        if (phdr->p_type == PT_LOAD) 
+        {
+            unsigned long page_virt_start = phdr->p_vaddr & ~0xFFFUL;
+            unsigned long page_virt_end   = (phdr->p_vaddr + phdr->p_memsz + 0xFFFUL) & ~0xFFFUL;
+
+            for (unsigned long v_addr = page_virt_start; v_addr < page_virt_end; v_addr += PAGE_SIZE) 
+            {
+                unsigned long segment_phys = pmm_alloc_page();
+                if (!segment_phys) 
+                {
+                    kprintf("[Process] Erro: Falha ao alocar pagina fisica para o segmento ELF.\n");
+                    pmm_free_page(proc->cr3);
+                    kfree(proc);
+                    return NULL;
+                }
+
+                void* scratch_ptr = vmm_scratch_map(segment_phys);
+
+                if (v_addr >= phdr->p_vaddr && (v_addr - phdr->p_vaddr) < phdr->p_filesz) 
+                {
+                    unsigned long offset_no_segmento = v_addr - phdr->p_vaddr;
+                    unsigned long tamanho_restante = phdr->p_filesz - offset_no_segmento;
+                    unsigned long tamanho_copia = (tamanho_restante > PAGE_SIZE) ? PAGE_SIZE : tamanho_restante;
+
+                    memcpy(scratch_ptr, (uint8_t*)binary_buffer + phdr->p_offset + offset_no_segmento, tamanho_copia);
+                    
+                    if (tamanho_copia < PAGE_SIZE && phdr->p_memsz > phdr->p_filesz) {
+                        uint8_t* bss_parcial_start = (uint8_t*)scratch_ptr + tamanho_copia;
+                        unsigned long bss_parcial_size = PAGE_SIZE - tamanho_copia;
+                        memset(bss_parcial_start, 0, bss_parcial_size);
+                    }
+                }
+                else if (phdr->p_memsz > phdr->p_filesz) 
+                {
+                    memset(scratch_ptr, 0, PAGE_SIZE);
+                }
+
+                vmm_map_page((PML4_TABLE*)vmm_scratch_map(proc->cr3), 
+                             v_addr, 
+                             segment_phys, 
+                             PAGE_USER_FLAGS);
+            }
+        }
     }
 
     /*
      * ============================================================================
-     * INJEÇÃO FÍSICA DO BINÁRIO EM MEMÓRIA (CARREGAMENTO)
+     * ALOCAÇÃO E MAPEAMENTO EM LOOP DA PILHA DE USUÁRIO COM INJEÇÃO DE ARGS
      * ============================================================================
-     * Fazemos a cópia do binário ANTES de mapear as páginas no PML4 do processo.
-     * Isto garante que as operações internas do vmm_map_page não colidem
-     * com o ponteiro virtual gerado pelo vmm_scratch_map do buffer de código.
-     */
-    void *scratch_code_ptr = vmm_scratch_map(user_code_phys);
-    memset(scratch_code_ptr, 0, PAGE_SIZE);
-
-    unsigned long copy_size = (binary_size > PAGE_SIZE) ? PAGE_SIZE : binary_size;
-    memcpy(scratch_code_ptr, binary_buffer, copy_size);
-
-    if (binary_size > PAGE_SIZE)
-    {
-        kprintf("[Process] Aviso: Binario maior que 4KB.\n");
-    }
-
-    /*
-     * ============================================================================
-     * MAPEAMENTO DAS PÁGINAS NO PML4 DO PROCESSO
-     * ============================================================================
-     * Agora que o binário já está a salvo no seu frame físico, podemos chamar o
-     * vmm_map_page em sequência de forma totalmente segura.
-     */
-    /*
-     * ============================================================================
-     * ALOCAÇÃO E MAPEAMENTO EM LOOP DA PILHA DE USUÁRIO (Suporta > 4 KiB)
-     * ============================================================================
-     * O laço percorre o tamanho total da pilha em blocos de PAGE_SIZE (4 KiB).
-     * Mapeia de baixo para cima: do stack_limit até chegar ao stack_top.
      */
     unsigned long num_stack_pages = USER_STACK_INITIAL_SIZE / PAGE_SIZE;
+    unsigned long last_stack_phys = 0;
 
     for (unsigned long i = 0; i < num_stack_pages; i++)
     {
-        // Aloca um frame físico para a sub-página atual da pilha
         unsigned long user_stack_phys = pmm_alloc_page();
         if (!user_stack_phys)
         {
             kprintf("[Process] Erro: Falha ao alocar pagina fisica para a sub-pagina %lu da pilha.\n", i);
-
-            /* NOTA DE ROBUSTEZ: Em produção, seria ideal rastrear e desalocar
-             * as páginas anteriores ('i' já alocadas) para evitar memory leak. */
             pmm_free_page(proc->cr3);
             kfree(proc);
             return NULL;
         }
 
-        /*
-         * Mapeia dinamicamente na árvore isolada do processo (PML4).
-         * Endereço virtual avança de 4 KiB em 4 KiB a partir do stack_limit:
-         * i = 0 -> proc->stack_limit
-         * i = 1 -> proc->stack_limit + 0x1000 (4 KiB)
-         */
+        // Guarda o frame físico da ÚLTIMA página (onde fica o topo da Stack)
+        if (i == num_stack_pages - 1) {
+            last_stack_phys = user_stack_phys;
+        }
+
         vmm_map_page((PML4_TABLE *)vmm_scratch_map(proc->cr3),
                      proc->stack_limit + (i * PAGE_SIZE),
                      user_stack_phys,
                      PAGE_USER_FLAGS);
     }
 
-    /* Mapeia o Código no PML4 do processo */
-    vmm_map_page((PML4_TABLE*)vmm_scratch_map(proc->cr3), 
-                 proc->code_base, 
-                 user_code_phys, 
-                 PAGE_USER_FLAGS);
+    /*
+     * ============================================================================
+     * CONSTRUÇÃO ACADÉMICA DA ESTRUTURA ARGC/ARGV DIRETO NA STACK FÍSICA
+     * ============================================================================
+     * Mapeia o topo físico na scratch window do kernel para injetar os dados.
+     */
+    if (last_stack_phys != 0) {
+        uint8_t* stack_scratch = (uint8_t*)vmm_scratch_map(last_stack_phys);
+        
+        // Toda a pilha nasce zerada na última página para evitar lixo
+        memset(stack_scratch, 0, PAGE_SIZE);
 
-    /* 4. Criação e vinculação da Thread Principal em Ring 3 */
+        // O topo real de escrita em memória dentro do buffer de 4KB (anda para trás)
+        uint64_t local_offset = PAGE_SIZE; 
+        
+        // 1. Copia as strings dos argumentos para o fundo da página (ex: "shell\0", "param\0")
+        uint64_t* argv_virt_table = (uint64_t*)kmalloc(sizeof(uint64_t) * argc);
+        
+        for (int i = argc - 1; i >= 0; i--) {
+            size_t len = strlen(argv[i]) + 1;
+            local_offset -= len;
+            memcpy(stack_scratch + local_offset, argv[i], len);
+            
+            // Calcula o endereço VIRTUAL onde esta string vai morar em Ring 3
+            argv_virt_table[i] = proc->stack_top - (PAGE_SIZE - local_offset);
+        }
+
+        // Alinhamento estrito a 8 bytes para a tabela de ponteiros
+        local_offset &= ~7UL;
+
+        // 2. Escreve a tabela argv contendo os ponteiros virtuais calculados (terminada em NULL)
+        local_offset -= sizeof(uint64_t); // Espaço para o ponteiro NULL final
+        
+        for (int i = argc - 1; i >= 0; i--) {
+            local_offset -= sizeof(uint64_t);
+            *(uint64_t*)(stack_scratch + local_offset) = argv_virt_table[i];
+        }
+
+        // 3. Escreve o valor do ARGC (Número de argumentos)
+        local_offset -= sizeof(uint64_t);
+        *(uint64_t*)(stack_scratch + local_offset) = (uint64_t)argc;
+
+        // 4. ATUALIZAÇÃO DO PONTEIRO DA PILHA DO PROCESSO
+        // O RSP inicial do processo recua para apontar exatamente para o valor do ARGC!
+        proc->stack_top = proc->stack_top - (PAGE_SIZE - local_offset);
+
+        kfree(argv_virt_table);
+    }
+
+    /* 4. Criação e vinculação da Thread Principal em Ring 3 usando o RSP ajustado */
     thread_t* main_th = user_thread_create((void(*)(void))proc->code_base, (void*)proc->stack_top, cpu_id);
     if (!main_th) 
     {
         kprintf("[Process] Erro: Falha ao criar a thread principal.\n");
-        pmm_free_page(user_code_phys);
-        //pmm_free_page(user_stack_phys);
         pmm_free_page(proc->cr3);
         kfree(proc);
         return NULL;
@@ -201,15 +252,15 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, uint32
     main_th->owner = proc;
     proc->main_thread = main_th;
 
-    /* 5. Injeta a tarefa na fila de prontos */
+    /* 5. Injeta a tarefa na fila de prontos do Escalonador */
     cpu_data_block_t* cpu = get_cpu_data_block(cpu_id); 
     if (cpu != NULL) 
         enqueue_thread(cpu, main_th);
     else 
         enqueue_thread(get_current_cpu(), main_th);
 
-    kprintf("[Process] Processo %d carregado e isolado! Pilha: 0x%lx | Codigo Virtual: 0x%lx\n", 
-            proc->pid, proc->stack_top, proc->code_base);
+    kprintf("[Process] Processo %d [ELF64] pronto com %d argumento(s)! RSP: 0x%lx | RIP: 0x%lx\n", 
+            proc->pid, argc, proc->stack_top, proc->code_base);
 
     return proc;
 }

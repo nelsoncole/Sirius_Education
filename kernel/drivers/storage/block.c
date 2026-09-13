@@ -77,7 +77,7 @@ int unregister_block_device(uint32_t id) {
 /**
  * Procura um dispositivo de blocos registado pelo seu ID único.
  */
-block_device_t* block_get_device(uint32_t id) {
+block_device_t* block_get_device_by_index(uint32_t id) {
     for (int i = 0; i < BLOCK_MAX_DEVICES; i++) {
         if (g_block_devices[i] != NULL && g_block_devices[i]->id == id) {
             return g_block_devices[i];
