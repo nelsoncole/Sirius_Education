@@ -86,6 +86,7 @@ typedef struct vfs_filesystem {
     
     // Função chamada quando 'vfs_mount' liga um disco a este sistema de ficheiros
     vfs_node_t* (*mount)(block_device_t* dev, const char* mount_point);
+    int (*unmount)(vfs_node_t* root_node);
 } vfs_filesystem_t;
 
 /* --- Interfaces Públicas do Núcleo do VFS --- */
@@ -102,7 +103,7 @@ int vfs_register_filesystem(vfs_filesystem_t* fs);
 
 /**
  * Monta um dispositivo de bloco num caminho virtual usando um sistema de ficheiros específico.
- * Ex: vfs_mount("ahci0", "/", "fat32");
+ * Ex: vfs_mount("ahci0.1", "/", "fat32");
  */
 int vfs_mount(const char* device_name, const char* mount_path, const char* fs_type);
 

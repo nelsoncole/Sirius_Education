@@ -12,7 +12,7 @@
  *   Created Date: 08/09/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 10/09/2026
+ *  Modified Date: 13/09/2026
  *
  *        License: MIT
  * ============================================================================
@@ -113,21 +113,25 @@ void ahci_interrupt_handler(void)
         hba_port_t *port = dev->regs;
         hba_mem_t *hba_base = dev->hba_base_virt;
 
-        if (port->is != 0)
+        // Captura o estado elétrico atual da porta
+        uint32_t port_is = port->is;
+
+        if (port_is != 0)
         {
+            // 1. Limpa PRIMEIRO o sinal físico interno da porta específica escrevendo os bits ativos nela
+            port->is = port_is;
+
+            // 2. Atualiza o estado dos semáforos dos slots em RAM de forma segura
             for (int slot = 0; slot < 32; slot++)
             {
+                // Se o hardware diz que o slot terminou (ci bit zerado) e o software achava ocupado
                 if ((port->ci & (1 << slot)) == 0 && dev->slot_busy[slot] == 1)
                 {
                     dev->slot_busy[slot] = 0;
                 }
             }
 
-            /* Limpa o sinal físico de interrupção na porta específica */
-            uint32_t port_is = port->is;
-            port->is = port_is;
-
-            /* Limpa o sinal no registo mestre global para não prender o barramento PCI */
+            // 3. Limpa EM SEGUIDA o sinal no registo mestre global (HBA) para desbloquear a linha PCIe
             if (hba_base)
             {
                 hba_base->is = (1 << dev->port_id);
@@ -233,19 +237,30 @@ static int ahci_dma_io(ahci_device_t *dev, uint64_t lba, uint32_t sector_count, 
     cfis->countl = sector_count & 0xFF;
     cfis->counth = (sector_count >> 8) & 0xFF;
 
-    /* CORREÇÃO: Limpa tráfego residual da porta antes do disparo elétrico */
+    /* Limpa qualquer tráfego residual ou erro elétrico da porta antes do disparo */
     port->is = port->is;
     port->serr = port->serr;
 
     dev->slot_busy[slot] = 1;
 
-    /* Dispara hardware */
+    /* Dispara o comando elétrico no hardware */
     port->ci = (1 << slot);
 
+    /* LOOP DE ESPERA ASYNC (A ISR irá alterar 'slot_busy' para 0 quando a IRQ disparar) */
     while (dev->slot_busy[slot] == 1)
     {
+        // Se a sua máquina real demorar ou falhar a IRQ, implementamos um Fallback de polling 
+        // para evitar que o Kernel congele infinitamente se a BIOS prender o vetor MSI:
+        if ((port->ci & (1 << slot)) == 0) {
+            dev->slot_busy[slot] = 0;
+            break;
+        }
         __builtin_ia32_pause();
     }
+
+    // Garante que o pipeline de interrupção da porta foi limpo e rearmado para o próximo comando
+    volatile uint32_t dummy = port->is;
+    port->is = dummy;
 
     return 0;
 }

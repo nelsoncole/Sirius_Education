@@ -67,7 +67,9 @@ C_OBJ := \
 	$(BUILD_DIR)/mouse.o \
 	$(BUILD_DIR)/ahci.o \
 	$(BUILD_DIR)/block.o \
+	$(BUILD_DIR)/partitions.o \
 	$(BUILD_DIR)/vfs.o \
+	$(BUILD_DIR)/fat32.o \
 	$(BUILD_DIR)/test.o
 
 
@@ -312,6 +314,13 @@ $(BUILD_DIR)/block.o: $(DRIVERS_DIR)/storage/block.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================
+# Compile partitions.c
+# ============================================================
+
+$(BUILD_DIR)/partitions.o: $(DRIVERS_DIR)/storage/partitions.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
 # Compile test.c
 # ============================================================
 
@@ -410,6 +419,13 @@ $(BUILD_DIR)/syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
 # ============================================================
 
 $(BUILD_DIR)/vfs.o: $(FS_DIR)/vfs/vfs.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+# Compile fat32.c
+# ============================================================
+
+$(BUILD_DIR)/fat32.o: $(FS_DIR)/fat/fat32.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================

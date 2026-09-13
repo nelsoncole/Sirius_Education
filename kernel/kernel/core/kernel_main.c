@@ -9,7 +9,7 @@
  *   Created Date: 25/08/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 11/09/2026
+ *  Modified Date: 13/09/2026
  *
  *        License: MIT
  * ============================================================================
@@ -28,16 +28,19 @@
 #include <kernel/arch/x86_64/cpu/lapic.h>
 #include <kernel/arch/x86_64/cpu/ioapic.h>
 #include <kernel/arch/x86_64/cpu/smp.h>
+#include <kernel/arch/x86_64/kapi/msi.h>
 #include <kernel/kernel/sched/scheduler.h>
 #include <kernel/drivers/bus/pci.h>
 #include <kernel/drivers/char/keyboard.h>
 #include <kernel/drivers/char/mouse.h>
 #include <kernel/drivers/storage/ahci.h>
 #include <kernel/drivers/storage/block.h>
-#include <kernel/arch/x86_64/kapi/msi.h>
+#include <kernel/drivers/storage/partitions.h>
 #include <kernel/fs/vfs/vfs.h>
+#include <kernel/fs/fat/fat32.h>
 #include <kernel/klib.h>
 
+extern void test(void);
 extern void test_read_gpt_table(void);
 extern void test_pool_reusability(void);
 
@@ -315,11 +318,20 @@ void kernel_main(BOOT_INFO *boot_info)
     msi_init();
     keyboard_ps2_init();
     mouse_ps2_init();
-    block_subsystem_init();
-    ahci_driver_init();
 
-    // 15. VFS
+    // 15. Inicializa as tabelas globais de dispositivos de bloco
+    block_subsystem_init();
+
+    // 16. Inicializa o VFS (Cria a raiz virtual '/' em RAM)
     vfs_init();
+
+    // 17. Regista o Driver do Sistema de Ficheiros FAT32 no catálogo do VFS
+    fat32_init();
+
+    // 18. Inicializa o controlador físico (ex: AHCI/SATA ou IDE)
+    // NOTA: O driver AHCI DEVE registar o HD/SSD bruto no catálogo via 'register_block_device'
+    // dando-lhe o nome literal de "ahci%d".
+    ahci_driver_init();
 
 
     /* 3. Cria a thread mestre passando o topo da stack devidamente blindado */
@@ -334,11 +346,14 @@ void kernel_main(BOOT_INFO *boot_info)
     {
         kprintf("[Thread] Erro: Falha ao criar a thread (test_pool_reusability)\n");
     }
+
+    test_th = thread_create(test, 0);
+    if (!test_th)
+    {
+        kprintf("[Thread] Erro: Falha ao criar a thread (test)\n");
+    }
     
     /*
-	 * 13. IPC
-	 * 14. Drivers
-	 * 15. VFS
 	 * 16. Modules
 	 */
 
