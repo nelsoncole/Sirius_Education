@@ -9,7 +9,7 @@
  *   Created Date: 25/08/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 13/09/2026
+ *  Modified Date: 15/09/2026
  *
  *        License: MIT
  * ============================================================================
@@ -24,7 +24,7 @@
 #include <kernel/arch/x86_64/cpu/cpu.h>
 #include <kernel/kernel/syscall/syscall.h>
 #include <kernel/arch/x86_64/cpu/idt.h>
-#include <kernel/drivers/bus/acpi.h>
+#include <kernel/arch/x86_64/kapi/acpi.h>
 #include <kernel/arch/x86_64/cpu/lapic.h>
 #include <kernel/arch/x86_64/cpu/ioapic.h>
 #include <kernel/arch/x86_64/cpu/smp.h>
@@ -37,11 +37,15 @@
 #include <kernel/drivers/storage/block.h>
 #include <kernel/drivers/storage/partitions.h>
 #include <kernel/fs/vfs/vfs.h>
+#include <kernel/fs/dev/vfs_tty.h>
 #include <kernel/fs/fat/fat32.h>
 #include <kernel/klib.h>
 #include <kernel/kernel/sched/elf.h>
+#include <kernel/drivers/tty/tty.h>
 
 extern void test(void);
+extern void tty_emulator_thread(void);
+extern void tty_keyboard_bridge_thread();
 
 /*
  * IMPORTANTE: Declara o rótulo do Assembly como um símbolo externo.
@@ -189,27 +193,52 @@ void kernel_main(BOOT_INFO *boot_info)
 
     // 11. Inicializa o Scheduler para o BSP (Core 0)
     scheduler_init();
-    // 12. PCB OK
 
-    // 14. Driveres
+    // 12. PCB OK
     pci_bus_init();
     msi_init();
-    keyboard_ps2_init();
-    mouse_ps2_init();
 
-    // 15. Inicializa as tabelas globais de dispositivos de bloco
+    // 14. Inicializa as tabelas globais de dispositivos de bloco
     block_subsystem_init();
+    // 15. Inicializa o VFS (Cria a raiz virtual '/' em RAM)
+    vfs_init();  /* Cria a raiz '/' em memória RAM */
+    // Cria uma pasta na raiz usando a função pública de acesso
+    vfs_node_t *root = vfs_get_root();
+    if (root)
+    {
+        vfs_mkdir(root, "mnt", 0x01FF); // Cria pasta na RAM
+        vfs_node_t *mnt = vfs_path_to_node("/mnt");
+        if (mnt)
+        {
+            vfs_mkdir(mnt, "hd", 0x01FF); // Cria /mnt/hd na RAM
+        }
+    }
+    else
+    {
+        kprintf("[BOOT] ERRO CRÍTICO: Falha catastrofica de alocacao no heap do Kernel.\n");
+        kprintf("[BOOT] Nao foi possivel instanciar a estrutura do no raiz '/' do VFS.\n");
+        kprintf("[BOOT] Sistema travado em seguranca para impedir panico de hardware.\n");
+        while (1)
+        {
+            __asm__ __volatile__("hlt");
+        }
+    }
+    
+    tty_init();  /* Prepara os buffers circulares e spinlocks do TTY */
+    tty_vfs_init();  /* Cria e fixa o nó global da TTY no VFS */
 
-    // 16. Inicializa o VFS (Cria a raiz virtual '/' em RAM)
-    vfs_init();
-
-    // 17. Regista o Driver do Sistema de Ficheiros FAT32 no catálogo do VFS
-    fat32_init();
-
-    // 18. Inicializa o controlador físico (ex: AHCI/SATA ou IDE)
+    // 16. Driveres
+    // 16.1
+    keyboard_ps2_init();
+    // 16.2
+    mouse_ps2_init();
+    // 16.3. Inicializa o controlador físico (ex: AHCI/SATA ou IDE)
     // NOTA: O driver AHCI DEVE registar o HD/SSD bruto no catálogo via 'register_block_device'
     // dando-lhe o nome literal de "ahci%d".
     ahci_driver_init();
+
+    // 17. Regista o Driver do Sistema de Ficheiros FAT32 no catálogo do VFS
+    fat32_init();
 
     // Aqui vamos inicializar as particoes de disco
     // vamos identificar o nome da particao de boot
@@ -224,8 +253,8 @@ void kernel_main(BOOT_INFO *boot_info)
     }
 
     kprintf("[BOOT] Montando a partição de boot como raiz do VFS...\n");
-    int status = vfs_mount(g_boot_partition_name, "/", "fat32");
-
+    //int status = vfs_mount(g_boot_partition_name, "/", "fat32");
+    int status = vfs_mount(g_boot_partition_name, "/mnt/hd", "fat32");
     if (status != 0)
     {
         kprintf("[BOOT] Erro Fatal: Falha crítica ao montar a partição '%s' usando o driver 'fat32' (Código: %d).\n",
@@ -253,6 +282,13 @@ void kernel_main(BOOT_INFO *boot_info)
 	kprintf("Sirius OS carregado com sucesso. Sistema pronto.\n");
 	kprintf("========================================================================\n");
 
+    /* 
+     * Lança as duas Kthreads de segundo plano:
+     * 1. A do Emulador (que consome o tty_pop_output e faz kprintf)
+     * 2. A do Teclado (que consome o scancode bruto, traduz e injeta na TTY)
+     */
+    thread_create(tty_emulator_thread, 0);
+    thread_create(tty_keyboard_bridge_thread, 0);
     /*
      * ============================================================================
      * ARRANQUE DO PROCESSO INICIAL DO ESPAÇO DE UTILIZADOR (INIT / USER.ELF)
@@ -299,8 +335,10 @@ void kernel_main(BOOT_INFO *boot_info)
     };
 
     kprintf("[BOOT] Lancando o processo mestre de User Space '/System/user.elf'...\n");
-    elf_load_and_create_process("/System/user.elf", init_argc, init_argv, 0);
+    elf_load_and_create_process("/mnt/hd/System/user.elf", init_argc, init_argv, 0);
 
+    vfs_print_tree("/");
+    
     // Liga o barramento local de interrupções com segurança
     __asm__ __volatile__("sti");
 

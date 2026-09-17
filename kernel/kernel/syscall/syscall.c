@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  *
  *    Modified By: Nelson Cole / AI Collaborator
- *  Modified Date: 13/09/2026
+ *  Modified Date: 15/09/2026
  *
  *        License: MIT
  * ============================================================================
@@ -19,9 +19,7 @@
 #include <kernel/kernel/syscall/syscall.h>
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/klib.h>
-
-#define MAX_OPEN_FILES_PER_PROCESS 32
-static vfs_file_t* g_fd_table[MAX_OPEN_FILES_PER_PROCESS];
+#include <kernel/kernel/sched/process.h>
 
 /*
  * REGS DE HARDWARE ESPECÍFICOS DA ARQUITETURA (x86_64 MSRs)
@@ -33,27 +31,59 @@ static vfs_file_t* g_fd_table[MAX_OPEN_FILES_PER_PROCESS];
 
 extern void syscall_entry_stub(void);
 
+/* Definição de Otimização colocada no topo para evitar declarações implícitas */
+#define unlikely(x)    __builtin_expect(!!(x), 0)
+
 /*
  * ============================================================================
  * SYSTEM CALL TABLE (Vetor de Despacho Completo)
  * ============================================================================
  */
 static const void *sys_call_table[MAX_SYSCALLS] = {
-    [SYS_MOUNT]   = sys_mount,
-    [SYS_UMOUNT]  = sys_umount,
-    [SYS_OPEN]    = sys_open,
-    [SYS_CLOSE]   = sys_close,
-    [SYS_READ]    = sys_read,
-    [SYS_WRITE]   = sys_write,
-    [SYS_SEEK]    = sys_seek,
-    [SYS_FLUSH]   = sys_flush,
-    [SYS_STAT]    = sys_stat,
-    [SYS_CHMOD]   = sys_chmod,
-    [SYS_UNLINK]  = sys_unlink,
-    [SYS_RMDIR]   = sys_rmdir,
-    [SYS_RENAME]  = sys_rename,
-    [SYS_BRK]     = sys_brk,
-    [SYS_EXIT]    = sys_exit
+    /* Operações Base e VFS (Rodam com STI) */
+    [SYS_READ]      = sys_read,
+    [SYS_WRITE]     = sys_write,
+    [SYS_MOUNT]     = sys_mount,
+    [SYS_UMOUNT]    = sys_umount,
+    [SYS_OPEN]      = sys_open,
+    [SYS_CLOSE]     = sys_close,
+    [SYS_SEEK]      = sys_seek,
+    [SYS_FLUSH]     = sys_flush,
+    [SYS_STAT]      = sys_stat,
+    [SYS_CHMOD]     = sys_chmod,
+    [SYS_UNLINK]    = sys_unlink,
+    [SYS_RMDIR]     = sys_rmdir,
+    [SYS_RENAME]    = sys_rename,
+    [SYS_IOCTL]     = sys_ioctl,
+
+    /* Gestão de Memória Estrita (Rodam com CLI) */
+    [SYS_BRK]       = sys_brk,
+    [SYS_MMAP]      = sys_mmap,
+    [SYS_MUNMAP]    = sys_munmap,
+
+    /* Ciclo de Vida de Processos Estrito (Rodam com CLI) */
+    [SYS_FORK]      = sys_fork,
+    [SYS_EXECVE]    = sys_execve,
+    [SYS_EXIT]      = sys_exit,
+    [SYS_GETPID]    = sys_getpid,
+    [SYS_GETPPID]   = sys_getppid,
+
+    /* Sincronização, Tempo e Sinais (Rodam com STI) */
+    [SYS_WAITPID]   = sys_waitpid,
+    [SYS_SLEEP]     = sys_sleep,
+    [SYS_KILL]      = sys_kill,
+    [SYS_SIGACTION] = sys_sigaction,
+
+    /* Subsistema de Sockets (Rodam com STI) */
+    [SYS_SOCKET]     = sys_socket,
+    [SYS_BIND]       = sys_bind,
+    [SYS_LISTEN]     = sys_listen,
+    [SYS_ACCEPT]     = sys_accept,
+    [SYS_CONNECT]    = sys_connect,
+    [SYS_SEND]       = sys_send,
+    [SYS_RECV]       = sys_recv,
+    [SYS_SETSOCKOPT] = sys_setsockopt,
+    [SYS_GETSOCKOPT] = sys_getsockopt
 };
 
 static inline void wrmsr(uint32_t msr, uint64_t val) {
@@ -61,6 +91,42 @@ static inline void wrmsr(uint32_t msr, uint64_t val) {
     uint32_t high = (uint32_t)(val >> 32);
     __asm__ __volatile__("wrmsr" : : "c"(msr), "a"(low), "d"(high) : "memory");
 }
+
+/* 
+ * Função auxiliar para classificar se a chamada de sistema é bloqueante/longa.
+ * Retorna 1 se DEVE rodar com STI, ou 0 se deve rodar com CLI.
+ */
+static inline int syscall_is_blocking(uint64_t syscall_num) {
+    if (unlikely(syscall_num >= MAX_SYSCALLS)) {
+        return 0;
+    }
+
+    /* 
+     * GRUPO: CLI ESTRITO (Retorna 0)
+     * Estas syscalls lidam com estruturas internas altamente sensíveis do Kernel 
+     * (memória, ciclo de vida de processos, agendamento e IDs).
+     * NÃO PODEM sofrer preempção ou interrupções a meio da execução.
+     */
+    switch (syscall_num) {
+        case SYS_BRK:
+        case SYS_MMAP:
+        case SYS_MUNMAP:
+        case SYS_FORK:
+        case SYS_EXECVE:
+        case SYS_EXIT:
+        case SYS_GETPID:
+        case SYS_GETPPID:
+            return 0; // GRUPO: CLI ESTRITO
+
+        default:
+            /* 
+             * VFS, Rede, Sockets, Sinais e Timers entram aqui.
+             * O caminho default é o mais executado (Branch Target Buffer otimizado).
+             */
+            return 1; // GRUPO: STI PERMITIDO
+    }
+}
+
 
 uint64_t syscall_dispatcher(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     if (syscall_num >= MAX_SYSCALLS) {
@@ -74,7 +140,24 @@ uint64_t syscall_dispatcher(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, 
         return (uint64_t)-1;
     }
 
-    return handler(arg1, arg2, arg3);
+    // Verifica se esta syscall específica precisa de interrupções ativas
+    int is_blocking = syscall_is_blocking(syscall_num);
+
+    if (is_blocking) {
+        interrupts_enable(); // Ativa interrupções (sti) ANTES de rodar o handler
+    }
+
+    // Executa a Syscall
+    uint64_t result = handler(arg1, arg2, arg3);
+
+    /* 
+     * BARREIRA DE SEGURANÇA SEGUINTE:
+     * Se as interrupções foram ativadas, TEMOS de as desativar antes de sair.
+     * Se já estavam desativadas, isto garante que o estado se mantém seguro.
+     */
+    interrupts_disable(); // Desativa interrupções (cli)
+
+    return result;
 }
 
 /*
@@ -93,13 +176,16 @@ uint64_t sys_umount(const char* mount_path) {
 
 uint64_t sys_open(const char* path, uint32_t flags) {
     if (!path) return (uint64_t)-1;
+    
+    process_t* proc = get_current_process();
+    if (!proc) return (uint64_t)-1;
 
     vfs_node_t* node = vfs_open(path, flags);
     if (!node) return (uint64_t)-1;
 
     int fd = -1;
-    for (int i = 0; i < MAX_OPEN_FILES_PER_PROCESS; i++) {
-        if (g_fd_table[i] == NULL) {
+    for (int i = 0; i < MAX_FILES_PER_PROCESS; i++) {
+        if (proc->file_descriptor_table[i] == NULL) {
             fd = i;
             break;
         }
@@ -119,26 +205,33 @@ uint64_t sys_open(const char* path, uint32_t flags) {
     file->node = node;
     file->offset = 0;
     file->flags = flags;
-    g_fd_table[fd] = file;
+    proc->file_descriptor_table[fd] = file;
 
     return (uint64_t)fd;
 }
 
 uint64_t sys_close(int fd) {
-    if (fd < 0 || fd >= MAX_OPEN_FILES_PER_PROCESS || !g_fd_table[fd]) return (uint64_t)-1;
+    if (fd < 0 || fd >= MAX_FILES_PER_PROCESS) return (uint64_t)-1;
 
-    vfs_file_t* file = g_fd_table[fd];
+    process_t* proc = get_current_process();
+    if (!proc || !proc->file_descriptor_table[fd]) return (uint64_t)-1;
+
+    vfs_file_t* file = proc->file_descriptor_table[fd];
     vfs_close(file->node);
     kfree(file);
-    g_fd_table[fd] = NULL;
+    proc->file_descriptor_table[fd] = NULL;
 
     return 0;
 }
 
 uint64_t sys_read(int fd, void* buffer, uint32_t size) {
-    if (fd < 0 || fd >= MAX_OPEN_FILES_PER_PROCESS || !g_fd_table[fd] || !buffer) return (uint64_t)-1;
+    if (fd < 0 || fd >= MAX_FILES_PER_PROCESS || !buffer) return (uint64_t)-1;
 
-    vfs_file_t* file = g_fd_table[fd];
+    process_t* proc = get_current_process();
+    if (!proc || !proc->file_descriptor_table[fd]) return (uint64_t)-1;
+
+    vfs_file_t* file = proc->file_descriptor_table[fd];
+
     int bytes_lidos = vfs_read(file->node, file->offset, size, buffer);
     if (bytes_lidos > 0) {
         file->offset += bytes_lidos;
@@ -149,24 +242,12 @@ uint64_t sys_read(int fd, void* buffer, uint32_t size) {
 
 uint64_t sys_write(int fd, const void* buffer, uint32_t size) {
 
-    /*
-     * NOTA: Apenas uma atralho do momento
-     */
-    for (uint64_t i = 0; i < size; i++)
-    {
-        const char *buf = (const char *)buffer;
-        kprintf("%c", buf[i]);
-    }
+    if (fd < 0 || fd >= MAX_FILES_PER_PROCESS || !buffer) return (uint64_t)-1;
 
-    if (fd < 0 || fd >= MAX_OPEN_FILES_PER_PROCESS || !g_fd_table[fd] || !buffer) return (uint64_t)-1;
+    process_t* proc = get_current_process();
+    if (!proc || !proc->file_descriptor_table[fd]) return (uint64_t)-1;
 
-    vfs_file_t* file = g_fd_table[fd];
-
-    if (fd == 1 && file->node == NULL) { 
-        const char* buf_str = (const char*)buffer;
-        for (uint32_t i = 0; i < size; i++) kprintf("%c", buf_str[i]);
-        return size;
-    }
+    vfs_file_t* file = proc->file_descriptor_table[fd];
 
     int bytes_escritos = vfs_write(file->node, file->offset, size, (void*)buffer);
     if (bytes_escritos > 0) {
@@ -177,15 +258,25 @@ uint64_t sys_write(int fd, const void* buffer, uint32_t size) {
 }
 
 uint64_t sys_seek(int fd, int64_t offset, int whence) {
-    if (fd < 0 || fd >= MAX_OPEN_FILES_PER_PROCESS || !g_fd_table[fd]) return (uint64_t)-1;
+    if (fd < 0 || fd >= MAX_FILES_PER_PROCESS) return (uint64_t)-1;
 
-    return vfs_seek(g_fd_table[fd], offset, whence);
+    process_t* proc = get_current_process();
+    if (!proc || !proc->file_descriptor_table[fd]) return (uint64_t)-1;
+
+    vfs_file_t* file = proc->file_descriptor_table[fd];
+
+    return vfs_seek(file, offset, whence);
 }
 
 uint64_t sys_flush(int fd) {
-    if (fd < 0 || fd >= MAX_OPEN_FILES_PER_PROCESS || !g_fd_table[fd]) return (uint64_t)-1;
+   if (fd < 0 || fd >= MAX_FILES_PER_PROCESS) return (uint64_t)-1;
 
-    return (uint64_t)vfs_flush(g_fd_table[fd]->node);
+    process_t* proc = get_current_process();
+    if (!proc || !proc->file_descriptor_table[fd]) return (uint64_t)-1;
+
+    vfs_file_t* file = proc->file_descriptor_table[fd];
+
+    return (uint64_t)vfs_flush(file->node);
 }
 
 uint64_t sys_stat(const char* path, vfs_stat_t* buf) {
@@ -231,31 +322,15 @@ uint64_t sys_rename(const char* old_path, const char* new_name) {
     return (uint64_t)vfs_rename(parent, old_path, new_name);
 }
 
-uint64_t sys_brk(void *addr) {
-    kprintf("[SCI] sys_brk: Solicitacao para expandir Heap ate 0x%lx\n", (uint64_t)addr);
-    return 0;
-}
-
-/* Protótipo externo da função de saída do seu Scheduler */
-extern void scheduler_exit(int code); 
-
 /**
  * Encerra a execução do processo atual e liberta os seus recursos no VFS e no Scheduler.
  */
 uint64_t sys_exit(uint64_t code) {
+    
     // Converte o registador x86_64 de 64-bits para o tipo int esperado pelo Scheduler
     int exit_code = (int)(code & 0xFFFFFFFF);
 
-    kprintf("[SCI] sys_exit: Processo encerrado com codigo %d\n", exit_code);
-
-    // LIMPEZA DO VFS: Fecha todos os ficheiros que este processo deixou abertos para evitar memory leaks
-    for (int i = 0; i < MAX_OPEN_FILES_PER_PROCESS; i++) {
-        if (g_fd_table[i] != NULL) {
-            vfs_close(g_fd_table[i]->node);
-            kfree(g_fd_table[i]);
-            g_fd_table[i] = NULL;
-        }
-    }
+    //kprintf("[SCI] sys_exit: Processo encerrado com codigo %d\n", exit_code);
 
     // CHAMADA AO SCHEDULER: Altera o estado do processo e remove-o da fila de execução da CPU.
     // Esta função assume o controlo da Stack e NUNCA mais retorna para esta linha!
@@ -268,16 +343,137 @@ uint64_t sys_exit(uint64_t code) {
     return 0;
 }
 
+uint64_t sys_brk(void *addr) {
+    (void)addr;
+    kprintf("[SCI] sys_brk: Solicitacao para expandir Heap ate 0x%lx\n", (uint64_t)addr);
+    return 0;
+}
+
+uint64_t sys_ioctl(int fd, unsigned long request, void *arg) {
+    (void)request;
+    (void)arg;
+    kprintf("[SCI] sys_ioctl: fd=%d, req=0x%lx, arg=0x%lx\n", fd, request, (uint64_t)arg);
+    return 0;
+}
+
+uint64_t sys_fork(void) {
+    kprintf("[SCI] sys_fork: Clonar processo atual\n");
+    return 0;
+}
+
+uint64_t sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
+    (void)pathname;
+    (void)argv;
+    (void)envp;
+    kprintf("[SCI] sys_execve: Carregar executavel 0x%lx\n", (uint64_t)pathname);
+    return 0;
+}
+
+uint64_t sys_mmap(void *addr, size_t length, int prot, int flags, int fd, int64_t offset) {
+    (void)addr;
+    (void)prot;
+    (void)flags;
+    (void)fd;
+    (void)offset;
+    kprintf("[SCI] sys_mmap: addr=0x%lx, len=%lu, prot=%d, flags=%d\n", (uint64_t)addr, length, prot, flags);
+    return 0;
+}
+
+uint64_t sys_munmap(void *addr, size_t length) {
+    (void)addr;
+    (void)length;
+    kprintf("[SCI] sys_munmap: Libertar addr=0x%lx, len=%lu\n", (uint64_t)addr, length);
+    return 0;
+}
+
+uint64_t sys_getpid(void) {
+    kprintf("[SCI] sys_getpid: Consultar PID\n");
+    return 0;
+}
+
+uint64_t sys_getppid(void) {
+    kprintf("[SCI] sys_getppid: Consultar PID do Pai\n");
+    return 0;
+}
+
+uint64_t sys_waitpid(int32_t pid, int *wstatus, int options) {
+    (void)pid;
+    (void)wstatus;
+    (void)options;
+    kprintf("[SCI] sys_waitpid: Aguardar por pid=%d\n", pid);
+    return 0;
+}
+
+uint64_t sys_sleep(unsigned int seconds) {
+    (void)seconds;
+    kprintf("[SCI] sys_sleep: Colocar thread em repouso por %u segs\n", seconds);
+    return 0;
+}
+
+uint64_t sys_kill(int32_t pid, int sig) {
+    (void)pid;
+    (void)sig;
+    kprintf("[SCI] sys_kill: Enviar sinal %d para pid=%d\n", sig, pid);
+    return 0;
+}
+
+uint64_t sys_sigaction(int signum, const void *act, void *oldact) {
+    kprintf("[SCI] sys_sigaction: Alterar acao do sinal %d (act=0x%lx, old=0x%lx)\n", signum, (uint64_t)act, (uint64_t)oldact);
+    return 0;
+}
+
+uint64_t sys_socket(int domain, int type, int protocol) {
+    kprintf("[SCI] sys_socket: dom=%d, type=%d, proto=%d\n", domain, type, protocol);
+    return 0;
+}
+
+uint64_t sys_bind(int sockfd, const void *addr, uint32_t addrlen) {
+    kprintf("[SCI] sys_bind: sock=%d, addr=0x%lx, len=%u\n", sockfd, (uint64_t)addr, addrlen);
+    return 0;
+}
+
+uint64_t sys_listen(int sockfd, int backlog) {
+    kprintf("[SCI] sys_listen: sock=%d, backlog=%d\n", sockfd, backlog);
+    return 0;
+}
+
+uint64_t sys_accept(int sockfd, void *addr, uint32_t *addrlen) {
+    kprintf("[SCI] sys_accept: sock=%d, addr=0x%lx, len_ptr=0x%lx\n", sockfd, (uint64_t)addr, (uint64_t)addrlen);
+    return 0;
+}
+
+uint64_t sys_connect(int sockfd, const void *addr, uint32_t addrlen) {
+    kprintf("[SCI] sys_connect: sock=%d, addr=0x%lx, len=%u\n", sockfd, (uint64_t)addr, addrlen);
+    return 0;
+}
+
+uint64_t sys_send(int sockfd, const void *buf, size_t len, int flags) {
+    kprintf("[SCI] sys_send: sock=%d, buf=0x%lx, len=%lu, flags=%d\n", sockfd, (uint64_t)buf, len, flags);
+    return 0;
+}
+
+uint64_t sys_recv(int sockfd, void *buf, size_t len, int flags) {
+    kprintf("[SCI] sys_recv: sock=%d, buf=0x%lx, len=%lu, flags=%d\n", sockfd, (uint64_t)buf, len, flags);
+    return 0;
+}
+
+uint64_t sys_setsockopt(int sockfd, int level, int optname, const void *optval, uint32_t optlen) {
+    kprintf("[SCI] sys_setsockopt: sock=%d, lvl=%d, opt=%d, val=0x%lx, len=%u\n", sockfd, level, optname, (uint64_t)optval, optlen);
+    return 0;
+}
+
+uint64_t sys_getsockopt(int sockfd, int level, int optname, void *optval, uint32_t *optlen) {
+    kprintf("[SCI] sys_getsockopt: sock=%d, lvl=%d, opt=%d, val_ptr=0x%lx, len_ptr=0x%lx\n", sockfd, level, optname, (uint64_t)optval, (uint64_t)optlen);
+    return 0;
+}
+
+
 /*
  * ============================================================================
  * INTERFACE DE INICIALIZAÇÃO DE HARDWARE
  * ============================================================================
  */
 void syscall_init(void) {
-    for (int i = 0; i < MAX_OPEN_FILES_PER_PROCESS; i++) {
-        g_fd_table[i] = NULL;
-    }
-
     /*
      * Habilitação de Extensões do Processador via MSR (EFER):
      * Evita a exceção 'Invalid Opcode' (#UD) ao ativar recursos avançados da CPU.
@@ -299,25 +495,7 @@ void syscall_init(void) {
         "wrmsr\n"
         : : "a"(eax), "d"(edx), "c"(0xC0000080) : "memory");
 
-    /* ========================================================================
-     * IA32_STAR
-     *
-     * Kernel:
-     *
-     *   CS = 0x08
-     *
-     * User SYSRET:
-     *
-     *   SS = 0x2B
-     *   CS = 0x33
-     *
-     * GDT:
-     *
-     *   0x28 = Sysret Data
-     *   0x30 = Sysret Code
-     * ======================================================================== */
-
-    uint64_t star = ((uint64_t)0x08 << 32) | ((uint64_t)0x23 << 48);
+    uint64_t star = ((uint64_t)0x08 << 32) | ((uint64_t)0x1B << 48);
     wrmsr(MSR_IA32_STAR, star);
     wrmsr(MSR_IA32_LSTAR, (uint64_t)syscall_entry_stub);
     wrmsr(MSR_IA32_FMASK, 0x200UL);

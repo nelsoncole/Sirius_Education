@@ -15,7 +15,7 @@
  * ============================================================================
  */
 
-#include <kernel/drivers/bus/acpi.h>
+#include <kernel/arch/x86_64/kapi/acpi.h>
 #include <kernel/kernel/mm/memory_map.h>
 #include <kernel/arch/x86_64/mm/vmm.h>
 #include <kernel/kernel/core/panic.h>

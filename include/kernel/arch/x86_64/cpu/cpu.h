@@ -26,8 +26,8 @@
 #include "idt.h"
 
 #define MAX_CPUS    256
-// 5 entradas normais (Null, KCode, KData, SysretData, SysretCode, UCode, UData) + 1 TSS (ocupa 2 slots de 8 bytes) = 9
-#define GDT_ENTRIES 10
+// 5 entradas normais (Null, KCode, KData, Base vazia de 32-bit, UData, UCode) + 1 TSS (ocupa 2 slots de 8 bytes) = 8
+#define GDT_ENTRIES 8
 /*
  * ============================================================================
  * PER-CPU DATA BLOCK (Alinhamento de 16 bytes forçado para estabilidade física)
@@ -38,6 +38,8 @@ typedef struct cpu_data_block {
     uint64_t kernel_stack_top;
     // Reservado para guardar a pilha do usuario do durante o syscal/sysret
     uint64_t user_stack;
+
+    uint64_t cr3;
 
     // Array interno da GDT local por Core (Alinhado a 16 bytes)
     uint64_t gdt_entries[GDT_ENTRIES] __attribute__((aligned(16)));
@@ -65,8 +67,8 @@ typedef struct cpu_data_block {
     thread_t* ready_queue_tail; /* Ponteiro para o fim da fila (Tail) de threads prontas para este CPU. */
     thread_t* dead_queue_head;  /* Ponteiro para o início da fila (Tail) de threads mortas para este CPU. */
     thread_t* dead_queue_tail;  /* Ponteiro para o fim da fila (Tail) de threads mortas para este CPU. */
-    thread_t idle_thread;       /* Thread de emergência/ociosa, executada quando não há tarefas na fila. */
-
+    thread_t* idle_thread;      /* Thread de emergência/ociosa, executada quando não há tarefas na fila. */
+    thread_t* fpu_owner_thread; /* Controla quem é o dono do FPU neste Core */
 } __attribute__((aligned(16))) cpu_data_block_t;
 
 /*
@@ -131,5 +133,45 @@ cpu_data_block_t* get_cpu_data_block(uint32_t cpu_id);
  * Executada por cada CPU quando não existem tarefas prontas na fila.
  */
 void cpu_idle(void);
+
+static inline void interrupts_disable(void) {
+    __asm__ __volatile__("cli" : : : "memory");
+}
+
+static inline void interrupts_enable(void) {
+    __asm__ __volatile__("sti" : : : "memory");
+}
+
+// Guarda o estado atual e desativa as interrupções
+static inline uint64_t interrupts_save_and_disable(void) {
+    uint64_t rflags;
+    
+    // pushfq: coloca RFLAGS na pilha
+    // pop %0: retira da pilha para a variável rflags
+    // cli: desativa as interrupções
+    __asm__ __volatile__(
+        "pushfq\n\t"
+        "pop %0\n\t"
+        "cli"
+        : "=rm"(rflags)
+        :
+        : "memory"
+    );
+    
+    return rflags;
+}
+
+// Restaura o estado anterior (ativando ou mantendo desativado conforme o estado salvo)
+static inline void interrupts_restore(uint64_t rflags) {
+    // push %0: coloca o RFLAGS salvo na pilha
+    // popfq: restaura o RFLAGS a partir da pilha
+    __asm__ __volatile__(
+        "push %0\n\t"
+        "popfq"
+        :
+        : "rm"(rflags)
+        : "memory"
+    );
+}
 
 #endif /* _CPU_H_ */

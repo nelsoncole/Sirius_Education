@@ -61,8 +61,22 @@
  * crescendo para baixo em direção ao limite de segurança.
  */
 #define USER_STACK_VIRTUAL_TOP      0x00007FFFFFFFF000UL
-#define USER_STACK_INITIAL_SIZE     0x4000UL        // Tamanho inicial padrão (16 KB / 4 Página)
+#define USER_STACK_INITIAL_SIZE     0x4000UL        // Tamanho inicial padrão (4 KB / 1 Página)
 
+
+/* 
+ * PADRÃO DE KERNEL MODERNO:
+ * O limite máximo (Rlimit) padrão para o crescimento da Stack do utilizador.
+ * O Linux define isto nativamente como 8 MB (8192 KB).
+ */
+#define USER_STACK_MAX_LIMIT_SIZE   (8 * 1024 * 1024) // 8 Megabytes
+
+/*
+ * O teto de segurança (borda inferior absoluta) abaixo do qual a pilha 
+ * NUNCA pode crescer. Impede a invasão das áreas de Heap ou Bibliotecas.
+ * Matematicamente: 0x00007FFFFFFFF000 - 8MB = 0x00007FFFFF7FF000UL
+ */
+#define USER_STACK_VIRTUAL_BOTTOM   (USER_STACK_VIRTUAL_TOP - USER_STACK_MAX_LIMIT_SIZE)
 
 /* ========================================================================
  * MAPA DE ENDEREÇAMENTO VIRTUAL DO KERNEL

@@ -8,66 +8,93 @@
  *         Author: Nelson Cole
  *   Created Date: 13/09/2026
  * 
+ *    Modified By: Nelson Cole
+ *  Modified Date: 15/09/2026
+ * 
  *        License: MIT
  * ============================================================================
  */
 
-/* Número lógico da Syscall definido no syscall.h */
+/* Números lógicos das Syscalls definidos no vosso syscall.h */
+#define SYS_READ  0
 #define SYS_WRITE 1
 
 /**
- * Função autónoma de escrita em Ring 3 usando Assembly Inline.
- * Comunica diretamente com o syscall_entry_stub do Kernel.
+ * Função autónoma de leitura em Ring 3 usando Assembly Inline.
  */
-static inline unsigned long sys_write_inline(int fd, const void* buffer, unsigned long size) {
+static inline unsigned long sys_read_inline(int fd, void* buffer, unsigned long size) {
     unsigned long ret;
 
     /*
      * CONVENÇÃO DE HARDWARE X86_64 PARA SYSCALL:
-     * rax = Número da Syscall
+     * rax = Número da Syscall (SYS_READ = 0)
      * rdi = 1º Argumento (fd)
      * rsi = 2º Argumento (buffer)
      * rdx = 3º Argumento (size)
-     * 
-     * O compilador GCC encarrega-se de injetar as variáveis nos registadores
-     * corretos através das restrições ("a", "D", "S", "d").
      */
     __asm__ __volatile__ (
         "syscall"
-        : "=a"(ret)                                                 // Saída: O retorno do Kernel vem em RAX
-        : "a"((unsigned long)SYS_WRITE), "D"((unsigned long)fd),    // Entradas: RAX, RDI
-          "S"((unsigned long)buffer), "d"((unsigned long)size)      // Entradas: RSI, RDX
-        : "rcx", "r11", "memory"                                    // Clobbers: Syscall destrói RCX e R11
+        : "=a"(ret)
+        : "a"((unsigned long)SYS_READ), "D"((unsigned long)fd),
+          "S"((unsigned long)buffer), "d"((unsigned long)size)
+        : "rcx", "r11", "memory"
     );
 
     return ret;
 }
 
-unsigned long strlen(const char *s)
-{
-	char *tmp = (char*)s;
-	
-	while(*tmp != '\0')tmp++;
+/**
+ * Função autónoma de escrita em Ring 3 usando Assembly Inline.
+ */
+static inline unsigned long sys_write_inline(int fd, const void* buffer, unsigned long size) {
+    unsigned long ret;
 
-	return (unsigned long)(tmp - s);
+    __asm__ __volatile__ (
+        "syscall"
+        : "=a"(ret)
+        : "a"((unsigned long)SYS_WRITE), "D"((unsigned long)fd),
+          "S"((unsigned long)buffer), "d"((unsigned long)size)
+        : "rcx", "r11", "memory"
+    );
+
+    return ret;
+}
+
+unsigned long strlen(const char *s) {
+    const char *tmp = s;
+    while (*tmp != '\0') tmp++;
+    return (unsigned long)(tmp - s);
 }
 
 /**
- * Ponto de entrada da aplicação Ring 3 após o crt0.asm preparar a Stack.
+ * Ponto de entrada da aplicação Ring 3.
  */
 int main(int argc, char* argv[]) {
-    // Evita avisos de variáveis não utilizadas (boas práticas académicas)
-    (void)argc;
-    (void)argv;
 
-    const char* mensagem = "Hello Ring3!\n";
-    unsigned long size = 13;
+    // Buffer local na Stack do Ring 3 para capturar a linha digitada
+    char input_buffer[256];
+    
+    const char* prompt = "SiriusOS> ";
+    sys_write_inline(1, prompt, strlen(prompt));
 
     /* 
-     * Executa a chamada de sistema de forma direta e independente,
-     * enviando a mensagem para o descritor 1 (console padrão do Kernel).
+     * Loop REPL (Read-Eval-Print Loop) básico controlado:
+     * Aguarda por dados, lê a linha e imprime de volta em loop.
      */
-    sys_write_inline(1, mensagem, size);
+    while (1) {
+        // Bloqueia e aguarda dados do descritor 0 (Teclado/TTY)
+        unsigned long bytes_lidos = sys_read_inline(0, input_buffer, sizeof(input_buffer) - 1);
+        
+        // Garante que, se dados válidos forem lidos, eles serão processados
+        if (bytes_lidos > 0 && bytes_lidos != (unsigned long)-1) {
+            
+            // Imprime exatamente a quantidade de bytes recebida de volta na consola (fd 1)
+            sys_write_inline(1, input_buffer, bytes_lidos);
+        }
 
+        // Reimprime o prompt do sistema para a próxima interação
+        sys_write_inline(1, prompt, strlen(prompt));
+    }
+    
     return 0; 
 }

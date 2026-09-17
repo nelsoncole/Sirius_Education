@@ -17,7 +17,7 @@
 
 #include <kernel/arch/x86_64/cpu/lapic.h>
 #include <kernel/arch/x86_64/mm/vmm.h>
-#include <kernel/drivers/bus/acpi.h>
+#include <kernel/arch/x86_64/kapi/acpi.h>
 #include <kernel/kernel/core/panic.h>
 #include <kernel/lib/stdio.h>
 #include <kernel/lib/stdint.h>

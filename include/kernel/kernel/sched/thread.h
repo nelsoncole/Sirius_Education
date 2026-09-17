@@ -44,6 +44,7 @@ typedef enum {
 typedef struct thread {
     uint32_t tid;               // Identificador único da Thread (Thread ID)
     void* kernel_stack;         // Ponteiro para o topo do stack de kernel (salvaguarda de contexto)
+    void* kernel_stack_top;
     thread_state_t state;       // Estado atual de execução
     uint32_t cpu_id;            // ID do CPU associado (ou fixado por afinidade)
 
@@ -52,6 +53,8 @@ typedef struct thread {
     struct process* owner;      // Processo ao qual esta thread pertence
     
     struct thread* next;        // Ponteiro para a próxima thread na fila (Runqueue)
+    
+    uint8_t fpu_state[512] __attribute__((aligned(16)));
 } thread_t;
 
 /**

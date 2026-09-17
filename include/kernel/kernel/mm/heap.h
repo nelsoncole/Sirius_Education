@@ -19,6 +19,7 @@
 #define _HEAP_H_
 
 #include "memory_map.h"
+#include <kernel/lib/stdint.h>
 
 /*
  * CADEÇALHO DE BLOCO DO HEAP (HEAP HEADER)
@@ -27,9 +28,11 @@
  * Permite rastrear o tamanho e o estado de ocupação na lista encadeada.
  */
 typedef struct _HEAP_HEADER {
-    unsigned long size;            // Tamanho útil do bloco (excluindo este cabeçalho)
-    int is_free;                   // Flag: 1 se o bloco estiver livre, 0 se ocupado
-    struct _HEAP_HEADER* next;     // Ponteiro para o próximo bloco na lista
+    uint64_t size;                 // 8 bytes - Tamanho útil do bloco (excluindo este cabeçalho)
+    uint64_t is_free;              // 8 bytes - 1 se livre, 0 se ocupado (expandido para 64-bit)
+    struct _HEAP_HEADER* next;     // 8 bytes - Ponteiro para o próximo bloco
+    
+    uint64_t padding;              // 8 bytes - GARANTE ALINHAMENTO GEOMÉTRICO FÍSICO
 } __attribute__((packed)) HEAP_HEADER;
 
 /*

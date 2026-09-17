@@ -29,18 +29,46 @@ typedef struct cpu_data_block cpu_data_block_t;
 
 #include <kernel/arch/x86_64/cpu/cpu.h>
 #include <kernel/kernel/mm/pmm.h>
-#include <kernel/arch/x86_64/mm/vmm.h>
+#include <kernel/kvmm.h>
 #include <kernel/kernel/sched/scheduler.h>
 #include <kernel/klib.h>
 
 /* Flags x86_64: Presente (0x1) | Read-Write (0x2) | User-Supervisor (0x4) */
-//#define PAGE_USER_FLAGS         (0x1 | 0x2 | 0x4)
-
-/* Flags x86_64: Read-Write (0x2) | User-Supervisor (0x4) */
-#define PAGE_USER_FLAGS         (0x2 | 0x4) // Vale 0x6 em vez de 0x7
+#define PAGE_USER_FLAGS         (0x1 | 0x2 | 0x4)
 
 /* Gerador incremental estático para atribuição única de PIDs */
 static pid_t g_next_pid = 1;
+
+static void process_init_standard_io(process_t* proc) {
+    // 1. Limpa toda a tabela para evitar ponteiros lixo
+    for (int i = 0; i < MAX_FILES_PER_PROCESS; i++) {
+        proc->file_descriptor_table[i] = NULL;
+    }
+
+    // 2. Obtém o nó global e unificado da TTY
+    vfs_node_t* tty_node = tty_vfs_get_node();
+
+    // 3. Aloca e configura o FD 0 (stdin) - MODO LEITURA
+    vfs_file_t* stdin_file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
+    stdin_file->node = tty_node;
+    stdin_file->offset = 0;
+    stdin_file->flags = VFS_MODE_READ;
+    proc->file_descriptor_table[0] = stdin_file;
+
+    // 4. Aloca e configura o FD 1 (stdout) - MODO ESCRITA
+    vfs_file_t* stdout_file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
+    stdout_file->node = tty_node;
+    stdout_file->offset = 0;
+    stdout_file->flags = VFS_MODE_WRITE;
+    proc->file_descriptor_table[1] = stdout_file;
+
+    // 5. Aloca e configura o FD 2 (stderr) - MODO ESCRITA
+    vfs_file_t* stderr_file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
+    stderr_file->node = tty_node;
+    stderr_file->offset = 0;
+    stderr_file->flags = VFS_MODE_WRITE;
+    proc->file_descriptor_table[2] = stderr_file;
+}
 
 /**
  * Aloca um novo processo, isola o espaço de memória (CR3), faz o parse e
@@ -84,6 +112,7 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
     memset(proc, 0, sizeof(process_t));
     proc->pid = g_next_pid++;
     proc->state = PROCESS_READY;
+    process_init_standard_io(proc);
 
     /* 2. Configuração da Árvore de Páginas Isolada (PML4) */
     proc->cr3 = vmm_create_address_space();
@@ -133,29 +162,45 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
 
                 void* scratch_ptr = vmm_scratch_map(segment_phys);
 
-                if (v_addr >= phdr->p_vaddr && (v_addr - phdr->p_vaddr) < phdr->p_filesz) 
+                // CASO 1: A página contém dados válidos do ficheiro (Código ou Dados Inicializados)
+                if (v_addr + PAGE_SIZE > phdr->p_vaddr && v_addr < phdr->p_vaddr + phdr->p_filesz)
                 {
-                    unsigned long offset_no_segmento = v_addr - phdr->p_vaddr;
-                    unsigned long tamanho_restante = phdr->p_filesz - offset_no_segmento;
-                    unsigned long tamanho_copia = (tamanho_restante > PAGE_SIZE) ? PAGE_SIZE : tamanho_restante;
+                    unsigned long file_offset = phdr->p_offset;
+                    unsigned long page_offset = 0;
+                    unsigned long copy_size = PAGE_SIZE;
 
-                    memcpy(scratch_ptr, (uint8_t*)binary_buffer + phdr->p_offset + offset_no_segmento, tamanho_copia);
-                    
-                    if (tamanho_copia < PAGE_SIZE && phdr->p_memsz > phdr->p_filesz) {
-                        uint8_t* bss_parcial_start = (uint8_t*)scratch_ptr + tamanho_copia;
-                        unsigned long bss_parcial_size = PAGE_SIZE - tamanho_copia;
-                        memset(bss_parcial_start, 0, bss_parcial_size);
+                    if (v_addr < phdr->p_vaddr) {
+                        page_offset = phdr->p_vaddr - v_addr;
+                        copy_size -= page_offset;
+                        // O início desalinhado da página precisa ser limpo
+                        memset(scratch_ptr, 0, page_offset);
+                    } else {
+                        file_offset += (v_addr - phdr->p_vaddr);
                     }
+
+                    if (v_addr + PAGE_SIZE > phdr->p_vaddr + phdr->p_filesz) {
+                        // A página entra no BSS parcial!
+                        unsigned long valid_bytes = (phdr->p_vaddr + phdr->p_filesz) - v_addr;
+                        copy_size = valid_bytes - page_offset;
+                        
+                        // LIMPEZA CIRÚRGICA DO BSS PARCIAL: Zera apenas o resto da página
+                        unsigned long bss_offset = page_offset + copy_size;
+                        memset((uint8_t*)scratch_ptr + bss_offset, 0, PAGE_SIZE - bss_offset);
+                    }
+
+                    // Copia rápida do conteúdo real
+                    memcpy((uint8_t*)scratch_ptr + page_offset, (uint8_t*)binary_buffer + file_offset, copy_size);
                 }
-                else if (phdr->p_memsz > phdr->p_filesz) 
+                // CASO 2: A página é PUREZA DE BSS (Variáveis globais não inicializadas)
+                else 
                 {
+                    // Aqui fazemos o memset porque a página inteira vai conter variáveis do programa
                     memset(scratch_ptr, 0, PAGE_SIZE);
                 }
 
-                vmm_map_page((PML4_TABLE*)vmm_scratch_map(proc->cr3), 
-                             v_addr, 
-                             segment_phys, 
-                             PAGE_USER_FLAGS);
+                // Obtém o endereço virtual estável da PML4 do novo processo
+                PML4_TABLE* target_pml4 = (PML4_TABLE*)vmm_scratch_map(proc->cr3);
+                vmm_map_page(target_pml4, v_addr, segment_phys, PAGE_USER_FLAGS);
             }
         }
     }
@@ -184,10 +229,9 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
             last_stack_phys = user_stack_phys;
         }
 
-        vmm_map_page((PML4_TABLE *)vmm_scratch_map(proc->cr3),
-                     proc->stack_limit + (i * PAGE_SIZE),
-                     user_stack_phys,
-                     PAGE_USER_FLAGS);
+        // Obtém o endereço virtual estável da PML4 do novo processo
+        PML4_TABLE* target_pml4 = (PML4_TABLE*)vmm_scratch_map(proc->cr3);
+        vmm_map_page(target_pml4, proc->stack_limit + (i * PAGE_SIZE),user_stack_phys,PAGE_USER_FLAGS);
     }
 
     /*
@@ -369,6 +413,17 @@ void process_destroy(process_t* proc)
             void* stack_raw = (void*)((uint64_t)proc->main_thread->kernel_stack & ~0xFFFUL);
             kfree(stack_raw);
         }
+        // LIMPEZA DO VFS: Fecha todos os ficheiros que este processo deixou abertos para evitar memory leaks
+        for (int i = 0; i < MAX_FILES_PER_PROCESS; i++)
+        {
+            if (proc->file_descriptor_table[i] != NULL)
+            {
+                vfs_close(proc->file_descriptor_table[i]->node);
+                kfree(proc->file_descriptor_table[i]);
+                proc->file_descriptor_table[i] = NULL;
+            }
+        }
+
         kfree(proc->main_thread);
     }
 
@@ -376,4 +431,19 @@ void process_destroy(process_t* proc)
     kfree(proc);
     
     kprintf("[Process] Processo %d destruido com sucesso.\n", proc->pid);
+}
+
+/**
+ * get_current_process - Recupera o processo dono da thread ativa no core atual.
+ *                       Garante isolamento atómico por hardware em ambiente SMP.
+ */
+process_t* get_current_process(void) {
+    /* 1. Recupera o bloco de controlo da CPU atual via GS/FS */
+    cpu_data_block_t *cpu = get_current_cpu();
+    if (!cpu || !cpu->current_thread) {
+        return NULL;
+    }
+
+    /* 2. Extrai o processo dono da thread através da hierarquia do agendador */
+    return (process_t*)cpu->current_thread->owner;
 }

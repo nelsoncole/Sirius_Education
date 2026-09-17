@@ -39,14 +39,16 @@ Sirius_Education/
 │   │       ├── boot/        # Inicialização específica da CPU (trampoline, etc)
 │   │       ├── cpu/         # GDT, IDT, ISRs, IRQs, Controlo de Registos
 │   │       ├── mm/          # Paginação específica (PML4, tabelas de páginas x86) e VMM
-│   │       └── kapi/        # Abstração de hardware para o kernel genérico
+│   │       └── kapi/        # Abstração de hardware para o kernel genérico (ACPI)
 |   |
 │   ├── drivers/             # Controladores de hardware embutidos (Char, Block, Net, Bus)
-│   │   ├── bus/             # PCI, USB Core, ACPI
+│   │   ├── bus/             # PCI, USB Core
 │   │   ├── char/            # Teclado (input), Displays de texto, Serial (UART)
 │   │   ├── storage/         # Storage (IDE, AHCI, Ramdisk)
 │   │   ├── net/             # Placas de rede (e1000, rtl8139)
-│   │   └── video/           # Displays
+│   │   |── video/           # Displays
+|   │   └── tty/             # O subsistema TTY
+│   |        └── tty.c       # Gestão de buffers e disciplina de linha do TTY
 |   |
 │   ├── fs/                  # Subsistema de ficheiros (VFS, FAT, NTFS)
 │   │   ├── vfs/             # Virtual File System Core

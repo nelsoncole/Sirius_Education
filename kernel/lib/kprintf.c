@@ -420,3 +420,26 @@ void kprintf(const char *format, ...)
 
     __atomic_clear(&kprintf_spinlock, __ATOMIC_RELEASE);
 }
+
+void kprintf2(const char *format, ...)
+{
+    if (bootverbose)
+        return;
+
+    char write_buf[1024]; // Buffer de paginação temporário para a TTY
+    va_list ap;
+
+    va_start(ap, format);
+    int len = kvsnprintf(write_buf, sizeof(write_buf), format, ap);
+    va_end(ap);
+
+    // Envia o bloco formatado da memória direto para o hardware de saída
+    for (int i = 0; i < len; i++)
+    {
+        kernel_putchar(write_buf[i]);
+        if (write_buf[i] == '\n')
+        {
+            kernel_putchar('\r');
+        }
+    }
+}

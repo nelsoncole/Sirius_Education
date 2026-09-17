@@ -22,6 +22,8 @@
 #include <kernel/klib.h>
 #include "thread.h"
 #include "scheduler.h"
+#include <kernel/fs/vfs/vfs.h>
+#include <kernel/fs/dev/vfs_tty.h>
 
 #define MAX_SHARED_REGIONS 8
 #define MAX_SIGNALS        32
@@ -55,6 +57,12 @@ typedef struct process {
     struct process* parent;         /* Ponteiro para o processo pai */
     thread_t* main_thread;          /* Ponteiro para a thread principal do processo */
 
+     /*
+     * TABELA DE FDs (Para Sockets, Pipes e Ficheiros Virtuais) 
+     * Mapeia os índices numéricos Ring 3 (0, 1, 2) para sessões ativas do VFS.
+     */
+    vfs_file_t* file_descriptor_table[MAX_FILES_PER_PROCESS];
+
     /*
      * TABELA DE FDs (Para Sockets, Pipes e Ficheiros) 
      * Ex: fd = 0 (stdin), fd = 1 (stdout), fd = 2 (stderr), fd = 3 (Socket/Ficheiro)
@@ -87,5 +95,11 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
  * @param proc Ponteiro para o Bloco de Controlo do Processo (PCB) a eliminar.
  */
 void process_destroy(process_t* proc);
+
+/**
+ * get_current_process - Recupera o processo dono da thread ativa no core atual.
+ *                       Garante isolamento atómico por hardware em ambiente SMP.
+ */
+process_t* get_current_process(void);
 
 #endif /* PROCESS_H */

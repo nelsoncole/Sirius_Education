@@ -99,6 +99,17 @@ static void write_gdt_tss_entry(uint64_t *gdt, uint32_t index, uint64_t tss_base
     gdt[index + 1] = high;
 }
 
+static void arch_init_fpu_core(void) {
+    uint64_t cr4;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= (1 << 9);   // OSFXSR: Ativa fxsave/fxrstor e registos XMM
+    cr4 |= (1 << 10);  // OSXMMEXCPT: Ativa suporte a exceções SIMD unmasked (#XF)
+    __asm__ volatile("mov %0, %%cr4" :: "r"(cr4));
+
+    // Inicializa o estado do FPU nativo do hardware uma vez no boot
+    __asm__ volatile("fninit");
+}
+
 /*
  * ============================================================================
  * LOCAL CPU INITIALIZATION (ENTRY POINT)
@@ -131,38 +142,42 @@ void cpu_initialize_local(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top
     cpu->cpu_id = cpu_id;
     cpu->lapic_id = lapic_id;
     cpu->kernel_stack_top = stack_top;
+    // Captura o registo CR3 físico atual do Kernel puro no boot
+    uint64_t current_cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(current_cr3));
+    // Grava no bloco local para uso assíncrono do Escalonador
+    cpu->cr3 = current_cr3;
     cpu->self = cpu;
 
-    // 1. Configuração dos segmentos base da GDT (Índices 0 a 4)
-    cpu->gdt_entries[0] = create_gdt_entry(0, 0, 0, 0);             // Null Descriptor (0x00)
+    // Configuração dos segmentos base da GDT (Índices 0 a 3)
+    cpu->gdt_entries[0] = create_gdt_entry(0, 0, 0, 0);             // Null (0x00)
     cpu->gdt_entries[1] = create_gdt_entry(0, 0xFFFFF, 0x9A, 0x02); // Kernel Code 64 (0x08)
     cpu->gdt_entries[2] = create_gdt_entry(0, 0xFFFFF, 0x92, 0x00); // Kernel Data 64 (0x10)
-    cpu->gdt_entries[3] = create_gdt_entry(0, 0xFFFFF, 0xFA, 0x02); // User Code 64   (0x18)
-    cpu->gdt_entries[4] = create_gdt_entry(0, 0xFFFFF, 0xF2, 0x00); // User Data 64   (0x20)
-     // ============================================================================
-    // ENTRADAS EXCLUSIVAS PARA O SYSRETQ (Índices 5 e 6)
+
     // ============================================================================
-    // Repara: O User Data VEM ANTES do User Code para satisfazer o hardware!
-    cpu->gdt_entries[5] = create_gdt_entry(0, 0xFFFFF, 0xF2, 0x00); // Sysret SS (0x28 -> 0x2B com RPL=3)
-    cpu->gdt_entries[6] = create_gdt_entry(0, 0xFFFFF, 0xFA, 0x02); // Sysret CS (0x30 -> 0x33 com RPL=3)
+    // SEQUÊNCIA EXIGIDA PELO SYSRET (Índices 3, 4 e 5)
+    // ============================================================================
+    cpu->gdt_entries[3] = create_gdt_entry(0, 0xFFFFF, 0xFA, 0x02); // BASE VAZIA 32-bit (0x18 -> 0x1B com RPL 3)
+    cpu->gdt_entries[4] = create_gdt_entry(0, 0xFFFFF, 0xF2, 0x00); // USER SS REAL 64-bit (0x20 -> 0x23 com RPL 3)
+    cpu->gdt_entries[5] = create_gdt_entry(0, 0xFFFFF, 0xFA, 0x02); // USER CS REAL 64-bit (0x28 -> 0x2B com RPL 3)
 
+    // Configuração da TSS Local do Core (Pilha Ring 0 ativa em Interrupções vindo de Ring 3)
+    cpu->tss.rsp0 = stack_top;
 
-    // 2. Configuração da TSS Local do Core (Pilha Ring 0 ativa em Interrupções vindo de Ring 3)
-    cpu->tss.rsp0 = stack_top; 
     cpu->tss.iomap_base = sizeof(tss_t); // Desativa e bloqueia acessos diretos ao mapa I/O por defeito
 
-    // 3. Instalação da TSS (Passa para os Índices 7 e 8)
-    // Seletor correspondente: 7 * 8 = 0x38. Totalmente isolado e seguro!
-    write_gdt_tss_entry(cpu->gdt_entries, 7, (uint64_t)&cpu->tss, sizeof(tss_t) - 1, 0x89);
+    // Instalação da TSS (Passa para os Índices 6 e 7)
+    // Seletor correspondente: 6 * 8 = 0x30. Totalmente isolado e seguro!
+    write_gdt_tss_entry(cpu->gdt_entries, 6, (uint64_t)&cpu->tss, sizeof(tss_t) - 1, 0x89);
 
 
-    // 4. Configuração do Descritor GDTR e Carga da GDT
+    // Configuração do Descritor GDTR e Carga da GDT
     cpu->gdtr.limit = (sizeof(uint64_t) * GDT_ENTRIES) - 1;
     cpu->gdtr.base  = (uint64_t)&cpu->gdt_entries;
 
     __asm__ volatile("lgdt %0" : : "m"(cpu->gdtr) : "memory");
 
-    // 5. Recarga dos registradores de segmento de dados (Limpeza de seletores antigos do bootloader)
+    // Recarga dos registradores de segmento de dados (Limpeza de seletores antigos do bootloader)
     __asm__ volatile(
         "mov $0x10, %%ax\n"
         "mov %%ax, %%ds\n"
@@ -174,21 +189,21 @@ void cpu_initialize_local(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top
         : : : "rax", "memory"
     );
 
-    // 6. Carga do Task Register (Carrega a TSS associada a este Core)
-    // Passa o seletor 0x28 (Índice GDT 7, RPL 0)
-    __asm__ volatile("ltr %%ax" : : "a"(0x38) : "memory");
+    // Carga do Task Register (Carrega a TSS associada a este Core)
+    // Passa o seletor 0x30 (Índice GDT 6, RPL 0)
+    __asm__ volatile("ltr %%ax" : : "a"(0x30) : "memory");
 
-    // 7. Configuração do MSR GS_BASE para habilitar os dados estruturados Per-CPU
-    wrmsr(IA32_GS_BASE, (uint64_t)cpu);
 
-    // 7. Configuração dos MSRs GS para Ring 0 e Ring 3
+    arch_init_fpu_core();
+
+    // Configuração do MSR GS_BASE para habilitar os dados estruturados Per-CPU
     wrmsr(IA32_GS_BASE, (uint64_t)cpu);
     wrmsr(IA32_KERNEL_GS_BASE, (uint64_t)cpu);
 
     // Salva o ponteiro devidamente alinhado no array global
     cpu_blocks[cpu_id] = cpu;
 
-    kprintf("CPU %d (LAPIC %d): GDT, TSS (0x28) e GS_BASE mapeados e operantes em Hardware. %p\n", 
+    kprintf("CPU %d (LAPIC %d): GDT, TSS (0x30) com IST1 ativo e operantes em Hardware. %p\n", 
             cpu_id, lapic_id, cpu);
 }
 

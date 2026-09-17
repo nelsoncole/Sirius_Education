@@ -19,7 +19,7 @@
 #define _SMP_H_
 
 #include <kernel/lib/stdint.h>
-#include <kernel/drivers/bus/acpi.h>
+#include <kernel/arch/x86_64/kapi/acpi.h>
 #include <kernel/boot_info.h>
 
 /* 

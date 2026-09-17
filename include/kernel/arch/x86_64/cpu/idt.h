@@ -21,22 +21,32 @@
 
 #define IDT_MAX_ENTRIES 256
 
-typedef struct _idt{
-    // Primeira parte de 64 bits
+
+typedef struct _idt {
+    // =========================================================================
+    // PRIMEIRA PARTE DE 64 BITS (Mapeamento Linear Estrito)
+    // =========================================================================
     unsigned long long offset_15_0  : 16; // Bits 0..15 do endereço do Handler
     unsigned long long sel          : 16; // Seletor de segmento de código (0x08)
-    unsigned long long ist          : 3;  // Índice da Interrupt Stack Table (TSS)
-    unsigned long long unused       : 5;  // Reservado/Não usado
-    unsigned long long type         : 5;  // Tipo de Gate (Ex: 0xE/11110b = 64-bit Interrupt Gate)
-    unsigned long long dpl          : 2;  // Descriptor Privilege Level (0 = Kernel, 3 = User)
-    unsigned long long p            : 1;  // Present bit (1 = Ativo)
-    unsigned long long offset_31_16 : 16; // Bits 16..31 do endereço do Handler
+    unsigned long long ist          : 3;  // Índice da Interrupt Stack Table (1 a 7)
+    unsigned long long unused       : 5;  // Reservado (Deve ser 0)
+    
+    /* CORREÇÃO DO BYTE DE ATRIBUTOS (Ordem Física x86_64) */
+    unsigned long long type         : 4;  // Bits 40..43: Tipo de Gate (0xE = 64-bit Interrupt Gate)
+    unsigned long long zero         : 1;  // Bit 44: Reservado pela arquitetura (Sempre 0)
+    unsigned long long dpl          : 2;  // Bits 45..46: Privilégio (0 = Kernel, 3 = User)
+    unsigned long long p            : 1;  // Bit 47: Present bit (1 = Ativo)
+    
+    unsigned long long offset_31_16 : 16; // Bits 48..63: Bits 16..31 do endereço do Handler
 
-    // Segunda parte de 64 bits
+    // =========================================================================
+    // SEGUNDA PARTE DE 64 BITS
+    // =========================================================================
     unsigned long long offset_63_32 : 32; // Bits 32..63 do endereço do Handler
     unsigned long long reserved     : 32; // Reservado pela CPU (Sempre 0)
 
 } __attribute__ ((packed)) idt_t;
+
 
 typedef struct _idtr{
     unsigned short limit; // Tamanho da IDT - 1

@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  * 
  *    Modified By: Nelson Cole / AI Collaborator
- *  Modified Date: 13/09/2026
+ *  Modified Date: 15/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -44,9 +44,36 @@
 #define SYS_UNLINK  12
 #define SYS_RMDIR   13
 #define SYS_RENAME  14
+#define SYS_IOCTL   15
 
-/* Número total de chamadas suportadas nesta fase com suporte VFS */
-#define MAX_SYSCALLS 15
+/* Gestão de Processos e Memória Avançada */
+#define SYS_FORK    16
+#define SYS_EXECVE  17
+#define SYS_MMAP    18
+#define SYS_MUNMAP  19
+#define SYS_GETPID  20
+#define SYS_GETPPID 21
+
+/* Sincronização, Tempo e Sinais */
+#define SYS_WAITPID   22
+#define SYS_SLEEP     23
+#define SYS_KILL      24
+#define SYS_SIGACTION 25
+
+/* Subsistema de Sockets e Rede */
+#define SYS_SOCKET      26
+#define SYS_BIND        27
+#define SYS_LISTEN      28
+#define SYS_ACCEPT      29
+#define SYS_CONNECT     30
+#define SYS_SEND        31
+#define SYS_RECV        32
+#define SYS_SETSOCKOPT  33
+#define SYS_GETSOCKOPT  34
+
+/* Número total de chamadas suportadas nesta fase com suporte de Rede Completo */
+#define MAX_SYSCALLS 35
+
 
 /**
  * Inicializa e programa os registadores de hardware MSR (STAR, LSTAR, FMASK)
@@ -95,5 +122,26 @@ uint64_t sys_rename(const char* old_path, const char* new_name);
 /* Operações Primitivas do Processo e Alocação */
 uint64_t sys_brk(void* addr);
 uint64_t sys_exit(uint64_t code);
+
+uint64_t sys_ioctl(int fd, unsigned long request, void *arg);
+uint64_t sys_fork(void);
+uint64_t sys_execve(const char *pathname, char *const argv[], char *const envp[]);
+uint64_t sys_mmap(void *addr, size_t length, int prot, int flags, int fd, int64_t offset);
+uint64_t sys_munmap(void *addr, size_t length);
+uint64_t sys_getpid(void);
+uint64_t sys_getppid(void);
+uint64_t sys_waitpid(int32_t pid, int *wstatus, int options);
+uint64_t sys_sleep(unsigned int seconds);
+uint64_t sys_kill(int32_t pid, int sig);
+uint64_t sys_sigaction(int signum, const void *act, void *oldact);
+uint64_t sys_socket(int domain, int type, int protocol);
+uint64_t sys_bind(int sockfd, const void *addr, uint32_t addrlen);
+uint64_t sys_listen(int sockfd, int backlog);
+uint64_t sys_accept(int sockfd, void *addr, uint32_t *addrlen);
+uint64_t sys_connect(int sockfd, const void *addr, uint32_t addrlen);
+uint64_t sys_send(int sockfd, const void *buf, size_t len, int flags);
+uint64_t sys_recv(int sockfd, void *buf, size_t len, int flags);
+uint64_t sys_setsockopt(int sockfd, int level, int optname, const void *optval, uint32_t optlen);
+uint64_t sys_getsockopt(int sockfd, int level, int optname, void *optval, uint32_t *optlen);
 
 #endif /* _SYSCALL_H_ */

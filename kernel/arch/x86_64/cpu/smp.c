@@ -23,7 +23,7 @@
 #include <kernel/arch/x86_64/mm/vmm.h>
 #include <kernel/kernel/mm/memory_map.h>
 #include <kernel/kernel/mm/pmm.h>
-#include <kernel/drivers/bus/acpi.h>
+#include <kernel/arch/x86_64/kapi/acpi.h>
 #include <kernel/kernel/core/panic.h>
 #include <kernel/klib.h>
 #include <kernel/kernel/sched/scheduler.h>

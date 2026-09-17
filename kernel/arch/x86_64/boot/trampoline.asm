@@ -120,21 +120,6 @@ start64:
     ; Stack deve estar alinhada a 16 bytes
     and rsp, -16
 
-    ; ============================================================================
-    ; BLINDAGEM CONTRA O GCC 15: ATIVAÇÃO OBRIGATÓRIA DE SSE / FPU
-    ; ============================================================================
-    mov     rax, cr4
-    or      rax, 0x600          ; Ativa OSFXSR (bit 9) e OSXMMEXCPT (bit 10)
-    mov     cr4, rax
-
-    mov     rax, cr0
-    and     ax,  0xFFFB         ; Garante bit EM (Emulação) desativado
-    or      rax, 0x2            ; Garante bit MP (Monitor Coprocessor) ativo
-    mov     cr0, rax
-
-    fninit                      ; Reseta e limpa o estado da FPU por hardware
-    ; ============================================================================
-
     ; System V ABI (RDI, RSI, RDX, RCX, ...)
     mov rdi, [0x8018]           ; cpu_id
     mov rsi, [0x801C]           ; lapic_id

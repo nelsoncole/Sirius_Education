@@ -27,6 +27,8 @@
 // Variável global para contar os tiques do sistema
 unsigned long g_system_ticks = 0;
 
+extern int handle_user_stack_growth(uint64_t fault_address);
+
 // Lista com as strings de diagnóstico das 32 exceções nativas da CPU Intel/AMD
 const char *exception_messages[] = {
     "Division By Zero",
@@ -94,6 +96,24 @@ void* interrupt_handler_c(registers_t *regs)
             }
         }
 
+        if(regs->int_no == 14)
+        {
+            // Coloca o endereço virtual que falhou no registador CR2
+            uint64_t fault_address;
+            __asm__ __volatile__("mov %%cr2, %0" : "=r"(fault_address));
+
+            // TENTA O CRESCIMENTO DA PILHA PRIMEIRO
+
+            // Verifica se os bits de privilégio do CS empilhado indicam que viemos de Ring 3 (User)
+            if ((regs->cs & 3) == 3)
+            {
+                if (handle_user_stack_growth(fault_address))
+                {
+                    return regs; // Retorna imediatamente! A CPU repetirá a instrução com a nova RAM mapeada.
+                }
+            }
+        }
+
         kprintf("\n========================================================================\n");
         kprintf(" !!! EXCECAO CRITICA DO PROCESSADOR DETECTADA [ CORE %lu ] !!!\n", current_cpu_id);
         kprintf("========================================================================\n");
@@ -144,6 +164,16 @@ void* interrupt_handler_c(registers_t *regs)
         }
         kprintf("========================================================================\n");
         kprintf("Kernel em estado de panico controlado. Sistema suspenso.\n");
+
+        // Verifica se o processo é do Ring3
+        if ((regs->cs & 3) == 3)
+        {
+             kprintf("\n[Process Crash] PID %u causou %s fatal no RIP: %p (RSP: %p)\n", 
+                    get_current_cpu()->current_thread->owner->pid, exception_messages[regs->int_no], (void*)regs->rip, (void*)regs->rsp);
+            
+            // Mata o processo de forma limpa libertando o Core
+            scheduler_exit(-11); // -11 correspondente ao SIGSEGV tradicional
+        }
 
         // Desativa interrupções e congela a CPU atual em loop infinito
         for (;;)

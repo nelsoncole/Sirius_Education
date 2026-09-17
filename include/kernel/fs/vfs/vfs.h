@@ -22,6 +22,7 @@
 #include <kernel/lib/stdint.h>
 #include <kernel/drivers/storage/block.h>
 #include <kernel/kernel.h>
+#include <kernel/lib/stddef.h>
 
 #define VFS_NAME_MAX 256
 
@@ -135,6 +136,13 @@ typedef struct vfs_filesystem {
 
 } vfs_filesystem_t;
 
+/* Estrutura interna para mapeamento de montagens dinâmicas (Sem atropelar a raiz) */
+typedef struct vfs_mount {
+    vfs_node_t*       mountpoint;  // O nó da pasta nativa na RAM (ex: /mnt/usb)
+    vfs_node_t*       fs_root;     // O nó de raiz real devolvido pelo driver (FAT32, ext2)
+    struct vfs_mount* next;
+} vfs_mount_t;
+
 
 /* --- Interfaces Públicas do Núcleo do VFS --- */
 /* 
@@ -143,6 +151,16 @@ typedef struct vfs_filesystem {
  */
 extern char g_boot_partition_name[32];
 
+/**
+ * @brief Devolve o ponteiro para o nó raiz primitivo do Sistema de Ficheiros Virtual.
+ * @return Ponteiro para vfs_node_t que representa a raiz '/'.
+ */
+vfs_node_t* vfs_get_root(void);
+vfs_node_t* vfs_resolve_mountpoint(vfs_node_t* node);
+vfs_node_t* vfs_path_to_node(const char* path);
+
+/*Torna a tabela do ramfs.c visível para o vfs.c */
+extern vfs_operations_t g_ramfs_ops;
 /**
  * Inicializa la árvore virtual do VFS e monta a estrutura '/' RAM elementar.
  */
@@ -172,15 +190,19 @@ vfs_node_t* vfs_open(const char* path, uint32_t flags);
 int vfs_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
 int vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
 void vfs_close(vfs_node_t* node);
-uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence);
-
-/* Sincronização, Remoção e Metadados Avançados */
+vfs_node_t* vfs_finddir(vfs_node_t* parent, const char* name);
+int vfs_readdir(vfs_node_t* target, uint32_t index, vfs_node_t* out_node);
+int vfs_mkdir(vfs_node_t* parent, const char* name, uint16_t permissions);
+int vfs_create(vfs_node_t* parent, const char* name, uint16_t permissions);
 int vfs_flush(vfs_node_t* node);
 int vfs_stat(vfs_node_t* node, vfs_stat_t* buf);
 int vfs_chmod(vfs_node_t* node, uint16_t mode);
 int vfs_unlink(vfs_node_t* parent, const char* name);
 int vfs_rmdir(vfs_node_t* parent, const char* name);
 int vfs_rename(vfs_node_t* parent, const char* old_name, const char* new_name);
+uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence);
+
+void vfs_print_tree(const char* start_path);
 
 
 #endif /* _VFS_H_ */

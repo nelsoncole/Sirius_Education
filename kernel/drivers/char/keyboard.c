@@ -22,12 +22,17 @@
 
 #define IRQ_KEYBOARD 1
 
+/* Definições de Scancodes de controle no Set 1 */
+#define SCAN_LSHIFT    0x2A
+#define SCAN_RSHIFT    0x36
+#define SCAN_CAPSLOCK  0x3A
+
 /* Estado volátil de controle do fluxo de bytes do barramento */
 static int g_is_e0_extended = 0;
+static uint8_t g_current_modifiers = 0; // Guarda o estado vivo do Shift/Caps
 
 /* Buffer circular de pacotes brutos de 16 bits (Raw Scancodes) */
-#define KBD_BUFFER_SIZE 128
-static uint16_t g_kbd_raw_buffer[KBD_BUFFER_SIZE];
+static kbd_event_t g_kbd_raw_buffer[KBD_BUFFER_SIZE];
 static int g_kbd_head = 0;
 static int g_kbd_tail = 0;
 
@@ -42,6 +47,7 @@ void keyboard_ps2_init(void)
 {
     kprintf("[Teclado] Inicializando barramento PS/2 em modo RAW (Windows Model)...\n");
     g_is_e0_extended = 0;
+    g_current_modifiers = 0;
     g_kbd_head = 0;
     g_kbd_tail = 0;
 
@@ -65,60 +71,59 @@ void keyboard_handler(void)
     if (!(status & KEYBOARD_STATUS_OUT_BUFFER_FULL)) return;
 
     uint8_t byte = inb(KEYBOARD_DATA_PORT);
-
-    /* Trata respostas ACK do barramento (ignora no buffer de teclas) */
     if (byte == 0xFA) return;
 
-    /* Captura o prefixo de código estendido de 8 bits */
-    if (byte == 0xE0)
-    {
+    if (byte == 0xE0) {
         g_is_e0_extended = 1;
         return;
     }
 
-    /* Montagem do pacote bruto de 16 bits (Windows Event Style) */
-    uint16_t raw_packet = 0;
+    /* 
+     * LÓGICA DE ATUALIZAÇÃO DO ESTADO VIVO DOS MODIFICADORES
+     * Feito imediatamente na interrupção para manter precisão de tempo real.
+     */
+    uint8_t packet_modifiers = g_current_modifiers;
 
-    /* Identifica se o evento é de liberação (Key Up / Bit 7 ligado) */
-    if (byte & 0x80)
-    {
-        raw_packet |= KEY_RELEASE_FLAG;
-        byte &= ~0x80; /* Preserva o scancode de base puro */
+    if (byte & 0x80) {
+        /* CASO A: A tecla foi Solta (Key Up) */
+        packet_modifiers |= KBD_MOD_RELEASE; // Sinaliza no pacote
+        uint8_t pure_scancode = byte & ~0x80;
+
+        if (pure_scancode == SCAN_LSHIFT)  g_current_modifiers &= ~KBD_MOD_LSHIFT;
+        if (pure_scancode == SCAN_RSHIFT)  g_current_modifiers &= ~KBD_MOD_RSHIFT;
+        
+        byte = pure_scancode; // Preserva o scancode puro para inserção
+    } 
+    else {
+        /* CASO B: A tecla foi Pressionada (Key Down) */
+        if (byte == SCAN_LSHIFT)   g_current_modifiers |= KBD_MOD_LSHIFT;
+        if (byte == SCAN_RSHIFT)   g_current_modifiers |= KBD_MOD_RSHIFT;
+        if (byte == SCAN_CAPSLOCK) g_current_modifiers ^= KBD_MOD_CAPS; // Inverte (Toggle)
+
+        packet_modifiers = g_current_modifiers; // Atualiza o snapshot do pacote
     }
 
-    /* Insere o scancode base nos 8 bits inferiores */
-    raw_packet |= byte;
+    g_is_e0_extended = 0; // Consome o prefixo temporário nesta fase simples
 
-    /* Anexa o sinalizador estendido se o byte anterior tiver sido 0xE0 */
-    if (g_is_e0_extended)
-    {
-        raw_packet |= KEY_EXTENDED_FLAG;
-        g_is_e0_extended = 0; /* Consome o estado do prefixo */
-    }
-
-    /* Injeta o pacote bruto de 16 bits diretamente no buffer circular */
+    /* Injeta a estrutura montada no buffer circular */
     int next = (g_kbd_head + 1) % KBD_BUFFER_SIZE;
-    if (next != g_kbd_tail)
-    {
-        g_kbd_raw_buffer[g_kbd_head] = raw_packet;
+    if (next != g_kbd_tail) {
+        g_kbd_raw_buffer[g_kbd_head].scancode = byte;
+        g_kbd_raw_buffer[g_kbd_head].modifiers_state = packet_modifiers;
         g_kbd_head = next;
-
-        //kprintf("%d", raw_packet);
     }
 }
 
 /**
- * Retorna o próximo pacote de scancode bruto de forma bloqueante.
- * Consumido pelas camadas de abstração superiores do sistema.
+ * Retorna a estrutura completa do evento de tecla de forma bloqueante.
  */
-uint16_t keyboard_get_raw_scancode(void)
+kbd_event_t keyboard_get_event(void)
 {
-    while (g_kbd_tail == g_kbd_head)
-    {
+    while (g_kbd_tail == g_kbd_head) {
         __asm__ __volatile__("pause");
     }
 
-    uint16_t packet = g_kbd_raw_buffer[g_kbd_tail];
+    kbd_event_t event = g_kbd_raw_buffer[g_kbd_tail];
     g_kbd_tail = (g_kbd_tail + 1) % KBD_BUFFER_SIZE;
-    return packet;
+    return event;
 }

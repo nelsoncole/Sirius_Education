@@ -36,12 +36,21 @@
 #define KEY_RELEASE_FLAG      0x0100  /* Bit ativo indica que a tecla foi solta (Key Up) */
 #define KEY_EXTENDED_FLAG     0x0200  /* Bit ativo indica tecla precedida por 0xE0 */
 
+/* Máscaras de bits para o campo 'modifiers_state' */
+#define KBD_MOD_LSHIFT   (1 << 0)
+#define KBD_MOD_RSHIFT   (1 << 1)
+#define KBD_MOD_CAPS     (1 << 2)
+#define KBD_MOD_RELEASE  (1 << 7) /* Tecla solta (Key Up) */
+
 /**
- * Estrutura do evento bruto de tecla capturado pelo Kernel.
+ * Estrutura atómica do pacote de teclado guardado no buffer
  */
 typedef struct {
-    uint16_t scancode;  /* Contém os 8 bits do scancode + flags de estado */
-} key_event_t;
+    uint8_t  scancode;         /* O código físico base puro (Set 1) */
+    uint8_t  modifiers_state;  /* Mapa de bits com o estado atual do teclado */
+} kbd_event_t;
+
+#define KBD_BUFFER_SIZE 128
 
 /**
  * Inicializa o controlador PS/2, limpa buffers residuais e prepara 
@@ -56,6 +65,6 @@ void keyboard_ps2_init(void);
 void keyboard_handler(void);
 
 /* Retorna o evento bruto de scancode de 16 bits */
-uint16_t keyboard_get_raw_scancode(void);
+kbd_event_t keyboard_get_event(void);
 
 #endif

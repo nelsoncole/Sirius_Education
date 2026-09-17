@@ -24,6 +24,9 @@ global interrupt_common_stub
 ; Exporta o rótulo de saída para permitir comutação voluntária no SYS_EXIT
 global interrupt_exit_stub
 
+global isr7
+extern handle_device_not_available_exception
+
 ; ============================================================================
 ; MACROS PARA GERAR OS HANDLERS INDIVIDUAIS DE EXCEÇÃO
 ; ============================================================================
@@ -53,7 +56,7 @@ ISR_NO_ERR_CODE 3  ; #BP: Breakpoint
 ISR_NO_ERR_CODE 4  ; #OF: Overflow
 ISR_NO_ERR_CODE 5  ; #BR: Bound Range Exceeded
 ISR_NO_ERR_CODE 6  ; #UD: Invalid Opcode
-ISR_NO_ERR_CODE 7  ; #NM: Device Not Available
+;ISR_NO_ERR_CODE 7  ; #NM: Device Not Available
 ISR_ERR_CODE    8  ; #DF: Double Fault
 ISR_NO_ERR_CODE 9  ; Coprocessor Segment Overrun
 ISR_ERR_CODE    10 ; #TS: Invalid TSS
@@ -250,3 +253,56 @@ interrupt_exit_stub:
 .skip_swapgs_exit:
 
     iretq                     ; Retorno atómico
+
+; ============================================================================
+; HANDLER ISOLADO MANUAL PARA O VETOR 7 (LAZY FPU - #NM)
+; Evita que a ABI destrua o alinhamento de 16 bytes que o fxsave/fxrstor exigem
+; ============================================================================
+isr7:
+    ; 1. Verifica se a interrupção teve origem no Ring 3 (User Space)
+    test qword [rsp + 8], 3      
+    jz .kernel_entry             
+    swapgs                       ; Ativa o Bloco Per-CPU do Kernel se veio do User
+.kernel_entry:
+
+    ; 2. Salva estritamente os registadores scratch que a ABI do C pode violar
+    push rax
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push rbp
+
+    ; 3. ALINHAMENTO OBRIGATÓRIO DE 16 BYTES PARA A AMD64 ABI
+    mov rbp, rsp
+    and rsp, ~0xF                 
+
+    ; 4. Dispara o gestor central em C
+    call handle_device_not_available_exception
+
+    ; 5. Desfaz o alinhamento da stack restaurando o frame original
+    mov rsp, rbp
+
+    ; 6. Restaura os registadores scratch
+    pop rbp
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rax
+
+    ; 7. Devolve o GS_BASE ao utilizador se a origem foi o Ring 3
+    test qword [rsp + 8], 3
+    jz .kernel_exit
+    swapgs                       
+.kernel_exit:
+
+    iretq                        ; Retorno de privilégio limpo e atómico

@@ -83,8 +83,8 @@ void* kmalloc(unsigned long size) {
 
     heap_lock();
 
-    // Alinha o tamanho solicitado para 8 bytes para garantir performance de barramento
-    size = (size + 7) & ~7UL;
+    // Garante que o tamanho útil solicitado é sempre múltiplo estrito de 16
+    size = (size + 15) & ~15UL;
 
     HEAP_HEADER* current;
     HEAP_HEADER* best_block;
@@ -173,8 +173,9 @@ void* kmalloc(unsigned long size) {
 
     /*
      * 3. AVALIA A NECESSIDADE DE DIVISÃO (SPLIT) DO BLOCO
+     * CORREÇÃO CRUCIAL: GARANTIR QUE O SPLIT RESPEITA OS 16 BYTES 
      */
-    if (best_block->size >= (size + sizeof(HEAP_HEADER) + 8)) {
+    if (best_block->size >= (size + sizeof(HEAP_HEADER) + 16)) {
         unsigned long next_header_addr = (unsigned long)best_block + sizeof(HEAP_HEADER) + size;
         HEAP_HEADER* new_next_block = (HEAP_HEADER*)next_header_addr;
 

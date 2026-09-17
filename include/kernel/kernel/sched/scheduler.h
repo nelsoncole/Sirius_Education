@@ -79,5 +79,32 @@ void* task_switch(void* regs);
  */
 void scheduler_exit(int code);
 
+/**
+ * @brief Ativa o bit TS (Task Switched) no CR0.
+ */
+static inline void arch_fpu_set_ts(void) {
+    uint64_t cr0;
+    __asm__ __volatile__(
+        "movq %%cr0, %0\n\t"
+        "orq $8, %0\n\t"       // 8 = bit 3 (TS)
+        "movq %0, %%cr0"
+        : "=r"(cr0)
+        :
+        : "memory"             // Impede o GCC de reordenar esta escrita
+    );
+}
+
+/**
+ * @brief Limpa o bit TS (Task Switched) no CR0.
+ *        Usa uma barreira de memória total para garantir a execução imediata.
+ */
+static inline void arch_fpu_clear_ts(void) {
+    __asm__ __volatile__(
+        "clts" 
+        : 
+        : 
+        : "memory"             // Força o pipeline da CPU a esvaziar antes do próximo comando
+    );
+}
 
 #endif /* _SCHEDULER_H_ */

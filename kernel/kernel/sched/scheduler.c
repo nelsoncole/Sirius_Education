@@ -106,7 +106,7 @@ void scheduler_reclaim_dead_threads(void)
     {
         thread_t* next_dead = current_dead->next;
 
-        kprintf("[GC] Reclamando memória do TID morto: %u\n", current_dead->tid);
+        //kprintf("[GC] Reclamando memória do TID morto: %u\n", current_dead->tid);
 
         /* 
          * TODO: Chamar o desalocador real do seu Kernel
@@ -151,15 +151,36 @@ void scheduler_init(void)
     cpu->dead_queue_head  = NULL;
     cpu->dead_queue_tail  = NULL;
     cpu->current_thread   = NULL;
+    cpu->fpu_owner_thread = NULL;
 
-    cpu->idle_thread.tid          = 0;
-    cpu->idle_thread.state        = THREAD_READY;
-    cpu->idle_thread.cpu_id       = cpu->cpu_id;
-    cpu->idle_thread.next         = NULL;
-    cpu->idle_thread.kernel_stack = NULL;
+    // 1. Aloca o bloco TCB da Idle Thread
+    cpu->idle_thread = (thread_t*)kmalloc(sizeof(thread_t));
+    
+    // 2. Aloca a pilha de kernel dedicada para a rotina da Idle Task
+    void* idle_stack_raw = (void*)kmalloc(4096);
+    
+    if (!cpu->idle_thread || !idle_stack_raw) {
+        kprintf("[Scheduler] ERRO FATAL: Falha ao alocar recursos para o Idle!\n");
+        while(1);
+    }
+    
+    memset(cpu->idle_thread, 0, sizeof(thread_t));
+    memset(idle_stack_raw, 0, 4096);
 
-    cpu->current_thread = &cpu->idle_thread;
-    cpu->current_thread->state = THREAD_RUNNING;
+    // 3. Define os limites da pilha dedicada da Idle Task
+    uint64_t absolute_top = (uint64_t)idle_stack_raw + 4096;
+    cpu->idle_thread->kernel_stack_top = (void*)absolute_top;
+    cpu->idle_thread->kernel_stack     = (void*)absolute_top; // Inicia vazia no topo
+
+    // 4. Configura as propriedades do TCB
+    cpu->idle_thread->tid     = 0;
+    cpu->idle_thread->state   = THREAD_RUNNING;
+    cpu->idle_thread->cpu_id  = cpu->cpu_id;
+    cpu->idle_thread->next    = NULL;
+    cpu->idle_thread->owner   = NULL; // A Idle pertence ao espaço de Kernel puro
+
+    // O Core arranca a executar diretamente esta Idle Task
+    cpu->current_thread = cpu->idle_thread;
 }
 
 /**
@@ -219,7 +240,8 @@ void scheduler_exit(int code)
         /* 2. SE A FILA FICOU VAZIA: Cortamos o fluxo e saltamos direto para a Idle */
     if (next == NULL)
     {
-        next = &cpu->idle_thread;
+
+        next = cpu->idle_thread;
         next->state = THREAD_RUNNING;
         cpu->current_thread = next;
 
@@ -229,7 +251,15 @@ void scheduler_exit(int code)
          * Replicamos a lógica exata de salvaguarda da TSS do seu task_switch,
          * mas apontando para o topo estável inicial da pilha da Idle.
          */
-        cpu->tss.rsp0 = (uint64_t)next->kernel_stack + sizeof(stack_frame_t);
+        cpu->tss.rsp0 = (uint64_t)next->kernel_stack_top;
+        cpu->kernel_stack_top = (uint64_t)next->kernel_stack_top;
+        if (next != cpu->fpu_owner_thread)
+        {
+            arch_fpu_set_ts();
+        }
+
+        /* Consome o CR3 local salvo na inicialização do CPU */
+        vmm_switch_pml4(cpu->cr3);
 
         /*
          * COMO VIEMOS DE UMA SYSCALL: 
@@ -243,7 +273,7 @@ void scheduler_exit(int code)
         __asm__ __volatile__(
             "mov %0, %%rsp\n"         // Altera para a pilha segura da Idle Task
             "sti\n"                   // Reativa o Timer para permitir preempção futura
-            "jmp %1\n"                // Salta direto para o loop infinito de 'hlt'
+            "jmp *%1\n"               // CORRIGIDO: Salto indireto com '*' para o registo
             :
             : "r"(cpu->tss.rsp0), "r"(idle_thread_routine)
             : "memory"
@@ -264,7 +294,12 @@ void scheduler_exit(int code)
         }
     }
 
-    cpu->tss.rsp0 = (uint64_t)next->kernel_stack + sizeof(stack_frame_t);
+    cpu->tss.rsp0 = (uint64_t)next->kernel_stack_top;
+    cpu->kernel_stack_top = (uint64_t)next->kernel_stack_top;
+    if (next != cpu->fpu_owner_thread) 
+    {
+        arch_fpu_set_ts(); 
+    }
 
     //kprintf("[Kernel] Alternando para a proxima tarefa REAL (TID: %u)...\n", next->tid);
 
@@ -291,10 +326,12 @@ void* task_switch(void* regs)
     cpu_data_block_t* cpu = get_current_cpu();
     thread_t* current = cpu->current_thread;
 
+    // A Idle Task (TID 0) NUNCA entra na ready_queue
     if (current != NULL) 
     {
         current->kernel_stack = regs;
         
+        // Apenas threads legítimas de utilizador/kernel (TID > 0) voltam para a fila
         if (current->state == THREAD_RUNNING && current->tid != 0) 
         {
             current->state = THREAD_READY;
@@ -302,16 +339,53 @@ void* task_switch(void* regs)
         }
     }
 
+    // Tenta buscar a próxima tarefa de utilizador na fila
     thread_t* next = dequeue_thread(cpu);
 
     if (next == NULL) 
     {
-        next = &cpu->idle_thread;
+        // Se a tarefa anterior era um utilizador legítimo e ainda está ativa,
+        // ela simplesmente continua a executar. Não há queda para a Idle!
+        if (current != NULL && current->tid != 0 && current->state == THREAD_READY)
+        {
+            next = current;
+        }
+        // Se o utilizador bloqueou, morreu ou o sistema está mesmo ocioso:
+        else
+        {
+            next = cpu->idle_thread;
+            next->state = THREAD_RUNNING;
+            cpu->current_thread = next;
+
+            /* Configurações físicas do Core para a Idle Task */
+            cpu->tss.rsp0         = (uint64_t)next->kernel_stack_top;
+            cpu->kernel_stack_top = (uint64_t)next->kernel_stack_top;
+            
+            if (next != cpu->fpu_owner_thread) {
+                arch_fpu_set_ts();
+            }
+
+            /* Força o retorno ao espaço de paginação limpo do Kernel */
+            vmm_switch_pml4(cpu->cr3);
+
+            /* Salta de forma destrutiva para o loop 'hlt' em Ring 0 */
+            __asm__ __volatile__(
+                "mov %0, %%rsp\n"         
+                "sti\n"                   
+                "jmp *%1\n"               
+                :
+                : "r"(cpu->tss.rsp0), "r"(idle_thread_routine)
+                : "memory"
+            );
+            while (1); 
+        }
     }
 
+    /* Execução da próxima tarefa seleccionada */
     next->state = THREAD_RUNNING;
     cpu->current_thread = next;
 
+    // Chaveamento de espaço de endereçamento (CR3)
     if (next->owner != NULL && next->owner->cr3 != 0) 
     {
         if (current == NULL || current->owner == NULL || current->owner->cr3 != next->owner->cr3) 
@@ -320,7 +394,15 @@ void* task_switch(void* regs)
         }
     }
 
-    cpu->tss.rsp0 = (uint64_t)next->kernel_stack + sizeof(stack_frame_t);
+    /* Atualiza os ponteiros de controlo de interrupção e syscall do CPU */
+    cpu->tss.rsp0         = (uint64_t)next->kernel_stack_top; 
+    cpu->kernel_stack_top = (uint64_t)next->kernel_stack_top; 
+
+    // Lazy FPU Switch: Ativa de forma inteligente e passiva
+    if (next != cpu->fpu_owner_thread) 
+    {
+        arch_fpu_set_ts(); 
+    }
 
     return next->kernel_stack;
 }
