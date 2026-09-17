@@ -33,3 +33,18 @@ void spin_unlock(spinlock_t *lock) {
     if (!lock) return;
     __atomic_clear(&(lock->lock), __ATOMIC_RELEASE);
 }
+
+void spinlock_acquire(spinlock_t* lock) 
+{
+    if (!lock) return;
+    /* Loop de espera ativa atómico com otimização de pipeline (pause) */
+    while (__atomic_test_and_set(&(lock->lock), __ATOMIC_ACQUIRE)) {
+        __asm__ __volatile__("pause");
+    }
+}
+
+void spinlock_release(spinlock_t* lock) 
+{
+     if (!lock) return;
+    __atomic_clear(&(lock->lock), __ATOMIC_RELEASE);
+}

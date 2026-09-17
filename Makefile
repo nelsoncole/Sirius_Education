@@ -73,6 +73,7 @@ C_OBJ := \
 	$(BUILD_DIR)/pmm.o \
 	$(BUILD_DIR)/heap.o \
 	$(BUILD_DIR)/pool.o \
+	$(BUILD_DIR)/brk.o \
 	$(BUILD_DIR)/acpi.o \
 	$(BUILD_DIR)/lapic.o \
 	$(BUILD_DIR)/ioapic.o \
@@ -96,6 +97,10 @@ C_OBJ := \
 	$(BUILD_DIR)/vfs_tty.o \
 	$(BUILD_DIR)/console.o \
 	$(BUILD_DIR)/fat32.o \
+	$(BUILD_DIR)/socket.o \
+	$(BUILD_DIR)/af_local.o \
+	$(BUILD_DIR)/af_inet.o \
+	$(BUILD_DIR)/pf_packet.o \
 	$(BUILD_DIR)/test.o
 
 # ============================================================
@@ -323,6 +328,9 @@ $(BUILD_DIR)/heap.o: $(KERNEL_DIR)/mm/heap.c | $(BUILD_DIR)
 $(BUILD_DIR)/pool.o: $(KERNEL_DIR)/mm/pool.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/brk.o: $(KERNEL_DIR)/mm/brk.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/acpi.o: $(ARCH_DIR)/x86_64/kapi/acpi.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -360,6 +368,18 @@ $(BUILD_DIR)/vfs_tty.o: $(FS_DIR)/dev/vfs_tty.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/fat32.o: $(FS_DIR)/fat/fat32.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/socket.o: $(KERNEL_DIR)/net/socket.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/af_local.o: $(KERNEL_DIR)/net/af_local.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/af_inet.o: $(KERNEL_DIR)/net/af_inet.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/pf_packet.o: $(KERNEL_DIR)/net/pf_packet.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================

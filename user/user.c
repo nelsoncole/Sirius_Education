@@ -16,8 +16,8 @@
  */
 
 /* Números lógicos das Syscalls definidos no vosso syscall.h */
-#define SYS_READ  0
-#define SYS_WRITE 1
+#include "lib/usyscall.h"
+#include "lib/uheap.h"
 
 /**
  * Função autónoma de leitura em Ring 3 usando Assembly Inline.

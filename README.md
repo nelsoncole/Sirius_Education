@@ -69,8 +69,8 @@ Sirius_Education/
 ├── user/                    # Espaço do utilizador (Ring 3)
 │   ├── lib/                 # Biblioteca padrão das aplicações (ulib / libc elementar)
 │   │   ├── crt0.asm         # Ponto de entrada asm que prepara os argumentos e chama main()
-│   │   ├── ustdio.c         # printf/kprintf do user space (converte strings e chama sys_write)
-│   │   └── usyscall.asm     # Stubs em Assembly que executam a instrução física 'syscall'
+│   │   ├── uheap.h          # umalloc, ufree, ucolloc e urealloc do user space (chama sys_brk)
+│   │   └── usyscall.h       # Stubs em Assembly que executam a instrução física 'syscall'
 │   │
 │   └── apps/                # Seus programas binários isolados Ring 3
 │       ├── shell/           # Código-fonte da sua linha de comandos

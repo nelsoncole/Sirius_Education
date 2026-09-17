@@ -20,6 +20,7 @@
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/klib.h>
 #include <kernel/kernel/sched/process.h>
+#include <kernel/kernel/net/socket.h>
 
 /*
  * REGS DE HARDWARE ESPECÍFICOS DA ARQUITETURA (x86_64 MSRs)
@@ -82,6 +83,9 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
     [SYS_CONNECT]    = sys_connect,
     [SYS_SEND]       = sys_send,
     [SYS_RECV]       = sys_recv,
+    [SYS_SENDTO]     = sys_sendto,
+    [SYS_RECVFROM]   = sys_recvfrom,
+    [SYS_SHUTDOWN]   = sys_shutdown,
     [SYS_SETSOCKOPT] = sys_setsockopt,
     [SYS_GETSOCKOPT] = sys_getsockopt
 };
@@ -343,10 +347,12 @@ uint64_t sys_exit(uint64_t code) {
     return 0;
 }
 
-uint64_t sys_brk(void *addr) {
-    (void)addr;
-    kprintf("[SCI] sys_brk: Solicitacao para expandir Heap ate 0x%lx\n", (uint64_t)addr);
-    return 0;
+extern uint64_t brk(uint64_t new_break);
+uint64_t sys_brk(void *addr) 
+{
+    uint64_t target_break = (uint64_t)addr;
+
+    return brk(target_break);
 }
 
 uint64_t sys_ioctl(int fd, unsigned long request, void *arg) {
@@ -423,38 +429,58 @@ uint64_t sys_sigaction(int signum, const void *act, void *oldact) {
 }
 
 uint64_t sys_socket(int domain, int type, int protocol) {
-    kprintf("[SCI] sys_socket: dom=%d, type=%d, proto=%d\n", domain, type, protocol);
-    return 0;
+
+    // Encaminha e retorna o File Descriptor gerado
+    return (uint64_t)socket(domain, type, protocol);
 }
 
 uint64_t sys_bind(int sockfd, const void *addr, uint32_t addrlen) {
-    kprintf("[SCI] sys_bind: sock=%d, addr=0x%lx, len=%u\n", sockfd, (uint64_t)addr, addrlen);
-    return 0;
+   
+    return (uint64_t)bind(sockfd, addr, (unsigned long)addrlen);
 }
 
 uint64_t sys_listen(int sockfd, int backlog) {
-    kprintf("[SCI] sys_listen: sock=%d, backlog=%d\n", sockfd, backlog);
-    return 0;
+     
+    return (uint64_t)listen(sockfd, backlog);
 }
 
 uint64_t sys_accept(int sockfd, void *addr, uint32_t *addrlen) {
-    kprintf("[SCI] sys_accept: sock=%d, addr=0x%lx, len_ptr=0x%lx\n", sockfd, (uint64_t)addr, (uint64_t)addrlen);
-    return 0;
+   
+    // Converte o ponteiro de uint32_t* para unsigned long* exigido pela rotina nativa
+    return (uint64_t)accept(sockfd, addr, (unsigned long*)addrlen);
 }
 
 uint64_t sys_connect(int sockfd, const void *addr, uint32_t addrlen) {
-    kprintf("[SCI] sys_connect: sock=%d, addr=0x%lx, len=%u\n", sockfd, (uint64_t)addr, addrlen);
-    return 0;
+    
+    return (uint64_t)connect(sockfd, addr, (unsigned long)addrlen);
 }
 
 uint64_t sys_send(int sockfd, const void *buf, size_t len, int flags) {
-    kprintf("[SCI] sys_send: sock=%d, buf=0x%lx, len=%lu, flags=%d\n", sockfd, (uint64_t)buf, len, flags);
-    return 0;
+   
+    return (uint64_t)send(sockfd, buf, (unsigned long)len, flags);
 }
 
 uint64_t sys_recv(int sockfd, void *buf, size_t len, int flags) {
-    kprintf("[SCI] sys_recv: sock=%d, buf=0x%lx, len=%lu, flags=%d\n", sockfd, (uint64_t)buf, len, flags);
-    return 0;
+  
+    return (uint64_t)recv(sockfd, buf, (unsigned long)len, flags);
+}
+
+/**
+ * @brief NOVO: Syscall Sendto (Recepção de 6 argumentos da AMD64 ABI)
+ */
+uint64_t sys_sendto(int sockfd, const void* buf, size_t len, int flags, const void* dest_addr, uint64_t addrlen) {
+                
+    return (uint64_t)sendto(sockfd, buf, (unsigned long)len, flags, dest_addr, (unsigned long)addrlen);
+}
+
+uint64_t sys_recvfrom(int sockfd, void* buf, size_t len, int flags, void* src_addr, uint64_t* addrlen) {
+
+    return (uint64_t)recvfrom(sockfd, buf, (unsigned long)len, flags, src_addr, (unsigned long*)addrlen);
+}
+
+uint64_t sys_shutdown(int sockfd, int how) {
+
+    return (uint64_t)shutdown(sockfd, how);
 }
 
 uint64_t sys_setsockopt(int sockfd, int level, int optname, const void *optval, uint32_t optlen) {

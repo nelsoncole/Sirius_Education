@@ -16,8 +16,8 @@
  * ============================================================================
  */
 
-#ifndef _UAPI_IPC_H_
-#define _UAPI_IPC_H_
+#ifndef _IPC_H_
+#define _IPC_H_
 
 #include <kernel/kernel/ipc/ipc.h>
 

@@ -42,6 +42,7 @@
 #include <kernel/klib.h>
 #include <kernel/kernel/sched/elf.h>
 #include <kernel/drivers/tty/tty.h>
+#include <kernel/kernel/net/socket.h>
 
 extern void test(void);
 extern void tty_emulator_thread(void);
@@ -239,6 +240,8 @@ void kernel_main(BOOT_INFO *boot_info)
 
     // 17. Regista o Driver do Sistema de Ficheiros FAT32 no catálogo do VFS
     fat32_init();
+
+    init_socket();
 
     // Aqui vamos inicializar as particoes de disco
     // vamos identificar o nome da particao de boot

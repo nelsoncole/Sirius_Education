@@ -68,11 +68,14 @@
 #define SYS_CONNECT     30
 #define SYS_SEND        31
 #define SYS_RECV        32
-#define SYS_SETSOCKOPT  33
-#define SYS_GETSOCKOPT  34
+#define SYS_SENDTO      33
+#define SYS_RECVFROM    34
+#define SYS_SHUTDOWN    35
+#define SYS_SETSOCKOPT  36
+#define SYS_GETSOCKOPT  37
 
 /* Número total de chamadas suportadas nesta fase com suporte de Rede Completo */
-#define MAX_SYSCALLS 35
+#define MAX_SYSCALLS 38
 
 
 /**
@@ -141,6 +144,9 @@ uint64_t sys_accept(int sockfd, void *addr, uint32_t *addrlen);
 uint64_t sys_connect(int sockfd, const void *addr, uint32_t addrlen);
 uint64_t sys_send(int sockfd, const void *buf, size_t len, int flags);
 uint64_t sys_recv(int sockfd, void *buf, size_t len, int flags);
+uint64_t sys_sendto(int sockfd, const void* buf, size_t len, int flags, const void* dest_addr, uint64_t addrlen);
+uint64_t sys_recvfrom(int sockfd, void* buf, size_t len, int flags, void* src_addr, uint64_t* addrlen);
+uint64_t sys_shutdown(int sockfd, int how);
 uint64_t sys_setsockopt(int sockfd, int level, int optname, const void *optval, uint32_t optlen);
 uint64_t sys_getsockopt(int sockfd, int level, int optname, void *optval, uint32_t *optlen);
 

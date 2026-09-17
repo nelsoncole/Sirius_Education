@@ -17,6 +17,8 @@
 #ifndef _SPINLOCK_H_
 #define _SPINLOCK_H_
 
+#define SPINLOCK_RELEASED   0
+
 /**
  * Estrutura de um Spinlock Primitivo para Proteção SMP
  */
@@ -39,5 +41,9 @@ void spin_lock(spinlock_t *lock);
  * spin_unlock - Liberta o trinco de forma atómica para os restantes núcleos.
  */
 void spin_unlock(spinlock_t *lock);
+
+/* Protótipos das funções nativas de trancamento */
+void spinlock_acquire(spinlock_t* lock);
+void spinlock_release(spinlock_t* lock);
 
 #endif

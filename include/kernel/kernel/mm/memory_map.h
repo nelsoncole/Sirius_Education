@@ -61,7 +61,7 @@
  * crescendo para baixo em direção ao limite de segurança.
  */
 #define USER_STACK_VIRTUAL_TOP      0x00007FFFFFFFF000UL
-#define USER_STACK_INITIAL_SIZE     0x4000UL        // Tamanho inicial padrão (4 KB / 1 Página)
+#define USER_STACK_INITIAL_SIZE     0x1000UL        // Tamanho inicial padrão (4 KB / 1 Página)
 
 
 /* 
