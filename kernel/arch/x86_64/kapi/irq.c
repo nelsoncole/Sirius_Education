@@ -35,7 +35,7 @@ irq_handler_t g_interrupt_handlers[MAX_IOAPIC_PINS];
 /**
  * Regista uma função de tratamento (callback) associada a uma linha de IRQ/GSI.
  */
-int kapi_register_irq_handler(uint8_t irq_number, irq_handler_t handler)
+int irq_handler(uint8_t irq_number, irq_handler_t handler)
 {
     /* Validação defensiva contra transbordo de memória do pool de hardware */
     if (irq_number >= MAX_IOAPIC_PINS)
@@ -46,7 +46,7 @@ int kapi_register_irq_handler(uint8_t irq_number, irq_handler_t handler)
 
     g_interrupt_handlers[irq_number] = handler;
 
-    kapi_enable_irq(irq_number);
+    enable_irq(irq_number);
 
     return 0;
 }
@@ -54,7 +54,7 @@ int kapi_register_irq_handler(uint8_t irq_number, irq_handler_t handler)
 /**
  * Habilita e configura uma linha de interrupção física no IOAPIC.
  */
-void kapi_enable_irq(uint8_t irq_number)
+void enable_irq(uint8_t irq_number)
 {
     if (irq_number >= MAX_IOAPIC_PINS) return;
 
@@ -68,7 +68,7 @@ void kapi_enable_irq(uint8_t irq_number)
 /**
  * Mascara (silencia) uma linha de interrupção física no IOAPIC ativando o bit 16.
  */
-void kapi_disable_irq(uint8_t irq_number)
+void disable_irq(uint8_t irq_number)
 {
     if (irq_number >= MAX_IOAPIC_PINS) return;
 
@@ -76,4 +76,12 @@ void kapi_disable_irq(uint8_t irq_number)
     uint32_t masked_flags = (1 << 16) | target_vector; 
     
     ioapic_set_irq(irq_number, 0, masked_flags);
+}
+
+void kapi_register_irq_handler(pci_device_t *dev, void (*fuc)(void))
+{
+    if (apic_send_msi(dev, fuc))
+    {
+        irq_handler(dev->irq_line, fuc);
+    }
 }

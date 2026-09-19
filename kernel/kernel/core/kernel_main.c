@@ -40,9 +40,11 @@
 #include <kernel/fs/dev/vfs_tty.h>
 #include <kernel/fs/fat/fat32.h>
 #include <kernel/klib.h>
-#include <kernel/kernel/sched/elf.h>
+#include <kernel/kernel/sched/process_loader.h>
 #include <kernel/drivers/tty/tty.h>
 #include <kernel/kernel/net/socket.h>
+#include <kernel/arch/x86_64/kapi/timer.h>
+#include <kernel/kmods/kmod.h>
 
 extern void test(void);
 extern void tty_emulator_thread(void);
@@ -62,6 +64,7 @@ void kernel_main(BOOT_INFO *boot_info)
     kprintf_spinlock = 0;
     g_lapic_ticks_calibrated = 0;
     bootverbose = 0;
+    g_cpu_has_avx2 = 0;
 
     /*
      * O bootloader entregou as informações para o kernel.
@@ -102,7 +105,9 @@ void kernel_main(BOOT_INFO *boot_info)
      * 13. IPC
      * 14. Drivers
      * 15. VFS
-     * 16. Modules
+     * 16.
+     * 17.
+     * 18. Modules
      *
      */
 
@@ -151,6 +156,9 @@ void kernel_main(BOOT_INFO *boot_info)
     // Configura a GDT, TSS, IST e o MSR IA32_GS_BASE exclusivos do BSP
     cpu_initialize_local(0, 0, real_stack_top);
 
+    // inicializa o g_tsc_hz
+    timer_init();
+
     kprintf("[SUCESSO] BSP configurado com stack em 0x%lx!\n", real_stack_top);
 
     /*
@@ -184,7 +192,7 @@ void kernel_main(BOOT_INFO *boot_info)
 
     // 9.1. Programa os MSRs locais deste núcleo para suportar Syscalls
     syscall_init();
-
+    
     // 10. Inicializar o SMP (Application Processors - APs)
     // Faz o parsing da MADT, acorda os restantes núcleos via IPIs (INIT/STARTUP)
     // e executa a cpu_initialize_local() dinamicamente em cada um deles!
@@ -270,16 +278,30 @@ void kernel_main(BOOT_INFO *boot_info)
         }
     }
 
+
+    /* 18. Modules */
+    kmod_init();
+
+    if (kmod_load_by_name("/mnt/hd/mods/sample_mod.ko") != 0) 
+    {
+        kprintf("[kmod]: Erro critico: Falha ao carregar o modulo '/mnt/hd/mods/sample_mod.ko'.\n");
+        /* 
+         * Podes adicionar aqui um 'panic("Falha na carga do modulo essencial");' 
+         * caso este driver fosse obrigatório para o boot do Sirius_Education.
+         */
+    }
+    else
+    {
+        kprintf("[kmod]: Modulo '/mnt/hd/mods/sample_mod.ko' carregado com sucesso!\n");
+    }
+
+
     /* 3. Cria a thread mestre passando o topo da stack devidamente blindado */
     /*thread_t *test_th = thread_create(test, 0);
     if (!test_th)
     {
         kprintf("[Thread] Erro: Falha ao criar a thread (test)\n");
     }*/
-
-    /*
-	 * 16. Modules
-	 */
 
 	kprintf("\n========================================================================\n");
 	kprintf("Sirius OS carregado com sucesso. Sistema pronto.\n");

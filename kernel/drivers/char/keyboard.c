@@ -57,7 +57,7 @@ void keyboard_ps2_init(void)
         inb(KEYBOARD_DATA_PORT);
     }
 
-    kapi_register_irq_handler(IRQ_KEYBOARD, keyboard_handler);
+    irq_handler(IRQ_KEYBOARD, keyboard_handler);
 }
 
 /**

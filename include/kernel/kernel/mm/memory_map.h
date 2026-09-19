@@ -151,7 +151,7 @@
  * Espaço de memória virtual reservado para alocações dinâmicas (kmalloc).
  */
 #define KERNEL_HEAP_VIRTUAL_BASE    0xFFFF800040000000UL
-#define KERNEL_HEAP_INITIAL_SIZE    (2 * 1024 * 1024)   // Tamanho inicial de 2 MB (Preenche 1 PT inteira)
+#define KERNEL_HEAP_INITIAL_SIZE    (4 * 1024 * 1024)   // Tamanho inicial de 2 MB (Preenche 1 PT inteira)
 
 /*
  * FRAMEBUFFER DE VÍDEO (GOP / VBE)

@@ -279,7 +279,7 @@ isr7:
 
     ; 3. ALINHAMENTO OBRIGATÓRIO DE 16 BYTES PARA A AMD64 ABI
     mov rbp, rsp
-    and rsp, ~0xF                 
+    and rsp, ~0x3F               ; Alinha a Stack a 64 bytes (Bits 0-5 a zero)     
 
     ; 4. Dispara o gestor central em C
     call handle_device_not_available_exception

@@ -18,6 +18,7 @@
 
 #include <kernel/drivers/video/video.h>
 #include <kernel/drivers/char/font.h>
+#include <kernel/lib/stddef.h>
 
 
 /*
@@ -42,10 +43,74 @@ void fb_clear(void)
     g_display.cursor_y = 0;
 }
 
+/*
+void fb_putc(char c)
+{
+    // 1. Processamento de caracteres de controlo
+    if (c == '\n') {
+        g_display.cursor_x = 0;
+        g_display.cursor_y += FONT_HEIGHT;
+        goto check_screen_end;
+    }
+    
+    if (c == '\r') {
+        g_display.cursor_x = 0;
+        return;
+    }
+
+    if (c == '\t') {
+        g_display.cursor_x += (FONT_WIDTH * 4);
+        goto check_bounds;
+    }
+
+    // Garante que o caractere está nos limites da tabela (0 a 127)
+    uint8_t font_index = (uint8_t)c;
+    if (font_index >= 128) {
+        return;
+    }
+
+    // Desenha o caractere na tela
+    for (int cy = 0; cy < FONT_HEIGHT; cy++) {
+        uint8_t line = g_font_bitmap[font_index][cy];
+        
+        for (int cx = 0; cx < FONT_WIDTH; cx++) {
+            if (line & (0x80 >> cx)) {
+                put_pixel(g_display.cursor_x + cx, g_display.cursor_y + cy, g_display.text_color);
+            } else {
+                put_pixel(g_display.cursor_x + cx, g_display.cursor_y + cy, g_display.background_color);
+            }
+        }
+    }
+
+    // Avança o cursor horizontalmente
+    g_display.cursor_x += FONT_WIDTH;
+
+check_bounds:
+    // Quebra automática de linha (wrap) se estourar a largura
+    if (g_display.cursor_x + FONT_WIDTH > g_display.width) {
+        g_display.cursor_x = 0;
+        g_display.cursor_y += FONT_HEIGHT;
+    }
+
+check_screen_end:
+    // Se ultrapassar a altura da tela: limpa o ecrã e reinicia o cursor
+    if (g_display.cursor_y + FONT_HEIGHT > g_display.height) {
+        // Substitui pela tua função real de limpar tela, ex: fb_clear() ou um loop de pixeis
+        //clear_screen(g_display.background_color); 
+        fb_clear();
+        
+        g_display.cursor_x = 0;
+        g_display.cursor_y = 0;
+    }
+}*/
+
+extern void *sse_memcpy(void *s1, const void *s2, size_t len);
+extern void *sse_memset_dword(void *dst, uint32_t value, size_t count);
+extern void *avx2_memcpy(void *s1, const void *s2, size_t len);
+extern volatile int g_cpu_has_avx2;
 
 void fb_putc(char c)
 {
-    // 1. Processamento de caracteres de controlo (Escape Sequences)
     if (c == '\n') {
         g_display.cursor_x = 0;
         g_display.cursor_y += FONT_HEIGHT;
@@ -58,24 +123,19 @@ void fb_putc(char c)
     }
 
     if (c == '\t') {
-        g_display.cursor_x += (FONT_WIDTH * 4); // Avança 4 espaços
+        g_display.cursor_x += (FONT_WIDTH * 4);
         goto check_bounds;
     }
 
-    // Garante que o caractere está nos limites da tabela de 128 glifos (0 a 127)
-    // Usamos uint8_t no cast para evitar problemas com valores negativos
     uint8_t font_index = (uint8_t)c;
     if (font_index >= 128) {
         return;
     }
 
-    // Desenha as 16 linhas do caractere usando a matriz de bytes
     for (int cy = 0; cy < FONT_HEIGHT; cy++) {
         uint8_t line = g_font_bitmap[font_index][cy];
         
-        // Desenha os 8 bits (pixels) da linha atual da esquerda para a direita
         for (int cx = 0; cx < FONT_WIDTH; cx++) {
-            // Verifica o bit mais significativo (MSB) deslocando o bit correspondente
             if (line & (0x80 >> cx)) {
                 put_pixel(g_display.cursor_x + cx, g_display.cursor_y + cy, g_display.text_color);
             } else {
@@ -84,84 +144,50 @@ void fb_putc(char c)
         }
     }
 
-    // Avança o cursor horizontalmente para o próximo caractere
     g_display.cursor_x += FONT_WIDTH;
 
 check_bounds:
-    // Se o texto estourar a largura do ecrã, faz quebra automática de linha (wrap)
     if (g_display.cursor_x + FONT_WIDTH > g_display.width) {
         g_display.cursor_x = 0;
         g_display.cursor_y += FONT_HEIGHT;
     }
 
 check_scroll:
-    /*
-     * ========================================================
-     * CONTROLO DE SCROLL REAL DO FRAMEBUFFER
-     *
-     * Se o cursor ultrapassar a altura útil do ecrã, movemos
-     * todas as linhas de pixels para cima (na vertical) à 
-     * distância exata de uma linha de texto (FONT_HEIGHT). 
-     * A última linha é limpa com a cor de fundo.
-     * ========================================================
-     */
     if (g_display.cursor_y + FONT_HEIGHT > g_display.height) {
         
-        // 1. Calcular o número de pixels numa linha completa de texto (8x16)
-        unsigned int scanline_words = g_display.pixels_per_scanLine;
-        unsigned int text_line_pixels = FONT_HEIGHT * scanline_words;
+        // 1. Linha de scan por bytes (A largura do ecrã em bytes: píxeis * 4)
+        unsigned int bytes_per_scanline = g_display.pixels_per_scanLine * 4;
         
-        // 2. Calcular o total de pixels do ecrã inteiro menos a primeira linha de texto
-        unsigned int total_display_pixels = g_display.height * scanline_words;
-        unsigned int pixels_to_copy = total_display_pixels - text_line_pixels;
+        // 2. Tamanho de uma linha completa de texto em Bytes
+        unsigned int text_line_bytes = FONT_HEIGHT * bytes_per_scanline;
+        
+        // 3. Tamanho total do ecrã útil a ser deslocado (em Bytes)
+        unsigned int total_display_bytes = g_display.height * bytes_per_scanline;
+        unsigned int bytes_to_copy = total_display_bytes - text_line_bytes;
 
-        // 3. Copiar os pixels para cima (Deslocar a imagem)
-        // Movemos a partir da segunda linha de texto para o início do Framebuffer
+        // 4. Definição dos ponteiros base
         unsigned int *dst = g_display.frame_buffer_base;
-        unsigned int *src = g_display.frame_buffer_base + text_line_pixels;
+        
+        // Deslocamento de píxeis na aritmética do ponteiro unsigned int (píxeis = bytes / 4)
+        unsigned int *src = g_display.frame_buffer_base + (text_line_bytes / 4);
 
-        /*for (unsigned int i = 0; i < pixels_to_copy; i++) {
-            dst[i] = src[i];
-        }*/
-        // Copiar os pixels para cima (Deslocar a imagem) usando SSE (128-bits)
-        // Cada iteração SSE processa 4 píxeis (16 bytes)
-        unsigned int blocks = pixels_to_copy / 4;
-        unsigned int remainder = pixels_to_copy % 4;
+        // Copia todas as linhas para cima via SSE usando bytes exatos
 
-        if (blocks > 0) {
-            asm volatile (
-                "1:\n\t"
-                "movdqu (%0), %%xmm0\n\t"    // Lê 4 píxeis da VRAM para o registo XMM0
-                "movdqu %%xmm0, (%1)\n\t"    // Escreve os 4 píxeis de volta na nova posição da VRAM
-                "add $16, %0\n\t"            // Avança 16 bytes na origem
-                "add $16, %1\n\t"            // Avança 16 bytes no destino
-                "loop 1b\n\t"
-                : "+r"(src), "+r"(dst), "+c"(blocks)
-                :
-                : "xmm0", "memory"
-            );
-        }
+        if(g_cpu_has_avx2) avx2_memcpy(dst, src, bytes_to_copy);
+        else sse_memcpy(dst, src, bytes_to_copy);
 
-        // Copia o resto se o total de píxeis não for múltiplo de 4
-        for (unsigned int i = 0; i < remainder; i++) {
-            dst[i] = src[i];
-        }
+        // 5. Limpar a última linha que ficou duplicada no fundo
+        unsigned int *last_line_start = g_display.frame_buffer_base + (bytes_to_copy / 4);
 
-        // Garante a sincronização das operações de escrita na memória de vídeo
-        asm volatile("sfence" ::: "memory");
-        // end
-
-        // 4. Limpar a última linha que ficou duplicada no fundo (Preencher com Background Color)
-        unsigned int *last_line_start = g_display.frame_buffer_base + pixels_to_copy;
-        for (unsigned int i = 0; i < text_line_pixels; i++) {
-            last_line_start[i] = g_display.background_color;
-        }
-
-        // 5. Ajustar o cursor para o início da última linha do ecrã
+        // Preenche com a cor de fundo usando a tua sse_memset_dword (otimizada para 32-bits/4 bytes)
+        // O tamanho passado para sse_memset_dword deve ser a contagem de DWORDS (píxeis), não bytes!
+        unsigned int text_line_pixels = FONT_HEIGHT * g_display.pixels_per_scanLine;
+        sse_memset_dword(last_line_start, g_display.background_color, text_line_pixels);
+       
+        // 6. Reposiciona o cursor de forma segura no início da última linha útil
         g_display.cursor_x = 0;
         g_display.cursor_y = g_display.height - FONT_HEIGHT;
     }
-
 }
 
 /*

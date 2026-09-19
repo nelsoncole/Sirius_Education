@@ -57,8 +57,6 @@ static volatile uint32_t g_smp_cpus_online = 1;
 __attribute__((aligned(16)))
 void segment_ap_main(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top)
 {
-    kprintf("[SMP] Nucleo %u (LAPIC ID: %u) Stack %lX!\n", cpu_id, lapic_id, stack_top);
-
     // 1. Inicializa o bloco de isolamento Per-CPU (GDT, TSS, MSR GS_BASE) do núcleo atual
     cpu_initialize_local(cpu_id, lapic_id, stack_top);
 
@@ -77,17 +75,10 @@ void segment_ap_main(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top)
     /* 6. Programa os MSRs locais deste núcleo para suportar Syscalls */
     syscall_init();
 
-    // 6. Liga o barramento local de interrupções com segurança
-    __asm__ __volatile__("sti");
-
     kprintf("[SMP] Nucleo %u (LAPIC ID: %u) online e operando em Long Mode!\n", cpu_id, lapic_id);
-
+    
     // Incrementa de forma atómica o número de CPUs prontos no sistema
     __atomic_add_fetch(&g_smp_cpus_online, 1, __ATOMIC_SEQ_CST);
-
-
-    // Força a escrita na cache e RAM antes de libertar o BSP
-    __asm__ volatile("mfence" ::: "memory");
     
     /*
      * ============================================================================
@@ -135,9 +126,6 @@ static void smp_boot_ap(uint32_t cpu_id, uint8_t target_lapic_id, unsigned long 
     // Calcula o tamanho real do binário gerado pelo NASM
     unsigned long trampoline_size = (unsigned long)4096;
 
-    // Limpa a página de lixo antes da carga
-    memset(trampoline_target, 0, 4096);
-
     // Copia os bytes do trampolim de modos diretamente para a RAM física em 0x8000
     memcpy(trampoline_target, _binary_trampoline_start, trampoline_size);
 
@@ -166,16 +154,15 @@ static void smp_boot_ap(uint32_t cpu_id, uint8_t target_lapic_id, unsigned long 
      * Alocamos uma página limpa do Kernel Heap para o topo da pilha do AP.
      * (Ajuste ou substitua pelo seu alocador dinâmico kmalloc se necessário)
      *
-     * SOLUÇÃO INDUSTRIAL:
-     *      Pede 1 página de 4 KB livre da memória RAM física ao PMM.
      */
-    unsigned long ap_stack_phys = pmm_alloc_page();
-    if (ap_stack_phys == 0)
+    
+    uint64_t ap_stack_top = (uint64_t)kmalloc(4096) + 4096; // 4kB
+    if (!ap_stack_top)
     {
-        kernel_panic("[SMP ERRO] Nao ha RAM fisica livre para a pilha do AP!\n");
+        kernel_panic("[SMP ERRO] falha ao alocar memoria para pilha do AP!\n");
         for (;;);
     }
-    uint64_t ap_stack_top = (uint64_t)vmm_map_device(ap_stack_phys, 4096) + 4096;
+
     *injected_stack = (uint64_t)ap_stack_top;
 
     
@@ -184,23 +171,23 @@ static void smp_boot_ap(uint32_t cpu_id, uint8_t target_lapic_id, unsigned long 
     uint8_t boot_vector = (TRAMPOLINE_PHYS_ADDRESS / 4096) & 0xFF;
     uint32_t start_time;
 
-    // Limpa registadores de erro
+        // Limpa registadores de erro anteriores
     lapic_write_reg(LAPIC_REG_ESR, 0);
     lapic_write_reg(LAPIC_REG_ESR, 0);
 
     /*
      * ============================================================================
      * FASE 1: INIT IPI (ASSERT)
-     * Envia o sinal de Reset para o core alvo.
      * ============================================================================
      */
-    lapic_wait_delivery(); // Garante barramento livre
+    lapic_wait_delivery(); 
     lapic_write_reg(LAPIC_REG_ICR_HIGH, (uint32_t)target_lapic_id << 24);
     
-    // Padrão Intel: 0x4500 (Level=Assert, Delivery=INIT). O VMware exige este formato estável.
-    lapic_write_reg(LAPIC_REG_ICR_LOW, 0x4500); 
+    // CORREÇÃO: 0xC500 ativa os bits 14 (Assert) e 15 (Level Trigger) exigidos pelo hardware físico
+    __asm__ __volatile__("" ::: "memory"); // Barreira de compilador
+    lapic_write_reg(LAPIC_REG_ICR_LOW, 0xC500); 
 
-    // ESPERAR ~10 milissegundos para estabilização elétrica do RESET do core
+    // ESPERAR ~10 milissegundos (35795 ciclos do PM Timer)
     start_time = acpi_pm_read();
     while ((acpi_pm_read() - start_time) < 35795) {
         __asm__ __volatile__("pause" ::: "memory");
@@ -208,25 +195,17 @@ static void smp_boot_ap(uint32_t cpu_id, uint8_t target_lapic_id, unsigned long 
 
     /*
      * ============================================================================
-     * FASE 2: REMOVIDA / ADAPTADA (O erro do Deassert foi corrigido)
-     * Em processadores modernos, não se faz Deassert para um ID específico.
-     * Apenas aguardamos que o barramento envie o comando pendente.
+     * FASE 3: STARTUP IPI #1 (SIPI #1)
      * ============================================================================
      */
     lapic_wait_delivery();
-
-    /*
-     * ============================================================================
-     * FASE 3: STARTUP IPI #1 (SIPI #1)
-     * Força o processador a acordar a partir do vetor especificado.
-     * ============================================================================
-     */
     lapic_write_reg(LAPIC_REG_ICR_HIGH, (uint32_t)target_lapic_id << 24);
     
-    // Padrão Intel: 0x4600 (Level=Assert, Delivery=STARTUP) + Vetor
+    // Padrão Intel SIPI: Edge triggered (bit 15=0), Assert (bit 14=0 para SIPI em CPUs novas ou 1 em algumas antigas, 0x4600 é o padrão seguro)
+    __asm__ __volatile__("" ::: "memory");
     lapic_write_reg(LAPIC_REG_ICR_LOW, 0x4600 | boot_vector); 
 
-    // ESPERAR ~200 microssegundos
+    // ESPERAR ~200 microssegundos (716 ciclos)
     start_time = acpi_pm_read();
     while ((acpi_pm_read() - start_time) < 716) {
         __asm__ __volatile__("pause" ::: "memory");
@@ -235,17 +214,21 @@ static void smp_boot_ap(uint32_t cpu_id, uint8_t target_lapic_id, unsigned long 
     /*
      * ============================================================================
      * FASE 4: STARTUP IPI #2 (SIPI #2)
-     * Pulso redundante exigido por hardware físico e simuladores estritos como VMware.
      * ============================================================================
      */
     lapic_wait_delivery();
     lapic_write_reg(LAPIC_REG_ICR_HIGH, (uint32_t)target_lapic_id << 24);
+    __asm__ __volatile__("" ::: "memory");
     lapic_write_reg(LAPIC_REG_ICR_LOW, 0x4600 | boot_vector);
 
-    // Aguarda o processamento final
+    // Aguarda a transmissão final do barramento APIC
     lapic_wait_delivery();
 
-    // Delay de segurança de 1ms para o AP rodar as primeiras instruções de 16-bits
+    // Diagnóstico opcional para máquina real:
+    // uint32_t accept_error = lapic_read_reg(LAPIC_REG_ESR); 
+    // se accept_error != 0, o IPI foi rejeitado pelo hardware físico.
+
+    // Delay de segurança de 1ms para o AP estabilizar o modo real de 16-bits
     start_time = acpi_pm_read();
     while ((acpi_pm_read() - start_time) < 3579) {
         __asm__ __volatile__("pause" ::: "memory");
@@ -330,7 +313,6 @@ void smp_init(BOOT_INFO *boot_info)
 
                 // EXCUÇÃO DO DISPARO ELÉTRICO CONTRA O ALVO!
                 smp_boot_ap(active_cores_count, lapic_entry->apic_id, bsp_cr3, trampoline_target);
-
                 active_cores_count++;
             }
         }

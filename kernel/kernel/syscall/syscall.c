@@ -21,6 +21,7 @@
 #include <kernel/klib.h>
 #include <kernel/kernel/sched/process.h>
 #include <kernel/kernel/net/socket.h>
+#include <kernel/kmods/kmod.h>
 
 /*
  * REGS DE HARDWARE ESPECÍFICOS DA ARQUITETURA (x86_64 MSRs)
@@ -87,7 +88,10 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
     [SYS_RECVFROM]   = sys_recvfrom,
     [SYS_SHUTDOWN]   = sys_shutdown,
     [SYS_SETSOCKOPT] = sys_setsockopt,
-    [SYS_GETSOCKOPT] = sys_getsockopt
+    [SYS_GETSOCKOPT] = sys_getsockopt,
+    [SYS_KMOD_LOAD]  = sys_kmod_load,
+    [SYS_KMOD_UNLOAD]= sys_kmod_unload,
+    [SYS_KMOD_PRINT] = sys_kmod_print
 };
 
 static inline void wrmsr(uint32_t msr, uint64_t val) {
@@ -493,6 +497,20 @@ uint64_t sys_getsockopt(int sockfd, int level, int optname, void *optval, uint32
     return 0;
 }
 
+uint64_t sys_kmod_load(const uint8_t *user_buffer, size_t size) {
+
+    return (uint64_t)kmod_load(user_buffer, size);
+}
+
+uint64_t sys_kmod_unload(const char *user_name) {
+
+    return (uint64_t)kmod_unload(user_name);
+}
+
+uint64_t sys_kmod_print(void) {
+    kmod_print_all();
+    return 0;
+}
 
 /*
  * ============================================================================

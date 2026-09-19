@@ -72,15 +72,28 @@ void pmm_init(BOOT_INFO *boot_info) {
 
     // 2. Encontrar um local seguro para colocar o Bitmap (Evitando Overlap com o Kernel)
     unsigned long bitmap_phys_addr = 0;
-    unsigned long kernel_end = boot_info->KernelAddress + boot_info->KernelMemorySize;
+    unsigned long kernel_start = boot_info->KernelAddress;
+    unsigned long kernel_end = kernel_start + boot_info->KernelMemorySize;
     
     for (unsigned long i = 0; i < map->MemoryRegionCount; i++) {
         MEMORY_REGION reg = map->MemoryRegions[i];
         unsigned long reg_end = reg.Start + reg.Size;
         
         if (reg.Type == MEMORY_FREE && reg.Size >= pmm_bitmap_size) {
-            // CORREÇÃO 1: Validação de intervalo completo. O bitmap e o kernel não podem cruzar-se!
-            if (!(reg.Start < kernel_end && reg_end > boot_info->KernelAddress)) {
+            // TODO: Validação de intervalo completo. O bitmap e o kernel não podem cruzar-se!
+            // CASO 1: A região livre está COMPLETAMENTE antes ou COMPLETAMENTE depois do Kernel
+            if (!(reg.Start < kernel_end && reg_end > kernel_start)) {
+                bitmap_phys_addr = reg.Start;
+                break;
+            }
+            // CASO 2: A região cruza com o Kernel, mas há espaço suficiente DEPOIS do fim do Kernel
+            else if (reg_end >= (kernel_end + pmm_bitmap_size)) {
+                bitmap_phys_addr = kernel_end;
+                break;
+            }
+            // CASO 3: A região cruza com o Kernel, mas há espaço suficiente ANTES do início do Kernel
+            else if (kernel_start >= (reg.Start + pmm_bitmap_size) && kernel_start < reg_end) {
+                // Opcional: Se houver espaço antes do Kernel iniciar, aloca na base da região livre
                 bitmap_phys_addr = reg.Start;
                 break;
             }

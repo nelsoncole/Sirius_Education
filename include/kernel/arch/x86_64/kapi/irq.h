@@ -20,6 +20,7 @@
 #define _IRQ_H_
 
 #include <kernel/lib/stdint.h>
+#include <kernel/drivers/bus/pci.h>
 
 /* Linha física padrão do barramento para periféricos comuns */
 #define IRQ_KEYBOARD        1   /* O Teclado PS/2 está mapeado obrigatoriamente na IRQ 1 */
@@ -43,20 +44,23 @@ extern irq_handler_t g_interrupt_handlers[MAX_IOAPIC_PINS];
  * @param handler    Ponteiro para a função que processará o evento.
  * @return 0 em caso de sucesso, ou erro negativo.
  */
-int kapi_register_irq_handler(uint8_t irq_number, irq_handler_t handler);
+int irq_handler(uint8_t irq_number, irq_handler_t handler);
 
 /**
  * Desmascara (habilita) a linha de interrupção no controlador IOAPIC.
  * 
  * @param irq_number Linha de interrupção a ser ativada (0 a 47).
  */
-void kapi_enable_irq(uint8_t irq_number);
+void enable_irq(uint8_t irq_number);
 
 /**
  * Mascara (desabilita) uma linha de interrupção física no IOAPIC.
  * 
  * @param irq_number Linha de interrupção a ser desativada.
  */
-void kapi_disable_irq(uint8_t irq_number);
+void disable_irq(uint8_t irq_number);
+
+/* Registro de IRQ com suporte a MSI*/
+void kapi_register_irq_handler(pci_device_t *dev, void (*fuc)(void));
 
 #endif /* _IRQ_H_ */

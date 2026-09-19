@@ -10,7 +10,7 @@
  *   Created Date: 17/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 17/09/2026
+ *  Modified Date: 18/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -22,10 +22,6 @@
 #include <kernel/klib.h>
 #include <kernel/lib/string.h>
 
-// Lista encadeada global de sockets locais registados e o seu lock de barramento
-extern socket_t* g_bound_sockets_head;
-extern spinlock_t g_socket_list_lock;
-
 /**
  * @brief Associa uma identidade nominal (endereço/caminho) ao socket local.
  */
@@ -33,28 +29,13 @@ static int af_local_bind(socket_t* sock, const void* addr, unsigned long addrlen
 {
     if (!sock || !addr || addrlen == 0 || addrlen > 256) return -1;
 
-    spinlock_acquire(&g_socket_list_lock);
-
-    socket_t* check = g_bound_sockets_head;
-    while (check != NULL) 
-    {
-        if (check->local_addr_len == addrlen && 
-            memcmp(check->local_addr, addr, addrlen) == 0) 
-        {
-            spinlock_release(&g_socket_list_lock);
-            kprintf("[AF_LOCAL] Erro: Endereco já em uso.\n");
-            return -2; // EADDRINUSE
-        }
-        check = check->next;
+    /* Delega a validação de duplicados e o encadeamento global para o barramento do socket.c */
+    int res = socket_bind_address(sock, addr, addrlen);
+    if (res < 0) {
+        kprintf("[AF_LOCAL] Erro: Endereco ja em uso ou falha no bind.\n");
+        return res;
     }
 
-    memcpy(sock->local_addr, addr, addrlen);
-    sock->local_addr_len = addrlen;
-
-    sock->next = g_bound_sockets_head;
-    g_bound_sockets_head = sock;
-
-    spinlock_release(&g_socket_list_lock);
     return 0;
 }
 
@@ -65,29 +46,16 @@ static int af_local_connect(socket_t* sock, const void* addr, unsigned long addr
 {
     if (!sock || !addr || addrlen == 0) return -1;
 
-    spinlock_acquire(&g_socket_list_lock);
-
-    socket_t* server_sock = g_bound_sockets_head;
-    while (server_sock != NULL) 
-    {
-        if (server_sock->local_addr_len == addrlen && 
-            memcmp(server_sock->local_addr, addr, addrlen) == 0) 
-        {
-            break; 
-        }
-        server_sock = server_sock->next;
-    }
+    /* Procura o socket do servidor na lista global gerenciada de forma segura */
+    socket_t* server_sock = socket_find_by_address(addr, addrlen, AF_LOCAL);
 
     if (!server_sock || server_sock->state != 2) 
     {
-        spinlock_release(&g_socket_list_lock);
         return -1; // Connection refused
     }
 
-    sock->next = server_sock->listen_queue;
-    server_sock->listen_queue = sock;
-
-    spinlock_release(&g_socket_list_lock);
+    /* Adiciona o socket cliente na fila de escuta (listen_queue) do servidor de forma atómica */
+    socket_add_listen_queue(server_sock, sock);
 
     while (sock->state != 1) 
     {
@@ -109,8 +77,15 @@ static socket_t* af_local_accept(socket_t* sock)
         __asm__ __volatile__("pause");
     }
 
+    /* Protege a extração da fila local usando o lock do próprio socket */
+    spinlock_acquire(&sock->lock);
     socket_t* client_sock = sock->listen_queue;
-    sock->listen_queue = client_sock->next;
+    if (client_sock) {
+        sock->listen_queue = client_sock->next;
+    }
+    spinlock_release(&sock->lock);
+
+    if (!client_sock) return NULL;
 
     sock->peer = client_sock;
     client_sock->peer = sock;
@@ -151,27 +126,12 @@ static long af_local_sendto(socket_t* sock, const void* buf, unsigned long len, 
     {
         if (!dest_addr || addrlen == 0) return -1;
 
-        spinlock_acquire(&g_socket_list_lock);
-        socket_t* curr = g_bound_sockets_head;
-        while (curr != NULL) 
-        {
-            if (curr->local_addr_len == addrlen && 
-                memcmp(curr->local_addr, dest_addr, addrlen) == 0) 
-            {
-                dest_sock = curr;
-                break;
-            }
-            curr = curr->next;
-        }
-        spinlock_release(&g_socket_list_lock);
-
+        /* Procura o alvo estático na lista global gerenciada centralizadamente */
+        dest_sock = socket_find_by_address(dest_addr, addrlen, AF_LOCAL);
         if (!dest_sock) return -1;
     }
 
-    /* 
-     * NOVA LÓGICA SYMMETRIC FULL-DUPLEX:
-     * Primeiro alimentamos localmente o tx_buffer do transmissor de forma atómica.
-     */
+    /* Alimentamos localmente o tx_buffer do transmissor de forma atómica */
     uint8_t* src = (uint8_t*)buf;
     uint32_t bytes_buffered = 0;
 
@@ -189,10 +149,7 @@ static long af_local_sendto(socket_t* sock, const void* buf, unsigned long len, 
 
     if (bytes_buffered == 0) return 0;
 
-    /* 
-     * Move os bytes salvos no TX local diretamente para o RX do destino (dest_sock)
-     * Tranca de forma segura o destino para evitar atropelamentos multicore.
-     */
+    /* Move os bytes salvos no TX local diretamente para o RX do destino */
     uint32_t bytes_delivered = 0;
 
     spinlock_acquire(&dest_sock->lock);
@@ -203,7 +160,6 @@ static long af_local_sendto(socket_t* sock, const void* buf, unsigned long len, 
         uint32_t next_rx_tail = (dest_sock->rx_tail + 1) % SOCKET_BUFFER_SIZE;
         if (next_rx_tail == dest_sock->rx_head) break; // Buffer RX do destino encheu
 
-        // Copia física de canais cruzados TX -> RX
         dest_sock->rx_buffer[dest_sock->rx_tail] = sock->tx_buffer[sock->tx_head];
         dest_sock->rx_tail = next_rx_tail;
         
@@ -228,7 +184,6 @@ static long af_local_recvfrom(socket_t* sock, void* buf, unsigned long len, int 
     uint8_t* dest = (uint8_t*)buf;
     uint32_t bytes_read = 0;
 
-    /* EXTRAÇÃO EXCLUSIVA DO SEU PRÓPRIO BUFFER DE ENTRADA (RX) */
     spinlock_acquire(&sock->lock);
 
     while (sock->rx_head != sock->rx_tail && bytes_read < len) 
@@ -252,10 +207,6 @@ static long af_local_recvfrom(socket_t* sock, void* buf, unsigned long len, int 
     return (long)bytes_read;
 }
 
-/* ============================================================================
- * EXPORTAÇÃO COMPLETA DA TABELA POLIMÓRFICA DO PROTOCOLO LOCAL
- * ============================================================================
- */
 protocol_operations_t g_af_local_ops = {
     .bind     = af_local_bind,
     .connect  = af_local_connect,

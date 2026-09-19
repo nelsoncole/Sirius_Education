@@ -74,8 +74,13 @@
 #define SYS_SETSOCKOPT  36
 #define SYS_GETSOCKOPT  37
 
+/* Subsistema de modulo do kernel */
+#define SYS_KMOD_LOAD   38
+#define SYS_KMOD_UNLOAD 39
+#define SYS_KMOD_PRINT  40
+
 /* Número total de chamadas suportadas nesta fase com suporte de Rede Completo */
-#define MAX_SYSCALLS 38
+#define MAX_SYSCALLS 41
 
 
 /**
@@ -149,5 +154,10 @@ uint64_t sys_recvfrom(int sockfd, void* buf, size_t len, int flags, void* src_ad
 uint64_t sys_shutdown(int sockfd, int how);
 uint64_t sys_setsockopt(int sockfd, int level, int optname, const void *optval, uint32_t optlen);
 uint64_t sys_getsockopt(int sockfd, int level, int optname, void *optval, uint32_t *optlen);
+
+/* Operações de Módulos */
+uint64_t sys_kmod_load(const uint8_t *user_buffer, size_t size);
+uint64_t sys_kmod_unload(const char *user_name);
+uint64_t sys_kmod_print(void);
 
 #endif /* _SYSCALL_H_ */

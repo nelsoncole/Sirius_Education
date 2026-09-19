@@ -27,8 +27,15 @@
 #define AF_UNSPEC   0
 #define AF_LOCAL    1 /* Machine-local comms */
 #define AF_INET     2 /* IPv4 */
-#define PF_INET6    3 /* IPv6 */
-#define PF_PACKET   4 /* Low level packet interface */
+#define AF_INET6    3 /* IPv6 */
+#define AF_PACKET   4 /* Low level packet interface */
+
+/* Protocol Families (Mapeadas de forma simétrica para as Address Families) */
+#define PF_UNSPEC   AF_UNSPEC
+#define PF_LOCAL    AF_LOCAL
+#define PF_INET     AF_INET
+#define PF_INET6    AF_INET6
+#define PF_PACKET   AF_PACKET
 
 /* Tipos de Sockets POSIX */
 #define SOCK_STREAM 1 /* Conexão orientada a fluxo (Fiável, TCP / AF_LOCAL stream) */
@@ -68,6 +75,9 @@ typedef struct socket {
     uint8_t local_addr[256];        // Buffer genérico para guardar o endereço (IP ou caminho da string)
     unsigned long local_addr_len;   // Tamanho real do endereço guardado
 
+    uint8_t remote_addr[256];       // Buffer genérico para o endereço da máquina remota
+    unsigned long remote_addr_len;  // Tamanho real do endereço remoto guardado
+
     // PONTE POLIMÓRFICA DO PROTOCOLO (O Segredo da Modularidade!)
     protocol_operations_t* proto_ops;
     
@@ -92,6 +102,11 @@ typedef struct socket {
  * @brief Inicializa as estruturas globais e o subsistema de sockets do Kernel.
  */
 void init_socket(void);
+
+int socket_bind_address(socket_t* sock, const void* addr, unsigned long addrlen);
+socket_t* socket_find_by_address(const void* addr, unsigned long addrlen, int family);
+socket_t* socket_find_by_port(uint16_t port, int protocol_type);
+int socket_add_listen_queue(socket_t* server, socket_t* client);
 
 /**
  * @brief Cria um ponto de comunicação de rede ou local e devolve um File Descriptor.

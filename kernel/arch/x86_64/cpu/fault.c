@@ -40,30 +40,83 @@ void handle_device_not_available_exception(void)
 
     // 2. SALVAGUARDA: Se outra thread era a dona física do coprocessador, guarda o estado dela
     if (cpu->fpu_owner_thread != NULL && cpu->fpu_owner_thread != current) 
-    {
+    {   
         thread_t* old_owner = cpu->fpu_owner_thread;
-        
-        uint64_t addr = (uint64_t)old_owner->fpu_state;
-        __asm__ __volatile__("fxsave64 (%0)" :: "r"(addr) : "memory");
+
+        /*
+         * SOLUÇÃO À PROVA DE KMALLOC DESALINHADO:
+         * Somamos 63 e aplicamos o AND com ~0x3F para forçar o ponteiro a avançar
+         * até ao próximo limite puro de 64 bytes (terminado em 00, 40, 80 ou C0).
+         */
+        uintptr_t addr = ((uintptr_t)old_owner->fpu_state + 63) & ~0x3FULL;
+
+        if (g_cpu_has_avx2) 
+        {
+            // Guarda FPU, XMM e a totalidade dos registos YMM do AVX2
+            uint32_t eax = 7; // Bit 0 (x87) + Bit 1 (SSE) + Bit 2 (AVX)
+            uint32_t edx = 0;
+            __asm__ __volatile__("xsave (%0)" :: "r"(addr), "a"(eax), "d"(edx) : "memory");
+        } 
+        else 
+        {
+            // Fallback legado para computadores antigos
+            __asm__ __volatile__("fxsave64 (%0)" :: "r"(addr) : "memory");
+        }
     }
 
     // 3. RESTAURAÇÃO: Passa a posse do hardware matemático para a thread atual
     if (cpu->fpu_owner_thread != current) 
     {
-        uint64_t addr = (uint64_t)current->fpu_state;
+        /*
+         * SOLUÇÃO À PROVA DE KMALLOC DESALINHADO:
+         * Somamos 63 e aplicamos o AND com ~0x3F para forçar o ponteiro a avançar
+         * até ao próximo limite puro de 64 bytes (terminado em 00, 40, 80 ou C0).
+         */
+        uintptr_t addr = ((uintptr_t)current->fpu_state + 63) & ~0x3FULL;
 
         // Validação da flag hexadecimal estável que corrigimos para o GCC
         if (current->exit_code == 0x1337FB) 
-        { 
-            __asm__ __volatile__("fxrstor64 (%0)" :: "r"(addr) : "memory");
+        {   
+            if (g_cpu_has_avx2) 
+            {
+                // Restaura o contexto expandido de 256 bits
+                uint32_t eax = 7;
+                uint32_t edx = 0;
+                __asm__ __volatile__("xrstor (%0)" :: "r"(addr), "a"(eax), "d"(edx) : "memory");
+            } 
+            else 
+            {
+                __asm__ __volatile__("fxrstor64 (%0)" :: "r"(addr) : "memory");
+            }
         } 
         else 
         {
-            // Primeira vez a usar operações matemáticas: fornece um ambiente limpo de fábrica
-            __asm__ __volatile__("fninit");
+            /* 
+             * SOLUÇÃO DEFINITIVA: Em vez de 'fninit' (que quebra o cabeçalho AVX),
+             * limpamos o buffer de estado da Thread na RAM estritamente a zero.
+             * Isto garante um ambiente limpo "de fábrica" que o xsave aceita sem #GP.
+             */
+
+            // Limpa o bloco para o estado inicial de fábrica da FPU (x87) e extensões SIMD (SSE/XMM e AVX2/YMM)
+            memset((void *)addr, 0, 1024);
+
+
             
             // Registra a assinatura inicial na estrutura limpa
-            __asm__ __volatile__("fxsave64 (%0)" :: "r"(addr) : "memory");
+            if (g_cpu_has_avx2) 
+            {
+                // Limpa o estado AVX inicial (recomenda-se vzeroupper para limpar sujidade interna)
+                __asm__ __volatile__("vzeroupper" ::: "memory");
+                
+                uint32_t eax = 7;
+                uint32_t edx = 0;
+                __asm__ __volatile__("xsave (%0)" :: "r"(addr), "a"(eax), "d"(edx) : "memory");
+            } 
+            else 
+            {
+                __asm__ __volatile__("fxsave64 (%0)" :: "r"(addr) : "memory");
+            }
+            
             current->exit_code = 0x1337FB; 
         }
         
@@ -71,7 +124,6 @@ void handle_device_not_available_exception(void)
         cpu->fpu_owner_thread = current;
     }
 }
-
 
 /**
  * @brief Tenta expandir a pilha do utilizador caso a falha tenha sido um Stack Overflow controlado.

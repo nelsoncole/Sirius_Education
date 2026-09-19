@@ -477,15 +477,7 @@ int ahci_init(pci_device_t *dev)
     if (!hba_mem)
         return -1;
 
-    if (!apic_send_msi(dev, ahci_interrupt_handler))
-    {
-        kprintf("MSI enabled\n");
-    }
-    else
-    {
-        kapi_register_irq_handler(dev->irq_line, ahci_interrupt_handler);
-        kprintf("IRQ enabled, [%d]\n", dev->irq_line);
-    }
+    kapi_register_irq_handler(dev, ahci_interrupt_handler);
 
     /* Inicialização fria do Controlador */
     hba_mem->ghc |= AHCI_GHC_AE; // GHC.AE = 1 (Habilita a arquitetura AHCI)

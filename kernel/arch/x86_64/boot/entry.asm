@@ -66,6 +66,18 @@ _start:
     ; Stack deve estar alinhada a 16 bytes
     and rsp, -16
 
+    ; -------------------------------------------------------
+    ; Enable SSE
+    ;--------------------------------------------------------
+	mov     rax, cr4
+	or      rax, 0x600 ; OSFXSR and OSXMMEXCPT
+	mov     cr4, rax
+	mov     rax, cr0
+	and     ax,  0xFFFB ; Clear EM
+	or      rax, 0x2    ; Set MP
+	mov     cr0, rax
+	fninit
+
     ; --------------------------------------------------------
     ; Chamar o kernel principal
     ; --------------------------------------------------------

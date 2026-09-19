@@ -28,6 +28,8 @@
 #define MAX_CPUS    256
 // 5 entradas normais (Null, KCode, KData, Base vazia de 32-bit, UData, UCode) + 1 TSS (ocupa 2 slots de 8 bytes) = 8
 #define GDT_ENTRIES 8
+
+extern volatile int g_cpu_has_avx2;
 /*
  * ============================================================================
  * PER-CPU DATA BLOCK (Alinhamento de 16 bytes forçado para estabilidade física)
@@ -126,6 +128,9 @@ static inline uint32_t get_current_cpu_id(void) {
  * Retorna o bloco de dados de um CPU específico através do seu ID.
  */
 cpu_data_block_t* get_cpu_data_block(uint32_t cpu_id);
+
+void arch_fpu_set_ts(void);
+void arch_fpu_clear_ts(void);
 
 
 /**

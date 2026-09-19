@@ -18,7 +18,7 @@
 
 #include <kernel/kernel/sched/process.h>
 #include <kernel/kernel/sched/scheduler.h>
-#include <kernel/kernel/sched/elf.h>
+#include <kernel/kernel/sched/process_loader.h>
 
 /* 
  * Evita conflitos de dependências cíclicas com cpu.h garantindo 
@@ -78,14 +78,14 @@ static void process_init_standard_io(process_t* proc) {
 process_t* process_create(void* binary_buffer, unsigned long binary_size, int argc, char** argv, uint32_t cpu_id)
 {
     /* Validação defensiva do binário e tamanho mínimo do cabeçalho */
-    if (!binary_buffer || binary_size < sizeof(elf64_ehdr_t))
+    if (!binary_buffer || binary_size < sizeof(Elf64_Ehdr))
     {
         kprintf("[Process] Erro: Ponteiro ou tamanho do binario invalido.\n");
         return NULL;
     }
 
     // Mapeia o cabeçalho principal ELF64 diretamente em cima do buffer da Pool
-    elf64_ehdr_t* ehdr = (elf64_ehdr_t*)binary_buffer;
+    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)binary_buffer;
 
     /* VALIDAÇÃO DE INTEGRIDADE DA ASSINATURA ELF64 */
     if (ehdr->e_ident[0] != ELF_MAGIC_0 || ehdr->e_ident[1] != 'E' ||
@@ -138,11 +138,11 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
      * PARSE ELF: MAPEAMENTO E CONFIGURAÇÃO DINÂMICA DE SEGMENTOS PT_LOAD
      * ============================================================================
      */
-    elf64_phdr_t* phdr_table = (elf64_phdr_t*)((uint8_t*)binary_buffer + ehdr->e_phoff);
+    Elf64_Phdr* phdr_table = (Elf64_Phdr*)((uint8_t*)binary_buffer + ehdr->e_phoff);
 
     for (uint16_t i = 0; i < ehdr->e_phnum; i++) 
     {
-        elf64_phdr_t* phdr = &phdr_table[i];
+        Elf64_Phdr* phdr = &phdr_table[i];
 
         if (phdr->p_type == PT_LOAD) 
         {

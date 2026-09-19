@@ -15,6 +15,7 @@ ARCH_DIR    := kernel/arch
 LIB_DIR     := kernel/lib
 DRIVERS_DIR := kernel/drivers
 FS_DIR      := kernel/fs
+KMODS_DIR   := kernel/kmods
 
 USER_DIR        := user
 USER_BUILD_DIR  := build/user
@@ -66,6 +67,8 @@ C_OBJ := \
 	$(BUILD_DIR)/isr.o \
 	$(BUILD_DIR)/fault.o \
 	$(BUILD_DIR)/string.o \
+	$(BUILD_DIR)/sse_memcpy.o \
+	$(BUILD_DIR)/sse_memset.o \
 	$(BUILD_DIR)/video.o \
 	$(BUILD_DIR)/char.o \
 	$(BUILD_DIR)/font.o \
@@ -75,6 +78,7 @@ C_OBJ := \
 	$(BUILD_DIR)/pool.o \
 	$(BUILD_DIR)/brk.o \
 	$(BUILD_DIR)/acpi.o \
+	$(BUILD_DIR)/timer.o \
 	$(BUILD_DIR)/lapic.o \
 	$(BUILD_DIR)/ioapic.o \
 	$(BUILD_DIR)/irq.o \
@@ -83,7 +87,7 @@ C_OBJ := \
 	$(BUILD_DIR)/scheduler.o \
 	$(BUILD_DIR)/thread.o \
 	$(BUILD_DIR)/process.o \
-	$(BUILD_DIR)/elf.o \
+	$(BUILD_DIR)/process_loader.o \
 	$(BUILD_DIR)/syscall.o \
 	$(BUILD_DIR)/pci.o \
 	$(BUILD_DIR)/keyboard.o \
@@ -101,6 +105,16 @@ C_OBJ := \
 	$(BUILD_DIR)/af_local.o \
 	$(BUILD_DIR)/af_inet.o \
 	$(BUILD_DIR)/pf_packet.o \
+	$(BUILD_DIR)/net.o \
+	$(BUILD_DIR)/ip.o \
+	$(BUILD_DIR)/udp.o \
+	$(BUILD_DIR)/tcp.o \
+	$(BUILD_DIR)/arp.o \
+	$(BUILD_DIR)/dhcp.o \
+	$(BUILD_DIR)/kmod.o \
+	$(BUILD_DIR)/symbols.o \
+	$(BUILD_DIR)/loader.o \
+	$(BUILD_DIR)/kmod_loader.o \
 	$(BUILD_DIR)/test.o
 
 # ============================================================
@@ -272,6 +286,12 @@ $(BUILD_DIR)/msi.o: $(ARCH_DIR)/x86_64/kapi/msi.c | $(BUILD_DIR)
 $(BUILD_DIR)/string.o: $(LIB_DIR)/string.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/sse_memcpy.o: $(LIB_DIR)/sse_memcpy.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/sse_memset.o: $(LIB_DIR)/sse_memset.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/kprintf.o: $(LIB_DIR)/kprintf.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -334,6 +354,9 @@ $(BUILD_DIR)/brk.o: $(KERNEL_DIR)/mm/brk.c | $(BUILD_DIR)
 $(BUILD_DIR)/acpi.o: $(ARCH_DIR)/x86_64/kapi/acpi.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/timer.o: $(ARCH_DIR)/x86_64/kapi/timer.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/lapic.o: $(ARCH_DIR)/x86_64/cpu/lapic.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -352,7 +375,7 @@ $(BUILD_DIR)/thread.o: $(KERNEL_DIR)/sched/thread.c | $(BUILD_DIR)
 $(BUILD_DIR)/process.o: $(KERNEL_DIR)/sched/process.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/elf.o: $(KERNEL_DIR)/sched/elf.c | $(BUILD_DIR)
+$(BUILD_DIR)/process_loader.o: $(KERNEL_DIR)/sched/process_loader.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
@@ -381,6 +404,37 @@ $(BUILD_DIR)/af_inet.o: $(KERNEL_DIR)/net/af_inet.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/pf_packet.o: $(KERNEL_DIR)/net/pf_packet.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/net.o: $(KERNEL_DIR)/net/net.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ip.o: $(KERNEL_DIR)/net/ip.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/udp.o: $(KERNEL_DIR)/net/udp.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/tcp.o: $(KERNEL_DIR)/net/tcp.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/arp.o: $(KERNEL_DIR)/net/arp.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/dhcp.o: $(KERNEL_DIR)/net/dhcp.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kmod.o: $(KMODS_DIR)/manager/kmod.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/symbols.o: $(KMODS_DIR)/manager/symbols.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/loader.o: $(KMODS_DIR)/loader/loader.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kmod_loader.o: $(KMODS_DIR)/loader/kmod_loader.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 
 # ============================================================
 # Link Kernel

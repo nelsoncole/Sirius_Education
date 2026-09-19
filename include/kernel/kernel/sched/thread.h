@@ -54,7 +54,13 @@ typedef struct thread {
     
     struct thread* next;        // Ponteiro para a próxima thread na fila (Runqueue)
     
-    uint8_t fpu_state[512] __attribute__((aligned(16)));
+    /* 
+     * Buffer de Contexto Estendido (FPU, SSE/XMM e AVX2/YMM).
+     * Redimensionado para 1024 bytes com alinhamento estrito a 64 bytes 
+     * para evitar a exceção #GP no xsave/xrstor.
+     * Buffer expandido para permitir o arredondamento manual na RAM sem invadir dados
+     */
+    uint8_t fpu_state[1536]; 
 } thread_t;
 
 /**

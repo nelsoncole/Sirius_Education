@@ -1,7 +1,7 @@
 /*
  * ============================================================================
  *        Project: Sirius_Education
- *       Filename: elf.c
+ *       Filename: process_loader.c
  *    Description: Carregador síncrono de binários ELF para a Pool de Memória.
  *                 Abstrai a leitura do disco e despacha para o Escalonador
  *                 suportando a passagem dinâmica de argc e argv.
@@ -16,7 +16,7 @@
  * ============================================================================
  */
 
-#include <kernel/kernel/sched/elf.h>
+#include <kernel/kernel/sched/process_loader.h>
 #include <kernel/kernel/sched/scheduler.h>
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/klib.h>

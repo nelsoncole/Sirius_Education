@@ -27,6 +27,9 @@
  */
 cpu_data_block_t *cpu_blocks[MAX_CPUS] = {0};
 
+// Variável global: 0 = Não presente/Inativo, 1 = Presente e Ativo no Kernel
+volatile int g_cpu_has_avx2 = 0;
+
 /*
  * ============================================================================
  * CRITICAL MSRs & DEFINITIONS
@@ -100,14 +103,92 @@ static void write_gdt_tss_entry(uint64_t *gdt, uint32_t index, uint64_t tss_base
 }
 
 static void arch_init_fpu_core(void) {
+    //  Configurar o CR4
     uint64_t cr4;
     __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
-    cr4 |= (1 << 9);   // OSFXSR: Ativa fxsave/fxrstor e registos XMM
-    cr4 |= (1 << 10);  // OSXMMEXCPT: Ativa suporte a exceções SIMD unmasked (#XF)
+    cr4 |= (1 << 9);   // OSFXSR: Ativa fxsave/fxrstor e os 16 registos XMM
+    cr4 |= (1 << 10);  // OSXMMEXCPT: Ativa suporte a exceções SIMD unmasked (#XM)
     __asm__ volatile("mov %0, %%cr4" :: "r"(cr4));
 
-    // Inicializa o estado do FPU nativo do hardware uma vez no boot
+    // Inicializar o FPU clássico (x87)
     __asm__ volatile("fninit");
+}
+
+/**
+ * @brief Ativa o bit TS (Task Switched) no CR0.
+ */
+void arch_fpu_set_ts(void) {
+    uint64_t cr0;
+    __asm__ __volatile__(
+        "movq %%cr0, %0\n\t"
+        "orq $8, %0\n\t"       // 8 = bit 3 (TS)
+        "movq %0, %%cr0"
+        : "=r"(cr0)
+        :
+        : "memory"             // Impede o GCC de reordenar esta escrita
+    );
+}
+
+/**
+ * @brief Limpa o bit TS (Task Switched) no CR0.
+ *        Usa uma barreira de memória total para garantir a execução imediata.
+ */
+void arch_fpu_clear_ts(void) {
+    __asm__ __volatile__(
+        "clts" 
+        : 
+        : 
+        : "memory"             // Força o pipeline da CPU a esvaziar antes do próximo comando
+    );
+}
+
+
+int check_avx_hardware_support(void) {
+    uint32_t eax, ebx, ecx, edx;
+
+    // Verificar suporte a XSAVE e AVX básicos
+    // Chamar CPUID com EAX = 1
+    __asm__ __volatile__("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
+
+    // Bit 26 de ECX: Suporte a XSAVE (obrigatório para gerir o estado do AVX)
+    // Bit 28 de ECX: Suporte a AVX básico
+    if (!(ecx & (1 << 26)) || !(ecx & (1 << 28))) {
+        return 0; // Hardware não suporta AVX ou XSAVE
+    }
+
+    // Verificar suporte específico a AVX2
+    // Chamar CPUID com EAX = 7, ECX = 0
+    __asm__ __volatile__("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
+
+    // Bit 5 de EBX: Suporte a AVX2
+    if (!(ebx & (1 << 5))) {
+        return 0; // Suporta AVX de 256-bits, mas NÃO suporta AVX2 (inteiros/vmovntdqa)
+    }
+
+    return 1; // Hardware 100% compatível com AVX2 e XSAVE
+}
+
+void enable_avx_features(void) {
+    // 1. Ativar o bit OSXSAVE (bit 18) no registo CR4
+    __asm__ __volatile__(
+        "mov %%cr4, %%rax\n"
+        "or $0x40000, %%rax\n" // 1 << 18
+        "mov %%rax, %%cr4\n"
+        : : : "rax"
+    );
+
+    // 2. Configurar o registo XCR0 (Extended Control Register 0)
+    uint32_t ecx = 0;
+    uint32_t eax, edx;
+    
+    // Ler o estado atual do XCR0
+    __asm__ __volatile__("xgetbv" : "=a"(eax), "=d"(edx) : "c"(ecx));
+    
+    // Ativar x87(bit0), SSE/XMM(bit1) e AVX/YMM(bit2)
+    eax |= (1 << 0) | (1 << 1) | (1 << 2); 
+    
+    // Escrever as permissões de volta na CPU
+    __asm__ __volatile__("xsetbv" : : "a"(eax), "d"(edx), "c"(ecx));
 }
 
 /*
@@ -117,6 +198,18 @@ static void arch_init_fpu_core(void) {
  */
 void cpu_initialize_local(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top)
 {
+    arch_init_fpu_core();
+
+    if(check_avx_hardware_support()) 
+    {
+        enable_avx_features();
+
+        if(!g_cpu_has_avx2)g_cpu_has_avx2  = 1;
+        kprintf("[CPU] Sucesso: AVX2 detetado e ativado. Registos YMM prontos.\n");
+    }
+    
+    kprintf("[SMP] Nucleo %u (LAPIC ID: %u) Stack %lX!\n", cpu_id, lapic_id, stack_top);
+    
     if (cpu_id >= MAX_CPUS) {
         kprintf("Erro: CPU ID %d excede o limite maximo.\n", cpu_id);
         return;
@@ -192,9 +285,6 @@ void cpu_initialize_local(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top
     // Carga do Task Register (Carrega a TSS associada a este Core)
     // Passa o seletor 0x30 (Índice GDT 6, RPL 0)
     __asm__ volatile("ltr %%ax" : : "a"(0x30) : "memory");
-
-
-    arch_init_fpu_core();
 
     // Configuração do MSR GS_BASE para habilitar os dados estruturados Per-CPU
     wrmsr(IA32_GS_BASE, (uint64_t)cpu);

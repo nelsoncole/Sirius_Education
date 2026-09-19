@@ -155,7 +155,6 @@ void scheduler_init(void)
 
     // 1. Aloca o bloco TCB da Idle Thread
     cpu->idle_thread = (thread_t*)kmalloc(sizeof(thread_t));
-    
     // 2. Aloca a pilha de kernel dedicada para a rotina da Idle Task
     void* idle_stack_raw = (void*)kmalloc(4096);
     

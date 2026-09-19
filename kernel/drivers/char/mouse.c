@@ -108,7 +108,7 @@ void mouse_ps2_init(void)
     inb(MOUSE_DATA_PORT); /* Consome o byte de ACK (0xFA) enviado pelo rato */
 
     /* 4. REGISTO DO HANDLER NA NOSSA KAPI MODULAR */
-    kapi_register_irq_handler(IRQ_MOUSE, mouse_handler);
+    irq_handler(IRQ_MOUSE, mouse_handler);
     
     kprintf("[Rato] Inicialização e roteamento concluídos com sucesso.\n");
 }

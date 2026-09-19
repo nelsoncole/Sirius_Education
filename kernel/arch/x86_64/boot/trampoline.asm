@@ -120,6 +120,23 @@ start64:
     ; Stack deve estar alinhada a 16 bytes
     and rsp, -16
 
+
+    ; -------------------------------------------------------
+    ; Enable SSE
+    ;--------------------------------------------------------
+	mov     rax, cr4
+	or      rax, 0x600 ; OSFXSR and OSXMMEXCPT
+	mov     cr4, rax
+	mov     rax, cr0
+	and     ax,  0xFFFB ; Clear EM
+	or      rax, 0x2    ; Set MP
+	mov     cr0, rax
+	fninit
+	
+	mov rax, cr0
+	and ax, ~(1 << 3)	; Clear TS
+	mov cr0, rax
+
     ; System V ABI (RDI, RSI, RDX, RCX, ...)
     mov rdi, [0x8018]           ; cpu_id
     mov rsi, [0x801C]           ; lapic_id

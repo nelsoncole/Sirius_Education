@@ -182,7 +182,7 @@ void lapic_timer_init(uint32_t hz)
     uint32_t calibrated_ticks = (g_lapic_ticks_calibrated * 100) / hz;
     lapic_write(LAPIC_REG_TICR, calibrated_ticks);
 
-    kprintf("[TIMER] Núcleo configurado: %u ticks por fatia de tempo a %u Hz.\n", calibrated_ticks, hz);
+    kprintf("[TIMER] Nucleo configurado: %u ticks por fatia de tempo a %u Hz.\n", calibrated_ticks, hz);
 }
 
 
