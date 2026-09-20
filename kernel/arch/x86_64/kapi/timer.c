@@ -24,14 +24,6 @@ uint64_t g_tsc_hz;
 // Importa a função que lê o ACPI PM Timer que nos mostraste antes
 extern unsigned int acpi_pm_read(void);
 
-// Lê o TSC aplicando uma barreira de serialização (lfence) contra execução fora de ordem
-static inline uint64_t read_tsc(void) {
-    uint32_t lo, hi;
-    __asm__ volatile("lfence\n\t"
-                     "rdtsc" : "=a"(lo), "=d"(hi));
-    return ((uint64_t)hi << 32) | lo;
-}
-
 void timer_init(void) {
     uint32_t acpi_start = acpi_pm_read();
     

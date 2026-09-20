@@ -9,6 +9,9 @@
  *         Author: Nelson Cole
  *   Created Date: 18/09/2026
  * 
+ *    Modified By: Nelson Cole
+ *  Modified Date: 20/09/2026
+ * 
  *        License: MIT
  * ============================================================================
  */
@@ -20,7 +23,7 @@
 
 /* Camada inferior do ecossistema de rede */
 extern int ip_output(uint32_t dest_ip, uint8_t protocol, const void* data, uint32_t len);
-
+extern int dhcp_input(const void* data, uint32_t len);
 /**
  * @brief udp_send_datagram - Constrói o cabeçalho UDP e encapsula o payload no Heap.
  */
@@ -76,12 +79,20 @@ int udp_input(const void* data, uint32_t len, uint32_t src_ip)
     if (udp_len_field > len || udp_len_field < sizeof(udp_header_t)) return -2;
 
     uint32_t user_data_len = udp_len_field - sizeof(udp_header_t);
+    const uint8_t* udp_payload = ((const uint8_t*)data) + sizeof(udp_header_t);
 
     /* 1. Demultiplexação de Porta: Localiza o socket alvo */
     socket_t* target_sock = socket_find_by_port(udp->dest_port, SOCK_DGRAM);
     if (!target_sock || !target_sock->rx_buffer) 
     {
         return 0; /* Descarte silencioso (Port Unreachable) */
+    }
+
+    /* DESPACHO POR PORTA: Filtro direcionado ao DHCP */
+    if (udp->dest_port == htons(68)) 
+    {
+        /* O pacote veio do servidor DHCP (porta 67) para o nosso cliente (porta 68) */
+        return dhcp_input(udp_payload, user_data_len);
     }
 
     /* 2. PROTEÇÃO SMP ATÓMICA: Garante exclusão mútua ao alterar o Ring Buffer do socket */

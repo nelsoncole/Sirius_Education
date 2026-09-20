@@ -10,6 +10,9 @@
  *         Author: Nelson Cole
  *   Created Date: 18/09/2026
  * 
+ *    Modified By: Nelson Cole
+ *  Modified Date: 20/09/2026
+ * 
  *        License: MIT
  * ============================================================================
  */
@@ -111,7 +114,9 @@ int tcp_connect_handshake(socket_t* sock, struct sockaddr_in* dest)
     /* Configuração do Pseudo-Cabeçalho IP para o Cálculo Obrigatório do Checksum */
     tcp_pseudo_header_t pseudo;
     /* Lê o IP de origem em Network Byte Order diretamente da global.*/
-    pseudo.src_ip   = g_net_interface_ip; 
+    uint32_t my_ip = 0x10101010;
+    net_get_interface_ip(0, &my_ip);
+    pseudo.src_ip   = my_ip; 
     pseudo.dest_ip  = dest->sin_addr;
     pseudo.reserved = 0;
     pseudo.protocol = IPPROTO_TCP;       
@@ -196,7 +201,9 @@ long tcp_send_stream(socket_t* sock, const void* buf, unsigned long len)
     /* MOLDAGEM DO PSEUDO-CABEÇALHO IP ATÓMICO */
     tcp_pseudo_header_t pseudo;
     //Puxa o IP de origem em Network Byte Order direto da global provisória.
-    pseudo.src_ip   = g_net_interface_ip; 
+    uint32_t my_ip = 0x10101010;
+    net_get_interface_ip(0, &my_ip);
+    pseudo.src_ip   = my_ip; 
     pseudo.dest_ip  = dest->sin_addr;
     pseudo.reserved = 0;
     pseudo.protocol = IPPROTO_TCP;       
@@ -282,7 +289,9 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                 
                 /* Computa o pseudo-cabeçalho IP para o Checksum do ACK de resposta */
                 tcp_pseudo_header_t pseudo;
-                pseudo.src_ip   = g_net_interface_ip;
+                uint32_t my_ip = 0x10101010;
+                net_get_interface_ip(0, &my_ip);
+                pseudo.src_ip   = my_ip;
                 pseudo.dest_ip  = src_ip;
                 pseudo.reserved = 0;
                 pseudo.protocol = IPPROTO_TCP;
@@ -346,7 +355,9 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                     reply_tcp->window_size = htons(free_space);
 
                     tcp_pseudo_header_t pseudo;
-                    pseudo.src_ip = g_net_interface_ip;
+                    uint32_t my_ip = 0x10101010;
+                    net_get_interface_ip(0, &my_ip);
+                    pseudo.src_ip = my_ip;
                     pseudo.dest_ip = src_ip;
                     pseudo.reserved = 0;
                     pseudo.protocol = IPPROTO_TCP;
@@ -410,7 +421,9 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
 
                 /* Computa o Pseudo-Cabeçalho IP para validação física remota */
                 tcp_pseudo_header_t pseudo;
-                pseudo.src_ip = g_net_interface_ip; /* Global unificada do net.c */
+                uint32_t my_ip = 0x10101010;
+                net_get_interface_ip(0, &my_ip);
+                pseudo.src_ip = my_ip;
                 pseudo.dest_ip = src_ip;
                 pseudo.reserved = 0;
                 pseudo.protocol = IPPROTO_TCP;

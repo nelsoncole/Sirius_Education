@@ -23,6 +23,14 @@
 // Frequência do TSC calculada dinamicamente em Hz durante a inicialização
 extern uint64_t g_tsc_hz;
 
+// Lê o TSC aplicando uma barreira de serialização (lfence) contra execução fora de ordem
+static inline uint64_t read_tsc(void) {
+    uint32_t lo, hi;
+    __asm__ volatile("lfence\n\t"
+                     "rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
 // Inicializa o subsistema de tempo e calibra o TSC através do ACPI PM Timer
 void timer_init(void);
 

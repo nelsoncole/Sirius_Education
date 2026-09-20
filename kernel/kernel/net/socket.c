@@ -11,7 +11,7 @@
  *   Created Date: 17/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 17/09/2026
+ *  Modified Date: 20/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -254,27 +254,19 @@ static vfs_operations_t g_socket_vfs_ops = {
  * ============================================================================
  */
 
-
-
-int socket(int family, int type, int protocol) 
+socket_t* socket_create(int family, int type, int protocol)
 {
     (void)protocol;
-    cpu_data_block_t* cpu = get_current_cpu();
-    process_t* proc = cpu->current_thread->owner;
 
-    if (family < AF_UNSPEC || family > PF_PACKET) return -1;
+    if (family < AF_UNSPEC || family > PF_PACKET) return NULL;
 
     socket_t* sock = (socket_t*)kmalloc(sizeof(socket_t));
-    vfs_node_t* vnode = (vfs_node_t*)kmalloc(sizeof(vfs_node_t));
 
-    if (!sock || !vnode) {
-        if (sock) kfree(sock);
-        if (vnode) kfree(vnode);
-        return -1;
+    if (!sock) {
+        return NULL;
     }
 
     memset(sock, 0, sizeof(socket_t));
-    memset(vnode, 0, sizeof(vfs_node_t));
 
     sock->family = family;
     sock->type = type;
@@ -303,9 +295,61 @@ int socket(int family, int type, int protocol)
         ((family == AF_INET || family == PF_PACKET) && !sock->rx_buffer)) {
         if (sock->rx_buffer) kfree(sock->rx_buffer);
         if (sock->tx_buffer) kfree(sock->tx_buffer);
-        kfree(sock); kfree(vnode);
+        return NULL;
+    }
+
+    return sock;
+}
+
+int socket_close(socket_t* sock) 
+{
+    if (!sock) return -1;
+
+    /* REMOVE DA LISTA GLOBAL DO KERNEL SE ELE ESTIVESSE REGISTADO VIA BIND */
+    spin_lock(&g_socket_list_lock);
+    socket_t* curr = g_bound_sockets_head;
+    socket_t* prev = NULL;
+    while (curr != NULL) {
+        if (curr == sock) {
+            if (prev == NULL) g_bound_sockets_head = curr->next;
+            else prev->next = curr->next;
+            break;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+    spin_unlock(&g_socket_list_lock);
+
+    if (sock->peer) {
+        sock->peer->state = 0; 
+        sock->peer->peer = NULL;
+    }
+
+    if (sock->rx_buffer) kfree(sock->rx_buffer);
+    if (sock->tx_buffer) kfree(sock->tx_buffer);
+
+    kfree(sock);
+    return 0; 
+}
+
+int socket(int family, int type, int protocol) 
+{
+    (void)protocol;
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* proc = cpu->current_thread->owner;
+
+    if (family < AF_UNSPEC || family > PF_PACKET) return -1;
+
+    socket_t* sock = socket_create(family, type, protocol);
+    vfs_node_t* vnode = (vfs_node_t*)kmalloc(sizeof(vfs_node_t));
+
+    if (!sock || !vnode) {
+        if (sock) socket_close(sock);
+        if (vnode) kfree(vnode);
         return -1;
     }
+
+    memset(vnode, 0, sizeof(vfs_node_t));
 
     vnode->flags = VFS_CHAR_DEV; 
     vnode->private_data = sock;   

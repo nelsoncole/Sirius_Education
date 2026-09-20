@@ -18,14 +18,14 @@ BUILD_DIR = $(ROOT_DIR)/mods/build
 
 # Flags de Compilação estritas para o Kernel Ring 0 (Incluindo -m64)
 CFLAGS = -m64 -Wall -Wextra -nostdinc -ffreestanding \
-         -mcmodel=large -mno-red-zone -mno-mmx -mno-sse -mno-avx \
-         -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -O2 \
+         -mcmodel=large -mno-red-zone \
+         -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables \
          -I$(INCLUDE_DIR)
 
 # Flags do Linker para gerar um arquivo binário ELF Relocável
 LDFLAGS = -m elf_x86_64 -r
 
-TARGET = $(BUILD_DIR)/sample_mod.ko
+TARGET = $(BUILD_DIR)/e1000.ko
 OBJ = main.o
 
 .PHONY: all clean

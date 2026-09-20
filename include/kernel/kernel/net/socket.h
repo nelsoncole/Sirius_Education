@@ -107,6 +107,8 @@ int socket_bind_address(socket_t* sock, const void* addr, unsigned long addrlen)
 socket_t* socket_find_by_address(const void* addr, unsigned long addrlen, int family);
 socket_t* socket_find_by_port(uint16_t port, int protocol_type);
 int socket_add_listen_queue(socket_t* server, socket_t* client);
+socket_t* socket_create(int domain, int type, int protocol);
+int socket_close(socket_t* sock);
 
 /**
  * @brief Cria um ponto de comunicação de rede ou local e devolve um File Descriptor.

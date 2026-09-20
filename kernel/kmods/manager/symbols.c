@@ -18,7 +18,7 @@
 #include <kernel/kmods/kmod.h>
 
 /* Declaração das funções do núcleo do Kernel que serão exportadas */
-extern int kprintf(const char *fmt, ...);
+extern int kprintf2(const char *fmt, ...);
 extern void *kmalloc(size_t size);
 extern void kfree(void *ptr);
 
@@ -38,6 +38,7 @@ extern void pmm_free_pages(unsigned long phys_address, unsigned long count);
 /* Gestão de Memória Virtual e Mapeamento I/O (MMIO para Drivers) */
 extern void* vmm_map_device(unsigned long phys_addr, unsigned long size);
 extern void* vmm_scratch_map(unsigned long phys_addr);
+extern uintptr_t vmm_get_physical(uintptr_t virtual_address);
 
 /* Alocação Síncrona na Pool DMA */
 extern void* pool_alloc(size_t size);
@@ -50,7 +51,7 @@ extern void kapi_register_irq_handler(void *dev, void (*fuc)(void));
 extern int vfs_register_filesystem(void *fs);
 
 /* Subsistema de Rede do Kernel (Network Stack / Driver API) */
-extern void net_driver_register(void *ops_table);
+extern int net_driver_register(const uint8_t *mac_addr, void *ops_table);
 extern int net_driver_receive(const void *buffer, uint32_t packet_size);
 
 /* Barramento PCI (Configuração e Ativação de Hardware) */
@@ -58,13 +59,13 @@ extern int net_driver_receive(const void *buffer, uint32_t packet_size);
 extern uint32_t pci_config_read_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset);
 extern void pci_config_write_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t data);
 extern void pci_enable_mmio_busmastering(void *dev); /* Mapeado como void* ou pci_device_t* se declarado */
-
+extern int pci_load_devices_by_class(uint8_t class_code, uint8_t subclass_code, int (*init_cb)(void *dev));
 /*
  * Tabela estática contendo os símbolos públicos do Kernel.
  * Cada entrada associa uma cadeia de caracteres ao endereço real da função.
  */
 static kernel_symbol_t kernel_symtab[] = {
-    {"kprintf",                         (uintptr_t)kprintf},
+    {"kprintf",                         (uintptr_t)kprintf2},
     {"kmalloc",                         (uintptr_t)kmalloc},
     {"kfree",                           (uintptr_t)kfree},
 
@@ -83,6 +84,7 @@ static kernel_symbol_t kernel_symtab[] = {
     /* --- Mapeamento Virtual Baseado em Hardware (MMIO) --- */
     {"vmm_map_device",                  (uintptr_t)vmm_map_device},
     {"vmm_scratch_map",                 (uintptr_t)vmm_scratch_map},
+    {"vmm_get_physical",                (uintptr_t)vmm_get_physical},
     
     /* --- Gestão de Alocação de Páginas na Pool --- */
     {"pool_alloc",                      (uintptr_t)pool_alloc},
@@ -102,6 +104,7 @@ static kernel_symbol_t kernel_symtab[] = {
     {"pci_config_read_dword",           (uintptr_t)pci_config_read_dword},
     {"pci_config_write_dword",          (uintptr_t)pci_config_write_dword},
     {"pci_enable_mmio_busmastering",    (uintptr_t)pci_enable_mmio_busmastering},
+    {"pci_load_devices_by_class",       (uintptr_t)pci_load_devices_by_class},
     
     /* Sentinela: fim da tabela de símbolos */
     {NULL, 0}

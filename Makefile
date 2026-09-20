@@ -107,10 +107,12 @@ C_OBJ := \
 	$(BUILD_DIR)/pf_packet.o \
 	$(BUILD_DIR)/net.o \
 	$(BUILD_DIR)/ip.o \
+	$(BUILD_DIR)/icmp.o \
 	$(BUILD_DIR)/udp.o \
 	$(BUILD_DIR)/tcp.o \
 	$(BUILD_DIR)/arp.o \
 	$(BUILD_DIR)/dhcp.o \
+	$(BUILD_DIR)/dhcp_init.o \
 	$(BUILD_DIR)/kmod.o \
 	$(BUILD_DIR)/symbols.o \
 	$(BUILD_DIR)/loader.o \
@@ -411,6 +413,9 @@ $(BUILD_DIR)/net.o: $(KERNEL_DIR)/net/net.c | $(BUILD_DIR)
 $(BUILD_DIR)/ip.o: $(KERNEL_DIR)/net/ip.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/icmp.o: $(KERNEL_DIR)/net/icmp.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/udp.o: $(KERNEL_DIR)/net/udp.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -421,6 +426,9 @@ $(BUILD_DIR)/arp.o: $(KERNEL_DIR)/net/arp.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/dhcp.o: $(KERNEL_DIR)/net/dhcp.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/dhcp_init.o: $(KERNEL_DIR)/net/dhcp_init.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kmod.o: $(KMODS_DIR)/manager/kmod.c | $(BUILD_DIR)

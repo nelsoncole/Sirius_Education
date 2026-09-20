@@ -9,7 +9,7 @@
  *   Created Date: 18/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 18/09/2026
+ *  Modified Date: 20/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -30,6 +30,7 @@
 #define DHCP_BOOTREPLY   2
 
 /* Identificadores de Protocolos de Transporte IP (Cabeçalho IP) */
+#define IPPROTO_ICMP 1
 #define IPPROTO_TCP 6
 #define IPPROTO_UDP 17
 
@@ -178,20 +179,19 @@ static inline char* inet_ntoa(uint32_t ip_addr)
     return inet_ntoa_r(ip_addr, static_buf, sizeof(static_buf));
 }
 
-/* ============================================================================
- *        PROPRIEDADES DA INTERFACE DE REDE ATIVA (GLOBAIS EXPORTADAS)
- * ============================================================================ */
-extern uint32_t g_net_interface_ip;
-extern uint32_t g_net_interface_mask;
-extern uint32_t g_net_interface_gateway;
-extern uint8_t  g_net_interface_mac[6];
-
-
-void net_driver_register(void* ops_table);
+int net_driver_register(const uint8_t *mac_addr, void* ops_table);
 int net_driver_transmit(const void* buffer, uint32_t packet_size);
 int net_driver_receive(const void* buffer, uint32_t packet_size);
 void network_rx_thread(void);
 void net_init(void);
-
+int net_get_interface_mac(uint32_t interface_id, uint8_t* mac_out);
+int net_set_interface_ip(uint32_t ip);
+int net_set_interface_mask(uint32_t mask);
+int net_set_interface_gateway(uint32_t gateway);
+int net_get_interface_ip(uint32_t interface_id, uint32_t* ip_out);
+int net_get_interface_mask(uint32_t interface_id, uint32_t* mask_out);
+int net_get_interface_gateway(uint32_t interface_id, uint32_t* gateway_out);
+int net_get_interface_init(uint32_t interface_id, bool flag);
+int net_get_interface_is_online(uint32_t interface_id, bool flag);
 
 #endif /* _NET_H_ */

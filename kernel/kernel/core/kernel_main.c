@@ -45,6 +45,7 @@
 #include <kernel/kernel/net/socket.h>
 #include <kernel/arch/x86_64/kapi/timer.h>
 #include <kernel/kmods/kmod.h>
+#include <kernel/kernel/net/net.h>
 
 extern void test(void);
 extern void tty_emulator_thread(void);
@@ -246,6 +247,8 @@ void kernel_main(BOOT_INFO *boot_info)
     // dando-lhe o nome literal de "ahci%d".
     ahci_driver_init();
 
+    net_init();
+
     // 17. Regista o Driver do Sistema de Ficheiros FAT32 no catálogo do VFS
     fat32_init();
 
@@ -295,6 +298,19 @@ void kernel_main(BOOT_INFO *boot_info)
         kprintf("[kmod]: Modulo '/mnt/hd/mods/sample_mod.ko' carregado com sucesso!\n");
     }
 
+    if (kmod_load_by_name("/mnt/hd/mods/e1000.ko") != 0) 
+    {
+        kprintf("[kmod]: Erro critico: Falha ao carregar o modulo '/mnt/hd/mods/e1000.ko'.\n");
+        /* 
+         * Podes adicionar aqui um 'panic("Falha na carga do modulo essencial");' 
+         * caso este driver fosse obrigatório para o boot do Sirius_Education.
+         */
+    }
+    else
+    {
+        kprintf("[kmod]: Modulo '/mnt/hd/mods/e1000.ko' carregado com sucesso!\n");
+    }
+
 
     /* 3. Cria a thread mestre passando o topo da stack devidamente blindado */
     /*thread_t *test_th = thread_create(test, 0);
@@ -314,6 +330,7 @@ void kernel_main(BOOT_INFO *boot_info)
      */
     thread_create(tty_emulator_thread, 0);
     thread_create(tty_keyboard_bridge_thread, 0);
+    thread_create(network_rx_thread, 0);
     /*
      * ============================================================================
      * ARRANQUE DO PROCESSO INICIAL DO ESPAÇO DE UTILIZADOR (INIT / USER.ELF)
@@ -352,16 +369,17 @@ void kernel_main(BOOT_INFO *boot_info)
     // MONTAGEM DINÂMICA DOS ARGUMENTOS:
     int init_argc = 5;
     char* init_argv[] = {
-        "/System/user.elf",          // argv[0]: Caminho do executável
+        "/system/user.elf",          // argv[0]: Caminho do executável
         g_boot_partition_name,       // argv[1]: Ex: "ahci0.1" (Origem de persistência)
         "text_mode",                 // argv[2]: Modo gráfico/texto base
         "/dev/tty0",                 // argv[3]: Terminal padrão do sistema
         uefi_res_str                 // argv[4]: Resolução de tela REAL e dinâmica da UEFI!
     };
 
-    kprintf("[BOOT] Lancando o processo mestre de User Space '/System/user.elf'...\n");
-    elf_load_and_create_process("/mnt/hd/System/user.elf", init_argc, init_argv, 0);
+    kprintf("[BOOT] Lancando o processo mestre de User Space '/system/user.elf'...\n");
+    elf_load_and_create_process("/mnt/hd/system/user.elf", init_argc, init_argv, 0);
 
+    fb_clear();
     vfs_print_tree("/");
     
     // Liga o barramento local de interrupções com segurança
