@@ -322,7 +322,7 @@ void kernel_main(BOOT_INFO *boot_info)
      */
     thread_create(tty_emulator_thread, 0);
     thread_create(tty_keyboard_bridge_thread, 0);
-    thread_create(network_rx_thread, 0);
+    thread_create(network_rx_thread, 1);
 
     //thread_create(test, 0);
     /*

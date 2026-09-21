@@ -45,6 +45,9 @@
 #define SHUT_WR   1 /* Desativa transmissão (TX) */
 #define SHUT_RDWR 2 /* Desativa ambas as direções */
 
+#define EPHEMERAL_PORT_START 32768
+#define EPHEMERAL_PORT_END   61000
+
 /* Dimensão padrão do buffer circular de transmissão (16 KiB) */
 #define SOCKET_BUFFER_SIZE  16384
 

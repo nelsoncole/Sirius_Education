@@ -9,7 +9,7 @@
 ;   Created Date: 05/09/2026
 ;
 ;    Modified By: Nelson Cole
-;  Modified Date: 06/09/2026
+;  Modified Date: 21/09/2026
 ;
 ;        License: MIT
 ; ============================================================================
@@ -41,17 +41,14 @@ syscall_entry_stub:
     push r10                    ; 5. [rsp + 8]  Salva o R10 (Antigo RSP ou argumento)
     push qword 0                ; 6. [rsp + 0]  PADDING final de alinhamento de 16 bytes
 
-    ; ============================================================================
+    ; ====================================================================================================
     ; 2. CONVERSÃO DE ARGUMENTOS DE 64-BITS (6 ARGUMENTOS REAIS)
     ;
     ; O utilizador envia em:    RAX (Nº), RDI (A1), RSI (A2), RDX (A3), R10 (A4), R8 (A5), R9 (A6)
     ; O seu Kernel C espera:    RDI (Nº), RSI (A1), RDX (A2), RCX (A3), R8 (A4), R9 (A5), [Stack](A6)
-    ; ============================================================================
+    ; ====================================================================================================
 
-    ; O 6º argumento (R9) precisa de ir para a Stack do C porque a função em C 
-    ; recebe 7 parâmetros no total (syscall_num + 6 argumentos).
-    ; O System V ABI dita que o 7º parâmetro de uma função em C entra via Stack!
-    push r9                     ; Empurra o 6º argumento (Passado em R9 pelo user)
+    push r9                     ; 6º argumento: Empurra o 6º argumento (Passado em R9 pelo user)
     push qword 0                ; Alinhamento extra de 16 bytes para a Stack de chamada do Call
 
     ; Ajuste dos restantes registos para a chamada em C

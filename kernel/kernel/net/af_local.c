@@ -10,7 +10,7 @@
  *   Created Date: 17/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 18/09/2026
+ *  Modified Date: 21/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -54,24 +54,33 @@ static int af_local_connect(socket_t* sock, const void* addr, unsigned long addr
         return -1; // Connection refused
     }
 
+    /* Sinaliza que este socket cliente está a tentar conectar-se */
+    sock->state = 3; // SOCKET_CONNECTING
+
     /* Adiciona o socket cliente na fila de escuta (listen_queue) do servidor de forma atómica */
     socket_add_listen_queue(server_sock, sock);
 
-    while (sock->state != 1) 
+    /* Aguarda até que o processo Servidor execute o 'accept' e mude o nosso estado para CONNECTED */
+    while (sock->state == 3) 
     {
         __asm__ __volatile__("pause");
     }
+
+    if (sock->state != 1) return -1; // Falha na conexão
 
     return 0;
 }
 
 /**
  * @brief Aceita uma conexão pendente da fila do servidor local.
+ * @note CORREÇÃO: O servidor não pode virar o peer direto do cliente, 
+ *       senão o servidor deixa de conseguir receber novas conexões!
  */
 static socket_t* af_local_accept(socket_t* sock) 
 {
     if (!sock || sock->state != 2) return NULL;
 
+    /* Aguarda a chegada de um cliente na fila de escuta */
     while (sock->listen_queue == NULL) 
     {
         __asm__ __volatile__("pause");
@@ -87,13 +96,21 @@ static socket_t* af_local_accept(socket_t* sock)
 
     if (!client_sock) return NULL;
 
-    sock->peer = client_sock;
-    client_sock->peer = sock;
+    /* CORREÇÃO ARQUITETURAL: Cria um novo socket para a conexão ativa (Session Socket) */
+    socket_t* session_sock = socket_create(AF_LOCAL, sock->type, 0);
+    if (!session_sock) {
+        client_sock->state = 0; // Aborta o cliente por falta de memória no kernel
+        return NULL;
+    }
 
-    sock->state = 1;
-    client_sock->state = 1;
+    /* Vincula simetricamente o cliente ao novo socket de sessão e vice-versa */
+    session_sock->peer = client_sock;
+    client_sock->peer = session_sock;
 
-    return client_sock;
+    session_sock->state = 1; // SOCKET_CONNECTED
+    client_sock->state  = 1; // SOCKET_CONNECTED
+
+    return session_sock; /* O VFS associará este novo socket ao FD retornado pelo accept */
 }
 
 /**
@@ -104,12 +121,13 @@ static int af_local_listen(socket_t* sock, int backlog)
     (void)backlog;
     if (!sock) return -1;
     
-    sock->state = 2; 
+    sock->state = 2; // SOCKET_LISTENING
     return 0;
 }
 
 /**
- * @brief Transmite uma mensagem (datagrama) local para o RX do destino.
+ * @brief Transmite uma mensagem (datagrama/fluxo) local unicamente para o RX do destino.
+ * @note CONCORDÂNCIA: Usa apenas o rx_buffer do alvo, respeitando a remoção do tx_buffer.
  */
 static long af_local_sendto(socket_t* sock, const void* buf, unsigned long len, int flags, const void* dest_addr, unsigned long addrlen) 
 {
@@ -127,19 +145,21 @@ static long af_local_sendto(socket_t* sock, const void* buf, unsigned long len, 
     {
         if (!dest_addr || addrlen == 0) return -1;
 
-        /* Procura o alvo estático na lista global gerenciada centralizadamente (ex: portas AF_LOCAL) */
+        /* Procura o alvo estático na lista global (ex: modo datagrama sem conexão) */
         dest_sock = socket_find_by_address(dest_addr, addrlen, AF_LOCAL);
         if (!dest_sock || dest_sock->rx_buffer == NULL) return -1;
     }
 
+    /* Verifica se o destino ainda está ativo e recetivo */
+    if (dest_sock->state == 0) return -1; /* EPIPE / Conexão abortada */
+
     uint8_t* src = (uint8_t*)buf;
     uint32_t bytes_delivered = 0;
 
-    /* 2. PROTEÇÃO SMP/MULTICORE ANTIDEADLOCK: Tranca APENAS o buffer do receptor!
-       O remetente não precisa de trancar o seu próprio lock, pois lê direto do 'buf' da aplicação. */
+    /* 2. PROTEÇÃO SMP/MULTICORE ANTIDEADLOCK: Tranca APENAS o lock do receptor */
     spinlock_acquire(&dest_sock->lock);
 
-    /* 3. INJEÇÃO DIRETA NO RING BUFFER DO DESTINO */
+    /* 3. INJEÇÃO DIRETA NO RX_BUFFER DO DESTINO */
     for (uint32_t i = 0; i < len; i++) 
     {
         /* Calcula a próxima cabeça RX do receptor de forma circular */
@@ -151,19 +171,13 @@ static long af_local_sendto(socket_t* sock, const void* buf, unsigned long len, 
             break; 
         }
 
-        /* Insere no rx_head e avança o rx_head */
+        /* Insere no rx_buffer e avança o rx_head do recetor */
         dest_sock->rx_buffer[dest_sock->rx_head] = src[i];
         dest_sock->rx_head = next_rx_head;
         bytes_delivered++;
     }
 
     spinlock_release(&dest_sock->lock);
-
-    /* 
-     * NOTA DE NOTIFICAÇÃO: Se entregou bytes com sucesso e possui um mecanismo de 
-     * sinalização, pode disparar um wakeup na fila do dest_sock aqui para tirar a 
-     * thread recetora do estado passivo "hlt" que configurámos no af_local_recvfrom.
-     */
 
     return (long)bytes_delivered;
 }
@@ -191,7 +205,7 @@ static long af_local_recvfrom(socket_t* sock, void* buf, unsigned long len, int 
     {
         spinlock_release(&sock->lock);
         
-        /* Cede o CPU de forma passiva (ou chame scheduler_yield()) */
+        /* Cede o CPU de forma passiva (Pode substituir por scheduler_yield() se implementado) */
         __asm__ __volatile__("hlt"); 
         
         spinlock_acquire(&sock->lock);
@@ -210,7 +224,7 @@ static long af_local_recvfrom(socket_t* sock, void* buf, unsigned long len, int 
 
     /* 
      * 3. CORREÇÃO DOS ÍNDICES (Consumo FIFO): 
-     * Lê a partir de 'rx_tail' e avança o 'rx_tail' de forma circular.
+     * Lê a partir de 'rx_tail' do próprio buffer e avança circularmente.
      */
     while (sock->rx_head != sock->rx_tail && bytes_read < len) 
     {

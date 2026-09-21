@@ -28,6 +28,7 @@ extern int tcp_input(const void* data, uint32_t len, uint32_t src_ip);
 extern int icmp_input(const void* data, uint32_t len, uint32_t src_ip, ip_header_t* ip_hdr);
 extern int arp_cache_lookup(uint32_t ip_addr, uint8_t *mac_addr);
 extern int arp_request(uint32_t target_ip);
+extern int arp_retain_packet(uint32_t dest_ip, void* packet_data, uint32_t packet_len);
 
 
 /**
@@ -80,7 +81,7 @@ int ip_output(uint32_t dest_ip, uint8_t protocol, const void* data, uint32_t len
     /* O tamanho total do pacote engloba os 20 bytes do IP + os bytes da camada de transporte */
     uint32_t ip_packet_size = sizeof(ip_header_t) + len;
 
-     /* O tamanho total real que vai para o cabo inclui os 14 bytes da Ethernet */
+    /* O tamanho total real que vai para o cabo inclui os 14 bytes da Ethernet */
     uint32_t total_frame_size = sizeof(ethernet_header_t) + ip_packet_size;
 
     /* Validação de MTU clássica da Internet (1500 bytes de payload máximo na Ethernet) */
@@ -98,14 +99,45 @@ int ip_output(uint32_t dest_ip, uint8_t protocol, const void* data, uint32_t len
         return -3;
     }
 
-    /* 1. Configuração da camada 2 (Ethernet)  */
+    /* ============================================================================
+     * 1. CONFIGURAÇÃO DA CAMADA 2 (ETHERNET) - PARTE ESTÁVEL
+     * ============================================================================ */
     ethernet_header_t* eth = (ethernet_header_t*)tx_buffer;
     /* EtherType obrigatório para IPv4: 0x0800 (Convertido para Big-Endian) */
     eth->ethertype = htons(0x0800);
-    /* Nossa endereço MAC*/
+    /* Nosso endereço MAC */
     net_get_interface_mac(0, eth->src_mac);
+
+    /* ============================================================================
+     * 2. CONFIGURAÇÃO DA CAMADA 3 (IPv4) E MONTAGEM DO PAYLOAD
+     * ============================================================================
+     * O preenchimento do IP e a cópia dos dados devem ocorrer ANTES de qualquer 
+     * decisão de retenção do ARP, garantindo que o pacote retido esteja 100% pronto.
+     */
+    ip_header_t* ip = (ip_header_t*)(tx_buffer + sizeof(ethernet_header_t));
+
+    ip->version_ihl     = (4 << 4) | 5;     
+    ip->tos             = 0x00;             
+    ip->total_len       = htons(ip_packet_size); /* Tamanho apenas do pacote IP */
+    uint16_t current_id = g_ip_packet_id++;
+    ip->id              = htons(current_id);
+    ip->flags_fragment  = htons(0x4000);    /* Don't Fragment */
+    ip->ttl             = 64;               
+    ip->protocol        = protocol;         
+    ip->checksum        = 0x0000;
     
-    /* ALGORITMO DE RESOLUÇÃO DE ENDEREÇO MAC (ARP Gateway/Local) */
+    uint32_t ip_out = 0;
+    net_get_interface_ip(0, &ip_out);
+    ip->src_ip          = ip_out; 
+    ip->dest_ip         = dest_ip;
+    
+    /* Calcula o checksum baseado estritamente nos 20 bytes do cabeçalho IP */
+    ip->checksum = ip_calculate_checksum(ip, sizeof(ip_header_t));
+
+    /* 3. Complemento dos dados (Payload da camada superior) */
+    uint8_t* ip_payload_space = tx_buffer + sizeof(ethernet_header_t) + sizeof(ip_header_t);
+    memcpy(ip_payload_space, data, len);
+
     uint32_t target_ip = dest_ip;
     uint32_t broadcast_ip = 0xFFFFFFFF;
 
@@ -126,63 +158,40 @@ int ip_output(uint32_t dest_ip, uint8_t protocol, const void* data, uint32_t len
         else 
         {
             /* 
-             * FALHA DE MAPEAMENTO: Não sabemos quem tem este IP.
-             * 1. Liberta o buffer atual para evitar fugas de memória (Memory Leak) no Heap.
-             * 2. Forja e envia um pacote ARP Request em Broadcast para descobrir o MAC.
+             * FALHA DE MAPEAMENTO (ARP QUEUEING ASSÍNCRONO):
+             * O MAC do alvo é desconhecido neste instante.
+             * 
+             * 1. Retém o frame TOTALMENTE MONTADO na lista global de pacotes em espera.
+             *    Passamos o 'total_frame_size' uma vez que a camada Ethernet já faz parte dele.
              */
-            kfree(tx_buffer);
-            
+            arp_retain_packet(target_ip, tx_buffer, total_frame_size);
+
             kprintf("[IPv4] MAC nao encontrado para o IP %s. Disparando ARP Request...\n", inet_ntoa(target_ip));
+            
+            /* 2. Forja e envia o pacote ARP Request físico para o barramento da rede */
             arp_request(target_ip);
             
             /* 
-             * Retorna um código específico indicando que o pacote foi adiado/descartado 
-             * enquanto a Camada 2.5 (ARP) resolve o endereço físico do destinatário.
+             * NOTA CRÍTICA DE PROPRIEDADE: NÃO FAÇA kfree(tx_buffer) AQUI! 
+             * O ownership do ponteiro foi transferido para a fila global independente do ARP.
+             * O arp_flush_pending_packets encarregar-se-á de o libertar após a transmissão física.
              */
             return -11; 
         }
     }
 
-    /* 2. Configuração da camada 3 (IPv4) */
-    /* O IP começa exatamente deslocado após os 14 bytes do cabeçalho Ethernet */
-    ip_header_t* ip = (ip_header_t*)(tx_buffer + sizeof(ethernet_header_t));
-
-    ip->version_ihl     = (4 << 4) | 5;     
-    ip->tos             = 0x00;             
-    ip->total_len       = htons(ip_packet_size); /* Tamanho apenas do pacote IP */
-    uint16_t current_id = g_ip_packet_id++;
-    ip->id              = htons(current_id);
-    ip->flags_fragment  = htons(0x4000);    /* Don't Fragment */
-    ip->ttl             = 64;               
-    ip->protocol        = protocol;         
-    ip->checksum        = 0x0000;
-    uint32_t ip_out = 0;
-    net_get_interface_ip(0, &ip_out);
-    ip->src_ip          = ip_out; 
-    ip->dest_ip         = dest_ip;
-    
-    
-    /* Calcula o checksum baseado estritamente nos 20 bytes do cabeçalho IP */
-    ip->checksum = ip_calculate_checksum(ip, sizeof(ip_header_t));
-
-    /* 3. Complemento dos dados (Payload) */
-    /* Avança o ponteiro saltando a Ethernet e o IP para colar os dados da aplicação */
-    uint8_t* ip_payload_space = tx_buffer + sizeof(ethernet_header_t) + sizeof(ip_header_t);
-    memcpy(ip_payload_space, data, len);
-
-    /*kprintf("[IPv4] Frame Ethernet montado com Sucesso. (IP ID: %d, Total Frame: %d bytes).\n", 
-            ntohs(ip->id), total_frame_size);*/
-
-    /* 
-     * INTERFACE COM O HARDWARE FÍSICO:
-     * Enviamos o Frame completo (incluindo o cabeçalho Ethernet) para o Driver da e1000
+    /* ============================================================================
+     * 4. TRANSMISSÃO FÍSICA IMEDIATA
+     * ============================================================================
+     * Se entrou aqui, significa que o endereço MAC foi resolvido instantaneamente via cache 
+     * ou era um endereço de Broadcast. O frame desce para a camada de hardware.
      */
     int res = net_driver_transmit(tx_buffer, total_frame_size);
 
-    /* 4. Limpa o Heap do Kernel */
+    /* Liberação obrigatória da memória já transmitida pelo hardware */
     kfree(tx_buffer);
 
-    return res; /* Retorno com sucesso absoluto */
+    return res;
 }
 
 /**

@@ -11,7 +11,7 @@
  *   Created Date: 17/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 20/09/2026
+ *  Modified Date: 21/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -153,7 +153,7 @@ int socket_add_listen_queue(socket_t* server, socket_t* client)
  * PONTE POLIMÓRFICA DE OPERAÇÕES DO VFS (Alinhada com vfs_operations_t)
  * ============================================================================
  */
-
+static int socket_auto_bind_inet(socket_t* sock);
 static int socket_vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) 
 {
     /* Silencia o parâmetro nativo exigido pelo VFS */
@@ -163,10 +163,18 @@ static int socket_vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, vo
 
     socket_t* sock = (socket_t*)node->private_data;
 
+    /* AUTO-BIND AUTOMÁTICO PARA IPV4 */
+    if (sock->family == AF_INET && sock->local_addr_len == 0) 
+    {
+        if (socket_auto_bind_inet(sock) < 0) 
+        {
+            return -2; /* Falha ao alocar porta efêmera */
+        }
+    }
+
     /* 
      * POLIMORFISMO ABSOLUTO:
      * O VFS delega 100% da transmissão para o driver do protocolo ativo.
-     * Passa NULL e 0 no endereço pois assume-se um fluxo pré-conectado ou anónimo.
      */
     if (sock->proto_ops && sock->proto_ops->sendto) 
     {
@@ -261,10 +269,7 @@ socket_t* socket_create(int family, int type, int protocol)
     if (family < AF_UNSPEC || family > PF_PACKET) return NULL;
 
     socket_t* sock = (socket_t*)kmalloc(sizeof(socket_t));
-
-    if (!sock) {
-        return NULL;
-    }
+    if (!sock) return NULL;
 
     memset(sock, 0, sizeof(socket_t));
 
@@ -273,28 +278,24 @@ socket_t* socket_create(int family, int type, int protocol)
     sock->state = 0; 
     spin_lock_init(&sock->lock);
 
-    /* ALOCAÇÃO DE BUFFERS ATÓMICOS CONSOANTE A FAMÍLIA */
+    /* ASSOCIAÇÃO POLIMÓRFICA DE OPERAÇÕES */
     if (family == AF_LOCAL) {
         sock->proto_ops = &g_af_local_ops;
-        sock->rx_buffer = (uint8_t*)kmalloc(SOCKET_BUFFER_SIZE);
-        sock->tx_buffer = (uint8_t*)kmalloc(SOCKET_BUFFER_SIZE);
     }
     else if (family == AF_INET) {
         sock->proto_ops = &g_af_inet_ops;
-        sock->rx_buffer = (uint8_t*)kmalloc(SOCKET_BUFFER_SIZE); /* Buffer de subida para o IP/UDP/TCP */
-        sock->tx_buffer = NULL; /* Transmissão direta (Zero-Copy) */
     }
     else if (family == PF_PACKET) {
         sock->proto_ops = &g_pf_packet_ops;
-        sock->rx_buffer = (uint8_t*)kmalloc(SOCKET_BUFFER_SIZE);
-        sock->tx_buffer = NULL;
     }
 
-    /* Salvaguarda de falta de memória (OOM) */
-    if ((family == AF_LOCAL && (!sock->rx_buffer || !sock->tx_buffer)) || 
-        ((family == AF_INET || family == PF_PACKET) && !sock->rx_buffer)) {
-        if (sock->rx_buffer) kfree(sock->rx_buffer);
-        if (sock->tx_buffer) kfree(sock->tx_buffer);
+    /* ALOCAÇÃO DE BUFFER DE RECEÇÃO (Comum a todas as famílias implementadas) */
+    sock->rx_buffer = (uint8_t*)kmalloc(SOCKET_BUFFER_SIZE);
+    sock->tx_buffer = NULL; /* Transmissão Direta / Zero-Copy para todas as famílias */
+
+    /* Salvaguarda Unificada de falta de memória (OOM) */
+    if (!sock->rx_buffer) {
+        kfree(sock);
         return NULL;
     }
 
@@ -385,6 +386,92 @@ int socket(int family, int type, int protocol)
     return fd;
 }
 
+/**
+ * @brief Tenta alocar uma porta efêmera aleatória/sequencial livre para Sockets AF_INET.
+ * @note Deve ser chamada ANTES do envio de dados se local_addr_len for 0.
+ * @return 0 em caso de sucesso, ou -2 (EADDRINUSE) se não houver portas livres.
+ */
+static int socket_auto_bind_inet(socket_t* sock)
+{
+    struct sockaddr_in auto_sin;
+    int port_found = 0;
+
+    memset(&auto_sin, 0, sizeof(struct sockaddr_in));
+    auto_sin.sin_family = AF_INET;
+    // Vincula explicitamente a qualquer interface (INADDR_ANY)
+    auto_sin.sin_addr.s_addr = 0; 
+
+    spin_lock(&g_socket_list_lock);
+
+    // Procura por uma porta livre no intervalo efêmero
+    for (uint32_t port = EPHEMERAL_PORT_START; port <= EPHEMERAL_PORT_END; port++) 
+    {
+        // Converte para Big-Endian (Network Byte Order) para correspondência estrita
+        uint16_t net_port = (uint16_t)(((port & 0xFF) << 8) | ((port & 0xFF00) >> 8));
+        int in_use = 0;
+
+        socket_t* check = g_bound_sockets_head;
+        while (check != NULL) 
+        {
+            if (check->family == AF_INET && check->type == sock->type) 
+            {
+                struct sockaddr_in* check_sin = (struct sockaddr_in*)check->local_addr;
+                if (check_sin->sin_port == net_port) 
+                {
+                    in_use = 1;
+                    break;
+                }
+            }
+            check = check->next;
+        }
+
+        if (!in_use) 
+        {
+            auto_sin.sin_port = net_port;
+            port_found = 1;
+            break;
+        }
+    }
+
+    if (!port_found) 
+    {
+        spin_unlock(&g_socket_list_lock);
+        return -2; /* EADDRINUSE */
+    }
+
+    memcpy(sock->local_addr, &auto_sin, sizeof(struct sockaddr_in));
+    sock->local_addr_len = sizeof(struct sockaddr_in);
+
+    sock->next = g_bound_sockets_head;
+    g_bound_sockets_head = sock;
+
+    spin_unlock(&g_socket_list_lock);
+    return 0; /* Sucesso */
+}
+
+
+int getsockname(vfs_node_t* node, void* addr, unsigned long* addrlen)
+{
+    if (!node || !node->private_data || !addr || !addrlen) return -1;
+
+    socket_t* sock = (socket_t*)node->private_data;
+
+    // Protege o acesso às propriedades de endereço do socket
+    spin_lock(&g_socket_list_lock);
+
+    unsigned long len_to_copy = sock->local_addr_len;
+    if (*addrlen < len_to_copy) 
+    {
+        len_to_copy = *addrlen;
+    }
+
+    memcpy(addr, sock->local_addr, len_to_copy);
+    *addrlen = sock->local_addr_len;
+
+    spin_unlock(&g_socket_list_lock);
+    return 0;
+}
+
 int bind(int fd, const void* addr, unsigned long addrlen) 
 {
     cpu_data_block_t* cpu = get_current_cpu();
@@ -450,9 +537,21 @@ int connect(int fd, const void* addr, unsigned long addrlen)
     if (fd < 0 || fd >= MAX_FILES_PER_PROCESS || !proc->file_descriptor_table[fd]) return -1;
 
     vfs_file_t* file = proc->file_descriptor_table[fd];
-    socket_t* sock = (socket_t*)file->node->private_data;
+    if (!file || !file->node || !file->node->private_data) return -1; // Validação do VFS
 
-    if (sock && sock->proto_ops && sock->proto_ops->connect) {
+    socket_t* sock = (socket_t*)file->node->private_data;
+    if (!sock) return -1;
+
+    /* AUTO-BIND AUTOMÁTICO PARA IPV4 */
+    if (sock->family == AF_INET && sock->local_addr_len == 0) 
+    {
+        if (socket_auto_bind_inet(sock) < 0) 
+        {
+            return -2; /* Falha ao alocar porta efêmera */
+        }
+    }
+
+    if (sock->proto_ops && sock->proto_ops->connect) {
         return sock->proto_ops->connect(sock, addr, addrlen);
     }
 
@@ -468,8 +567,18 @@ long sendto(int fd, const void* buf, unsigned long len, int flags, const void* d
 
     vfs_file_t* file = proc->file_descriptor_table[fd];
     socket_t* sock = (socket_t*)file->node->private_data;
+    if (!sock) return -1;
 
-    if (sock && sock->proto_ops && sock->proto_ops->sendto) {
+    /* AUTO-BIND AUTOMÁTICO PARA IPV4 */
+    if (sock->family == AF_INET && sock->local_addr_len == 0) 
+    {
+        if (socket_auto_bind_inet(sock) < 0) 
+        {
+            return -2; /* Falha ao alocar porta efêmera */
+        }
+    }
+
+    if (sock->proto_ops && sock->proto_ops->sendto) {
         return sock->proto_ops->sendto(sock, buf, len, flags, dest_addr, addrlen);
     }
 

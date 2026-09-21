@@ -10,7 +10,7 @@
  *   Created Date: 18/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 20/09/2026
+ *  Modified Date: 21/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -59,32 +59,19 @@ long udp_send_datagram(socket_t* sock, const void* buf, unsigned long len, struc
     kprintf("[UDP] Enviando datagrama: Porta %d -> %d (%d bytes)\n", 
             ntohs(udp->src_port), ntohs(udp->dest_port), len);
 
-    int tentativas = 3;
-    int res = -11;
-
-    while (tentativas > 0 && res == -11)
-    {
-        res = ip_output(dest->sin_addr.s_addr, IPPROTO_UDP, udp_buffer, udp_payload_size);
-        
-        if (res == -11)
-        {
-            /* 
-             * O ARP Request foi disparado. Aguarda 3 milissegundos de forma precisa 
-             * para dar tempo à placa e1000 de capturar e processar o ARP Reply.
-             */
-            mdelay(3);
-            
-            tentativas--;
-            
-            if (tentativas > 0) {
-                kprintf("[UDP] Cache ARP ausente para %s. Tentando retransmissao automatica...\n", inet_ntoa(dest->sin_addr.s_addr));
-            }
-        }
-    }
+    /* 
+     * O ip_output agora ASSUME a responsabilidade.
+     * Se o MAC não estiver no cache, o IP/ARP clona o udp_buffer, 
+     * coloca-o numa fila interna e dispara o ARP Request em background.
+     */
+    int res = ip_output(dest->sin_addr.s_addr, IPPROTO_UDP, udp_buffer, udp_payload_size);
     
     kfree(udp_buffer);
 
-    if (res < 0) return -4;
+    if (res < 0 && res != -11) return -4; // Erro real de rede
+    
+    // Mesmo se res == -11 (ARP pendente), retornamos sucesso para o Ring 3.
+    // O pacote sairá de forma assíncrona pelo motor ARP!
     return (long)len;
 }
 

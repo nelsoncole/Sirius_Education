@@ -136,12 +136,7 @@ int udp_send_test_message(const char* message, unsigned int msg_len)
         return -1;
     }
 
-    /* 2. Bind na Porta Local 68 (Escuta) */
-    struct sockaddr_in local;
-    local.sin_family = 2;
-    local.sin_port   = htons(1000);
-    local.sin_addr.s_addr = 0; /* INADDR_ANY (0.0.0.0) escuta em qualquer interface */
-    sys_bind(sock_fd, (struct sockaddr_in*)&local, sizeof(local));
+
 
     /* 2. Configurar o endereço de destino (IP: 10.225.63.146, Porta: 5000) */
     struct sockaddr_in dest_addr;

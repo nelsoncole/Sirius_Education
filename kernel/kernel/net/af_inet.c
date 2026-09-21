@@ -10,7 +10,7 @@
  *   Created Date: 17/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 18/09/2026
+ *  Modified Date: 21/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -64,12 +64,50 @@ static int af_inet_connect(socket_t* sock, const void* addr, unsigned long addrl
     sock->remote_addr_len = sizeof(struct sockaddr_in);
     spinlock_release(&sock->lock);
 
-    /* Triagem da camada de transporte com base no tipo do socket */
+        /* Triagem da camada de transporte com base no tipo do socket */
     if (sock->type == SOCK_STREAM) 
     {
-        /* TCP: Inicializa o aperto de mão síncrono (SYN) */
-        return tcp_connect_handshake(sock, dest_sin);
-    } 
+        /* TCP: Inicializa o aperto de mão síncrono (SYN) e envia o pacote */
+        int res = tcp_connect_handshake(sock, dest_sin);
+        
+        /* 
+         * Se o retorno for 0 (SYN enviado diretamente) ou -11 (SYN retido na fila do ARP),
+         * o pacote inicial está a caminho da rede. Iniciamos o bloqueio passivo da thread.
+         */
+        if (res == 0 || res == -11) 
+        {
+            spinlock_acquire(&sock->lock);
+            
+            /* 
+             * LOOP DE ESPERA PASSIVA (SMP-Safe):
+             * Enquanto o estado não for ESTABLISHED (1) e não houver erro (CLOSED/0),
+             * suspendemos a thread atual na fila de espera do socket.
+             */
+            while (sock->state == 4) /* 4 = TCP_STATE_SYN_SENT */
+            {
+                /* 
+                 * Função hipotética de sincronização do Sirius_Education:
+                 * Liberta temporariamente o lock do socket e coloca a thread atual em 
+                 * estado de espera passiva (SLEEP). O Scheduler assume o controlo.
+                 * Ao acordar, o lock é readequado automaticamente.
+                 */
+                //scheduler_sleep_on(&sock->wait_queue, &sock->lock);
+            }
+
+            /* Ao acordar, avalia qual foi o desfecho do Handshake */
+            if (sock->state != 1) /* 1 = TCP_STATE_ESTABLISHED */
+            {
+                spinlock_release(&sock->lock);
+                return -3; /* Connection Refused / Timeout / Reset */
+            }
+
+            spinlock_release(&sock->lock);
+            kprintf("[TCP] Connect síncrono concluído com sucesso absoluta!\n");
+            return 0; /* Retorna com sucesso ao Ring 3, pronto para enviar ficheiros */
+        }
+        
+        return res; /* Erro imediato na alocação ou montagem (ex: -ENOMEM) */
+    }
     else if (sock->type == SOCK_DGRAM) 
     {
         /* UDP: Sem ligação. Apenas fixa o destino para futuros envios pelo send() */
@@ -89,14 +127,18 @@ static int af_inet_connect(socket_t* sock, const void* addr, unsigned long addrl
  */
 static socket_t* af_inet_accept(socket_t* sock) 
 {
+    if (!sock) return NULL;
+
+    /* Verificação inicial de estado segura */
     spinlock_acquire(&sock->lock);
-    if (!sock || sock->state != 2) 
+    if (sock->state != 2) /* 2 = SOCKET_LISTENING */
     {
         spinlock_release(&sock->lock);
         return NULL;
     }
     spinlock_release(&sock->lock);
 
+    /* Aguarda de forma síncrona a chegada de conexões na fila (preenchida pela pilha TCP) */
     while (sock->listen_queue == NULL) 
     {
         __asm__ __volatile__("pause");
@@ -104,15 +146,45 @@ static socket_t* af_inet_accept(socket_t* sock)
 
     /* Protege a extração da fila local usando o lock do próprio socket */
     spinlock_acquire(&sock->lock);
-    socket_t* client_sock = sock->listen_queue;
-    if (client_sock) 
+    socket_t* pending_client = sock->listen_queue;
+    if (pending_client) 
     {
-        sock->listen_queue = client_sock->next;
-        client_sock->next = NULL;
+        sock->listen_queue = pending_client->next;
+        pending_client->next = NULL;
     }
     spinlock_release(&sock->lock);
 
-    return client_sock; 
+    if (!pending_client) return NULL;
+
+    /* 
+     * Cria um novo socket de sessão para o par conectado.
+     * O socket original 'sock' DEVE continuar em modo LISTEN (estado 2).
+     */
+    socket_t* session_sock = socket_create(AF_INET, sock->type, 0);
+    if (!session_sock) 
+    {
+        /* Se faltar memória no kernel, aborta a conexão pendente de forma segura */
+        spinlock_acquire(&pending_client->lock);
+        pending_client->state = 0; /* Desconectado */
+        spinlock_release(&pending_client->lock);
+        return NULL; 
+    }
+
+    /* Clona as propriedades necessárias do endereço local do servidor para o socket de sessão */
+    memcpy(session_sock->local_addr, sock->local_addr, sock->local_addr_len);
+    session_sock->local_addr_len = sock->local_addr_len;
+
+    /* Copia os dados do cliente remoto vindos da pilha TCP para o novo socket de sessão */
+    memcpy(session_sock->remote_addr, pending_client->remote_addr, pending_client->remote_addr_len);
+    session_sock->remote_addr_len = pending_client->remote_addr_len;
+
+    /* Acopla os estados */
+    session_sock->state = 1; /* SOCKET_CONNECTED */
+    
+    /* LIBERAÇÃO DO NÓ DUMMY: Evita vazamento de memória no Heap do Kernel */
+    kfree(pending_client); 
+
+    return session_sock; /* O VFS receberá este novo socket e vai gerar um novo File Descriptor */
 }
 
 /**

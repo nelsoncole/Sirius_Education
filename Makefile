@@ -106,6 +106,7 @@ C_OBJ := \
 	$(BUILD_DIR)/af_inet.o \
 	$(BUILD_DIR)/pf_packet.o \
 	$(BUILD_DIR)/net.o \
+	$(BUILD_DIR)/ethernet.o \
 	$(BUILD_DIR)/ip.o \
 	$(BUILD_DIR)/icmp.o \
 	$(BUILD_DIR)/udp.o \
@@ -408,6 +409,9 @@ $(BUILD_DIR)/pf_packet.o: $(KERNEL_DIR)/net/pf_packet.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/net.o: $(KERNEL_DIR)/net/net.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ethernet.o: $(KERNEL_DIR)/net/ethernet.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/ip.o: $(KERNEL_DIR)/net/ip.c | $(BUILD_DIR)

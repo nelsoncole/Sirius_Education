@@ -31,14 +31,27 @@ typedef struct {
     uint32_t ip_addr;     /* Chave de Busca (Big-Endian) */
     uint8_t  mac_addr[6]; /* Resposta Física */
     uint8_t  is_valid;    /* Flag de controle de sessão */
-    /* FILA DE ESPERA ARP */
-    void*    pending_packet; /* Ponteiro para o tx_buffer guardado */
-    uint32_t pending_len;    /* Tamanho do frame guardado */
 } arp_entry_t;
+
+/* Nó da Lista Global Independente de Pacotes em Espera */
+typedef struct arp_pending_node {
+    uint32_t                 dest_ip;     /* IP de destino aguardando o MAC (Chave) */
+    void*                    packet_data; /* Ponteiro bruto para o tx_buffer guardado */
+    uint32_t                 packet_len;  /* Tamanho do frame guardado */
+    struct arp_pending_node* next;        /* Ponteiro para o próximo nó da lista */
+} arp_pending_node_t;
 
 /* Tabela ARP e o seu trinco de isolamento SMP */
 static arp_entry_t g_arp_cache[ARP_CACHE_MAX];
 static spinlock_t  g_arp_lock = { SPINLOCK_RELEASED };
+
+/* Cabeça da lista encadeada global de pacotes retidos */
+arp_pending_node_t* g_arp_pending_queue_head = NULL;
+
+/* Spinlock dedicado para a fila de espera, isolado do spinlock da tabela ARP */
+spinlock_t g_arp_pending_lock = { SPINLOCK_RELEASED };
+
+extern int ethernet_output(void* packet_data, uint32_t packet_len, const uint8_t* hardware_mac);
 
 /**
  * @brief Inicializa e limpa a tabela ARP Cache no boot.
@@ -119,6 +132,81 @@ void arp_cache_insert(uint32_t ip_addr, const uint8_t* mac_addr)
     g_arp_victim_idx = (g_arp_victim_idx + 1) % ARP_CACHE_MAX;
 
     spinlock_release(&g_arp_lock);
+}
+
+/**
+ * @brief Retém um pacote na lista global assíncrona indexado pelo IP de destino.
+ */
+int arp_retain_packet(uint32_t dest_ip, void* packet_data, uint32_t packet_len)
+{
+    if (!packet_data || packet_len == 0) return -1;
+
+    arp_pending_node_t* node = (arp_pending_node_t*)kmalloc(sizeof(arp_pending_node_t));
+    if (!node) return -1; /* ENOMEM */
+
+    node->dest_ip     = dest_ip;
+    node->packet_data = packet_data; /* Assume ownership do buffer */
+    node->packet_len  = packet_len;
+    node->next        = NULL;
+
+    /* Inserção atómica no início da lista global */
+    spinlock_acquire(&g_arp_pending_lock);
+    
+    node->next = g_arp_pending_queue_head;
+    g_arp_pending_queue_head = node;
+    
+    spinlock_release(&g_arp_pending_lock);
+
+    return 0;
+}
+
+/**
+ * @brief Varre a lista independente, envia todos os pacotes correspondentes ao IP resolvido e limpa os nós.
+ */
+void arp_flush_pending_packets(uint32_t resolved_ip, const uint8_t* hardware_mac)
+{
+    spinlock_acquire(&g_arp_pending_lock);
+
+    arp_pending_node_t* curr = g_arp_pending_queue_head;
+    arp_pending_node_t* prev = NULL;
+
+    while (curr != NULL) 
+    {
+        /* Encontrou um pacote na fila que estava à espera deste IP específico */
+        if (curr->dest_ip == resolved_ip) 
+        {
+            kprintf("[ARP Queue] A despachar pacote retido para IP %s...\n",inet_ntoa(resolved_ip));
+
+            /* 1. Despacha fisicamente para o Driver da Placa de Rede (via Ethernet) */
+            ethernet_output(curr->packet_data, curr->packet_len, hardware_mac);
+
+            /* 2. Remove o nó da lista encadeada de forma segura */
+            arp_pending_node_t* node_to_free = curr;
+            
+            if (prev == NULL) {
+                /* O nó estava na cabeça da lista */
+                g_arp_pending_queue_head = curr->next;
+                curr = g_arp_pending_queue_head;
+            } else {
+                /* O nó estava no meio ou fim da lista */
+                prev->next = curr->next;
+                curr = curr->next;
+            }
+
+            /* 3. Desaloca a memória do buffer do pacote e do nó estrutural */
+            kfree(node_to_free->packet_data);
+            kfree(node_to_free);
+            
+            /* Continua o loop, pois podem existir múltiplos pacotes para o mesmo IP */
+            continue; 
+        }
+
+        /* Avança na lista se não for o IP correspondente */
+        prev = curr;
+        curr = curr->next;
+    }
+
+    spinlock_release(&g_arp_pending_lock);
 }
 
 /**
@@ -290,6 +378,12 @@ int arp_input(const void* packet_data, uint32_t packet_len)
                 inet_ntoa(arp->src_ip),
                 arp->src_mac[0], arp->src_mac[1], arp->src_mac[2],
                 arp->src_mac[3], arp->src_mac[4], arp->src_mac[5]);
+
+         /* 
+         * Dispara o esvaziamento atómico da área de retenção volátil.
+         * Passa o IP de origem (Chave de Busca) e o MAC físico resolvido (Destino).
+         */
+        arp_flush_pending_packets(arp->src_ip, arp->src_mac);
         
         /* 
          * ====================================================================
