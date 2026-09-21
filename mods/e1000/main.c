@@ -9,7 +9,7 @@
  *         Author: Nelson Cole
  *   Created Date: 19/09/2026
  * 
- *    Modified By: Nelson Cole / AI Collaborator
+ *    Modified By: Nelson Cole
  *  Modified Date: 20/09/2026
  * 
  *        License: MIT

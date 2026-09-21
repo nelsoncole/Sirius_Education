@@ -18,7 +18,7 @@
 #include <kernel/kmods/kmod.h>
 
 /* Declaração das funções do núcleo do Kernel que serão exportadas */
-extern int kprintf2(const char *fmt, ...);
+extern int kprintf(const char *fmt, ...);
 extern void *kmalloc(size_t size);
 extern void kfree(void *ptr);
 
@@ -65,7 +65,7 @@ extern int pci_load_devices_by_class(uint8_t class_code, uint8_t subclass_code, 
  * Cada entrada associa uma cadeia de caracteres ao endereço real da função.
  */
 static kernel_symbol_t kernel_symtab[] = {
-    {"kprintf",                         (uintptr_t)kprintf2},
+    {"kprintf",                         (uintptr_t)kprintf},
     {"kmalloc",                         (uintptr_t)kmalloc},
     {"kfree",                           (uintptr_t)kfree},
 
