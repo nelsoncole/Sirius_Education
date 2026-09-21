@@ -44,10 +44,13 @@
  * @brief Estrutura clássica de endereço de socket da Internet (IPv4).
  * Conforme o padrão POSIX para comunicação de rede via AF_INET.
  */
+struct in_addr {
+    uint32_t s_addr;
+};
 struct sockaddr_in {
     uint16_t sin_family;   /* Família do endereço: Sempre AF_INET */
     uint16_t sin_port;     /* Porta de transporte (Network Byte Order) */
-    uint32_t sin_addr;     /* Endereço IPv4 de 32-bits (Network Byte Order) */
+    struct in_addr sin_addr;     /* Endereço IPv4 de 32-bits (Network Byte Order) */
     uint8_t  sin_zero[8];  /* Preenchimento de alinhamento com struct sockaddr */
 };
 

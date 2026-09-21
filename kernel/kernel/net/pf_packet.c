@@ -131,14 +131,24 @@ static long pf_packet_recvfrom(socket_t* sock, void* buf, unsigned long len, int
     spinlock_acquire(&sock->lock);
 
     /* 
+     * 1. BLOQUEIO SEGURO RAW PACKET: 
+     * Se o buffer estiver completamente vazio, a thread em Ring 3 cede o CPU 
+     * passivamente até que a 'network_rx_thread' capture um frame do cabo e avance o rx_head.
+     */
+    while (sock->rx_head == sock->rx_tail) 
+    {
+        spinlock_release(&sock->lock);
+        
+        /* Coloca o core local em repouso passivo (ou chame scheduler_yield()) */
+        __asm__ __volatile__("hlt"); 
+        
+        spinlock_acquire(&sock->lock);
+    }
+
+    /* 
      * FILTRO RAW PACKET: Captura o cabeçalho virtual de metadados inserido pelo packet_input
      * para preservar o tamanho exato de cada frame Ethernet individual capturado.
      */
-    if (sock->rx_head == sock->rx_tail) 
-    {
-        spinlock_release(&sock->lock);
-        return 0; /* Fila vazia */
-    }
 
     /* Passo A: Recolhe o tamanho em bytes do frame guardado (4 bytes) */
     uint32_t frame_len = 0;
@@ -149,7 +159,9 @@ static long pf_packet_recvfrom(socket_t* sock, void* buf, unsigned long len, int
         sock->rx_tail = (sock->rx_tail + 1) % SOCKET_BUFFER_SIZE;
     }
 
-    if (frame_len == 0 || frame_len > SOCKET_BUFFER_SIZE) {
+    /* Validação crítica de sanidade contra corrupção por estouro */
+    if (frame_len == 0 || frame_len > SOCKET_BUFFER_SIZE) 
+    {
         spinlock_release(&sock->lock);
         return -2; /* Corrupção de alinhamento de buffer */
     }
@@ -169,12 +181,12 @@ static long pf_packet_recvfrom(socket_t* sock, void* buf, unsigned long len, int
         sock->rx_tail = (sock->rx_tail + (frame_len - bytes_read)) % SOCKET_BUFFER_SIZE;
     }
 
-    /* Populamos opcionalmente a origem indicando a família que processou o pacote */
+    /* Populamos opcionalmente a origem indicando a família que processou o pacote (AF_PACKET) */
     if (bytes_read > 0 && src_addr && addrlen && *addrlen >= sizeof(struct sockaddr_ll)) 
     {
         struct sockaddr_ll* src_sll = (struct sockaddr_ll*)src_addr;
         memset(src_sll, 0, sizeof(struct sockaddr_ll));
-        src_sll->sll_family = AF_PACKET;
+        src_sll->sll_family = AF_PACKET; /* 17 */
         *addrlen = sizeof(struct sockaddr_ll);
     }
 

@@ -20,6 +20,7 @@
 #include <kernel/kernel/net/net.h>
 #include <kernel/klib.h>
 #include <kernel/lib/string.h>
+#include <kernel/arch/x86_64/kapi/timer.h>
 
 /* Camada inferior do ecossistema de rede */
 extern int ip_output(uint32_t dest_ip, uint8_t protocol, const void* data, uint32_t len);
@@ -58,7 +59,28 @@ long udp_send_datagram(socket_t* sock, const void* buf, unsigned long len, struc
     kprintf("[UDP] Enviando datagrama: Porta %d -> %d (%d bytes)\n", 
             ntohs(udp->src_port), ntohs(udp->dest_port), len);
 
-    int res = ip_output(dest->sin_addr, IPPROTO_UDP, udp_buffer, udp_payload_size);
+    int tentativas = 3;
+    int res = -11;
+
+    while (tentativas > 0 && res == -11)
+    {
+        res = ip_output(dest->sin_addr.s_addr, IPPROTO_UDP, udp_buffer, udp_payload_size);
+        
+        if (res == -11)
+        {
+            /* 
+             * O ARP Request foi disparado. Aguarda 3 milissegundos de forma precisa 
+             * para dar tempo à placa e1000 de capturar e processar o ARP Reply.
+             */
+            mdelay(3);
+            
+            tentativas--;
+            
+            if (tentativas > 0) {
+                kprintf("[UDP] Cache ARP ausente para %s. Tentando retransmissao automatica...\n", inet_ntoa(dest->sin_addr.s_addr));
+            }
+        }
+    }
     
     kfree(udp_buffer);
 
@@ -120,7 +142,7 @@ int udp_input(const void* data, uint32_t len, uint32_t src_ip)
     struct sockaddr_in source_addr;
     source_addr.sin_family = AF_INET;
     source_addr.sin_port   = udp->src_port;
-    source_addr.sin_addr   = src_ip;
+    source_addr.sin_addr.s_addr  = src_ip;
     memset(source_addr.sin_zero, 0, sizeof(source_addr.sin_zero));
 
     /* 

@@ -117,7 +117,7 @@ int tcp_connect_handshake(socket_t* sock, struct sockaddr_in* dest)
     uint32_t my_ip = 0x10101010;
     net_get_interface_ip(0, &my_ip);
     pseudo.src_ip   = my_ip; 
-    pseudo.dest_ip  = dest->sin_addr;
+    pseudo.dest_ip  = dest->sin_addr.s_addr;
     pseudo.reserved = 0;
     pseudo.protocol = IPPROTO_TCP;       
     pseudo.tcp_len  = htons(tcp_packet_size);
@@ -135,7 +135,7 @@ int tcp_connect_handshake(socket_t* sock, struct sockaddr_in* dest)
     sock->state = TCP_STATE_SYN_SENT;
 
     /* Despacha o segmento montado para a camada de rede IPv4 */
-    int res = ip_output(dest->sin_addr, IPPROTO_TCP, tcp_buffer, tcp_packet_size);
+    int res = ip_output(dest->sin_addr.s_addr, IPPROTO_TCP, tcp_buffer, tcp_packet_size);
     kfree(tcp_buffer);
 
     if (res < 0) return -3;
@@ -204,7 +204,7 @@ long tcp_send_stream(socket_t* sock, const void* buf, unsigned long len)
     uint32_t my_ip = 0x10101010;
     net_get_interface_ip(0, &my_ip);
     pseudo.src_ip   = my_ip; 
-    pseudo.dest_ip  = dest->sin_addr;
+    pseudo.dest_ip  = dest->sin_addr.s_addr;
     pseudo.reserved = 0;
     pseudo.protocol = IPPROTO_TCP;       
     pseudo.tcp_len  = htons(tcp_packet_size);
@@ -218,7 +218,7 @@ long tcp_send_stream(socket_t* sock, const void* buf, unsigned long len)
     g_tcp_local_seq += len;
     spin_unlock(&sock->lock);
 
-    int res = ip_output(dest->sin_addr, IPPROTO_TCP, tcp_buffer, tcp_packet_size);
+    int res = ip_output(dest->sin_addr.s_addr, IPPROTO_TCP, tcp_buffer, tcp_packet_size);
     kfree(tcp_buffer);
 
     if (res < 0) return -5;

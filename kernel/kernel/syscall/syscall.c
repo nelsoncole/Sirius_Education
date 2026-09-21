@@ -136,13 +136,13 @@ static inline int syscall_is_blocking(uint64_t syscall_num) {
 }
 
 
-uint64_t syscall_dispatcher(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
+uint64_t syscall_dispatcher(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     if (syscall_num >= MAX_SYSCALLS) {
         kprintf("[SCI Error] Chamada de sistema desconhecida: ID %ld\n", syscall_num);
         return (uint64_t)-1;
     }
 
-    uint64_t (*handler)(uint64_t, uint64_t, uint64_t) = (void *)sys_call_table[syscall_num];
+    uint64_t (*handler)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t) = (void *)sys_call_table[syscall_num];
     if (!handler) {
         kprintf("[SCI Error] Handler nulo para a syscall: ID %ld\n", syscall_num);
         return (uint64_t)-1;
@@ -156,7 +156,7 @@ uint64_t syscall_dispatcher(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, 
     }
 
     // Executa a Syscall
-    uint64_t result = handler(arg1, arg2, arg3);
+    uint64_t result = handler(arg1, arg2, arg3, arg4, arg5, arg6);
 
     /* 
      * BARREIRA DE SEGURANÇA SEGUINTE:

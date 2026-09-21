@@ -200,7 +200,7 @@ int e1000_init(pci_device_t *dev)
     {
         return -2;
     }
-    /* NOTA: Garante que vmm_get_physical esta mapeada na tua kapi.h */
+    
     rx_memory.phymem = vmm_get_physical(rx_memory.vmem) & 0x7FFFFFFFFFFFLL;
     rx_memory.descsize = 0x2000;
     rx_memory.blocksize = 0x3000;
@@ -221,15 +221,6 @@ int e1000_init(pci_device_t *dev)
     memset((char *)rx_memory.vmem, 0, rx_size);
     memset((char *)tx_memory.vmem, 0, tx_size);
 
-    /* 
-     * CORREÇÃO DA EEPROM: No QEMU a EEPROM está ativa. 
-     * Apenas imprimimos a presença e continuamos para ler o MAC dos registradores de fallback.
-     */
-    if (e1000_is_eeprom())
-    {
-        kprintf("[E1000] Device has EEPROM active. Reading MAC from registers...\n");
-    }
-
     unsigned int data = e1000_read_command(0x5400);
     mac_address[0] = ((data & 0x000000FF) >> 0) & 0xFF;
     mac_address[1] = ((data & 0x0000FF00) >> 8) & 0xFF;
@@ -238,9 +229,6 @@ int e1000_init(pci_device_t *dev)
     data = e1000_read_command(0x5400 + 4);
     mac_address[4] = ((data & 0x000000FF) >> 0) & 0xFF;
     mac_address[5] = ((data & 0x0000FF00) >> 8) & 0xFF;
-
-    kprintf("[E1000] MAC: %x:%x:%x:%x:%x:%x \n", mac_address[0], mac_address[1],
-            mac_address[2], mac_address[3], mac_address[4], mac_address[5]);
 
     for (int i = 0; i < 0x80; i++)
     {

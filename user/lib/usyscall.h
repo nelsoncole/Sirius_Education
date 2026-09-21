@@ -133,4 +133,59 @@ static inline uint64_t syscall3(uint64_t num, uint64_t arg1, uint64_t arg2, uint
     return ret;
 }
 
+/**
+ * @brief Syscall com 4 argumentos.
+ * RAX = Número, RDI = Arg1, RSI = Arg2, RDX = Arg3, R10 = Arg4
+ */
+static inline uint64_t syscall4(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4)
+{
+    uint64_t ret;
+    __asm__ __volatile__(
+        "movq %5, %%r10\n\t"   /* Move o 4º argumento para R10 antes do disparo */
+        "syscall"
+        : "=a"(ret)
+        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3), "r"(arg4)
+        : "rcx", "r11", "r10", "memory"
+    );
+    return ret;
+}
+
+/**
+ * @brief Syscall com 5 argumentos.
+ * RAX = Número, RDI = Arg1, RSI = Arg2, RDX = Arg3, R10 = Arg4, R8 = Arg5
+ */
+static inline uint64_t syscall5(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5)
+{
+    uint64_t ret;
+    __asm__ __volatile__(
+        "movq %5, %%r10\n\t"   /* 4º argumento em R10 */
+        "movq %6, %%r8\n\t"    /* 5º argumento em R8  */
+        "syscall"
+        : "=a"(ret)
+        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3), "r"(arg4), "r"(arg5)
+        : "rcx", "r11", "r10", "r8", "memory"
+    );
+    return ret;
+}
+
+/**
+ * @brief Syscall com 6 argumentos (Pronta para o seu sys_sendto).
+ * RAX = Número, RDI = Arg1, RSI = Arg2, RDX = Arg3, R10 = Arg4, R8 = Arg5, R9 = Arg6
+ */
+static inline uint64_t syscall6(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6)
+{
+    uint64_t ret;
+    __asm__ __volatile__(
+        "movq %5, %%r10\n\t"   /* 4º argumento em R10 */
+        "movq %6, %%r8\n\t"    /* 5º argumento em R8  */
+        "movq %7, %%r9\n\t"    /* 6º argumento em R9  */
+        "syscall"
+        : "=a"(ret)
+        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3), "r"(arg4), "r"(arg5), "r"(arg6)
+        : "rcx", "r11", "r10", "r8", "r9", "memory"
+    );
+    return ret;
+}
+
+
 #endif /* _USYSCALL_H_ */

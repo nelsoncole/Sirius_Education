@@ -81,7 +81,7 @@ int dhcp_send_discover(socket_t* sock)
     struct sockaddr_in dest_broadcast;
     dest_broadcast.sin_family = AF_INET;
     dest_broadcast.sin_port = htons(67);             /* Porta do servidor DHCP */
-    dest_broadcast.sin_addr = htonl(0xFFFFFFFF);     /* 255.255.255.255 */
+    dest_broadcast.sin_addr.s_addr = htonl(0xFFFFFFFF);     /* 255.255.255.255 */
     memset(dest_broadcast.sin_zero, 0, 8);
 
     kprintf("[DHCP] Transmitindo DHCP DISCOVER em Broadcast (XID: 0x%x)...\n", DHCP_DISCOVER_XID);
@@ -143,7 +143,7 @@ int dhcp_send_request(socket_t* sock, uint32_t requested_ip)
     struct sockaddr_in dest_broadcast;
     dest_broadcast.sin_family = AF_INET;
     dest_broadcast.sin_port   = htons(67);
-    dest_broadcast.sin_addr   = htonl(0xFFFFFFFF); /* Sai em Broadcast */
+    dest_broadcast.sin_addr.s_addr   = htonl(0xFFFFFFFF); /* Sai em Broadcast */
     memset(dest_broadcast.sin_zero, 0, sizeof(dest_broadcast.sin_zero));
 
     kprintf("[DHCP] Transmitindo DHCP REQUEST para o IP: %s...\n", inet_ntoa(requested_ip));

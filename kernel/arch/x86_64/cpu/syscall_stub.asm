@@ -42,18 +42,30 @@ syscall_entry_stub:
     push qword 0                ; 6. [rsp + 0]  PADDING final de alinhamento de 16 bytes
 
     ; ============================================================================
-    ; 2. CONVERSÃO DE ARGUMENTOS
+    ; 2. CONVERSÃO DE ARGUMENTOS DE 64-BITS (6 ARGUMENTOS REAIS)
     ;
-    ; Mapeamento: Hardware: RAX, RDI, RSI, RDX
-    ; System V ABI C:       RDI, RSI, RDX, RCX
+    ; O utilizador envia em:    RAX (Nº), RDI (A1), RSI (A2), RDX (A3), R10 (A4), R8 (A5), R9 (A6)
+    ; O seu Kernel C espera:    RDI (Nº), RSI (A1), RDX (A2), RCX (A3), R8 (A4), R9 (A5), [Stack](A6)
     ; ============================================================================
 
-    mov rcx, rdx                ; RDX (Arg3 User) -> RCX (4º Param C)
-    mov rdx, rsi                ; RSI (Arg2 User) -> RDX (3º Param C)
-    mov rsi, rdi                ; RDI (Arg1 User) -> RSI (2º Param C)
-    mov rdi, rax                ; RAX (Nº Syscall) -> RDI (1º Param C)       
+    ; O 6º argumento (R9) precisa de ir para a Stack do C porque a função em C 
+    ; recebe 7 parâmetros no total (syscall_num + 6 argumentos).
+    ; O System V ABI dita que o 7º parâmetro de uma função em C entra via Stack!
+    push r9                     ; Empurra o 6º argumento (Passado em R9 pelo user)
+    push qword 0                ; Alinhamento extra de 16 bytes para a Stack de chamada do Call
 
-    call syscall_dispatcher     ; Chamada ao dispatcher C
+    ; Ajuste dos restantes registos para a chamada em C
+    mov r9, r8                  ; 5º argumento: R8 (User)  -> R9  (5º Parâmetro do C)
+    mov r8, r10                 ; 4º argumento: R10 (User) -> R8  (4º Parâmetro do C) [RCX foi destruído]
+    mov rcx, rdx                ; 3º argumento: RDX (User) -> RCX (3º Parâmetro do C)
+    mov rdx, rsi                ; 2º argumento: RSI (User) -> RDX (2º Parâmetro do C)
+    mov rsi, rdi                ; 1º argumento: RDI (User) -> RSI (1º Parâmetro do C)
+    mov rdi, rax                ; Nº da Syscall: RAX (User)-> RDI (ID do Serviço)
+
+    call syscall_dispatcher     ; Chamada ao dispatcher C (O retorno entra em RAX)
+    
+    ; Limpa os dois argumentos temporários da Stack de chamada (R9 e padding)
+    add rsp, 16
     
     ; ============================================================================
     ; 3. RESTAURO DO CONTEXTO DE RING 3 (Ordem Inversa Estrita e Perfeita)

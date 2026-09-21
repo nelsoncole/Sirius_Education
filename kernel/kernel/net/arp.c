@@ -31,6 +31,9 @@ typedef struct {
     uint32_t ip_addr;     /* Chave de Busca (Big-Endian) */
     uint8_t  mac_addr[6]; /* Resposta Física */
     uint8_t  is_valid;    /* Flag de controle de sessão */
+    /* FILA DE ESPERA ARP */
+    void*    pending_packet; /* Ponteiro para o tx_buffer guardado */
+    uint32_t pending_len;    /* Tamanho do frame guardado */
 } arp_entry_t;
 
 /* Tabela ARP e o seu trinco de isolamento SMP */

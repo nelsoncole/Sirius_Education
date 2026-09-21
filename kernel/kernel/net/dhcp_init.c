@@ -48,7 +48,7 @@ int net_init_dhcp_client(void)
     struct sockaddr_in local_addr;
     local_addr.sin_family = AF_INET;
     local_addr.sin_port   = htons(68); /* Porta cliente padrão do DHCP */
-    local_addr.sin_addr   = 0;         /* INADDR_ANY (0.0.0.0) - Ainda não temos IP */
+    local_addr.sin_addr.s_addr   = 0;  /* INADDR_ANY (0.0.0.0) - Ainda não temos IP */
     memset(local_addr.sin_zero, 0, 8);
 
     /* 

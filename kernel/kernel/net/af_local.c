@@ -114,10 +114,11 @@ static int af_local_listen(socket_t* sock, int backlog)
 static long af_local_sendto(socket_t* sock, const void* buf, unsigned long len, int flags, const void* dest_addr, unsigned long addrlen) 
 {
     (void)flags;
-    if (!sock || !buf || len == 0 || sock->tx_buffer == NULL) return -1;
+    if (!sock || !buf || len == 0) return -1;
 
     socket_t* dest_sock = NULL;
 
+    /* 1. Resolução do alvo de destino */
     if (sock->state == 1 && sock->peer) 
     {
         dest_sock = sock->peer;
@@ -126,49 +127,43 @@ static long af_local_sendto(socket_t* sock, const void* buf, unsigned long len, 
     {
         if (!dest_addr || addrlen == 0) return -1;
 
-        /* Procura o alvo estático na lista global gerenciada centralizadamente */
+        /* Procura o alvo estático na lista global gerenciada centralizadamente (ex: portas AF_LOCAL) */
         dest_sock = socket_find_by_address(dest_addr, addrlen, AF_LOCAL);
-        if (!dest_sock) return -1;
+        if (!dest_sock || dest_sock->rx_buffer == NULL) return -1;
     }
 
-    /* Alimentamos localmente o tx_buffer do transmissor de forma atómica */
     uint8_t* src = (uint8_t*)buf;
-    uint32_t bytes_buffered = 0;
-
-    spinlock_acquire(&sock->lock);
-    for (uint32_t i = 0; i < len; i++) 
-    {
-        uint32_t next_tx_tail = (sock->tx_tail + 1) % SOCKET_BUFFER_SIZE;
-        if (next_tx_tail == sock->tx_head) break; // Buffer TX cheio
-
-        sock->tx_buffer[sock->tx_tail] = src[i];
-        sock->tx_tail = next_tx_tail;
-        bytes_buffered++;
-    }
-    spinlock_release(&sock->lock);
-
-    if (bytes_buffered == 0) return 0;
-
-    /* Move os bytes salvos no TX local diretamente para o RX do destino */
     uint32_t bytes_delivered = 0;
 
+    /* 2. PROTEÇÃO SMP/MULTICORE ANTIDEADLOCK: Tranca APENAS o buffer do receptor!
+       O remetente não precisa de trancar o seu próprio lock, pois lê direto do 'buf' da aplicação. */
     spinlock_acquire(&dest_sock->lock);
-    spinlock_acquire(&sock->lock);
 
-    while (sock->tx_head != sock->tx_tail) 
+    /* 3. INJEÇÃO DIRETA NO RING BUFFER DO DESTINO */
+    for (uint32_t i = 0; i < len; i++) 
     {
-        uint32_t next_rx_tail = (dest_sock->rx_tail + 1) % SOCKET_BUFFER_SIZE;
-        if (next_rx_tail == dest_sock->rx_head) break; // Buffer RX do destino encheu
-
-        dest_sock->rx_buffer[dest_sock->rx_tail] = sock->tx_buffer[sock->tx_head];
-        dest_sock->rx_tail = next_rx_tail;
+        /* Calcula a próxima cabeça RX do receptor de forma circular */
+        uint32_t next_rx_head = (dest_sock->rx_head + 1) % SOCKET_BUFFER_SIZE;
         
-        sock->tx_head = (sock->tx_head + 1) % SOCKET_BUFFER_SIZE;
+        /* Overflow Protection: Verifica se o buffer do destino encheu */
+        if (next_rx_head == dest_sock->rx_tail) 
+        {
+            break; 
+        }
+
+        /* Insere no rx_head e avança o rx_head */
+        dest_sock->rx_buffer[dest_sock->rx_head] = src[i];
+        dest_sock->rx_head = next_rx_head;
         bytes_delivered++;
     }
 
-    spinlock_release(&sock->lock);
     spinlock_release(&dest_sock->lock);
+
+    /* 
+     * NOTA DE NOTIFICAÇÃO: Se entregou bytes com sucesso e possui um mecanismo de 
+     * sinalização, pode disparar um wakeup na fila do dest_sock aqui para tirar a 
+     * thread recetora do estado passivo "hlt" que configurámos no af_local_recvfrom.
+     */
 
     return (long)bytes_delivered;
 }
@@ -184,15 +179,47 @@ static long af_local_recvfrom(socket_t* sock, void* buf, unsigned long len, int 
     uint8_t* dest = (uint8_t*)buf;
     uint32_t bytes_read = 0;
 
+    /* Proteção atómica para o socket local (IPC) */
     spinlock_acquire(&sock->lock);
 
+    /* 
+     * 1. BLOQUEIO SEGURO LOCAL: 
+     * Se o buffer estiver vazio, mas o peer local ainda estiver conectado (estado == 1),
+     * a thread aguarda passivamente a chegada de dados enviados pelo outro processo.
+     */
+    while (sock->rx_head == sock->rx_tail && sock->state == 1) 
+    {
+        spinlock_release(&sock->lock);
+        
+        /* Cede o CPU de forma passiva (ou chame scheduler_yield()) */
+        __asm__ __volatile__("hlt"); 
+        
+        spinlock_acquire(&sock->lock);
+    }
+
+    /* 
+     * 2. TRATAMENTO DE EOF (Fim de Ficheiro POSIX):
+     * Se o loop quebrou porque a conexão caiu (peer fechou o socket) e o buffer 
+     * continua vazio, retorna 0 indicando desconexão limpa.
+     */
+    if (sock->rx_head == sock->rx_tail && sock->state != 1)
+    {
+        spinlock_release(&sock->lock);
+        return 0; 
+    }
+
+    /* 
+     * 3. CORREÇÃO DOS ÍNDICES (Consumo FIFO): 
+     * Lê a partir de 'rx_tail' e avança o 'rx_tail' de forma circular.
+     */
     while (sock->rx_head != sock->rx_tail && bytes_read < len) 
     {
-        dest[bytes_read] = sock->rx_buffer[sock->rx_head];
-        sock->rx_head = (sock->rx_head + 1) % SOCKET_BUFFER_SIZE;
+        dest[bytes_read] = sock->rx_buffer[sock->rx_tail];
+        sock->rx_tail = (sock->rx_tail + 1) % SOCKET_BUFFER_SIZE;
         bytes_read++;
     }
 
+    /* 4. Mapeamento simétrico do endereço do remetente local (AF_UNIX path) */
     if (bytes_read > 0 && src_addr && addrlen && *addrlen > 0) 
     {
         socket_t* src_target = (sock->state == 1 && sock->peer) ? sock->peer : sock;

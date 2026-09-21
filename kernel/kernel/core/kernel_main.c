@@ -311,14 +311,6 @@ void kernel_main(BOOT_INFO *boot_info)
         kprintf("[kmod]: Modulo '/mnt/hd/mods/e1000.ko' carregado com sucesso!\n");
     }
 
-
-    /* 3. Cria a thread mestre passando o topo da stack devidamente blindado */
-    /*thread_t *test_th = thread_create(test, 0);
-    if (!test_th)
-    {
-        kprintf("[Thread] Erro: Falha ao criar a thread (test)\n");
-    }*/
-
 	kprintf("\n========================================================================\n");
 	kprintf("Sirius OS carregado com sucesso. Sistema pronto.\n");
 	kprintf("========================================================================\n");
@@ -331,6 +323,8 @@ void kernel_main(BOOT_INFO *boot_info)
     thread_create(tty_emulator_thread, 0);
     thread_create(tty_keyboard_bridge_thread, 0);
     thread_create(network_rx_thread, 0);
+
+    //thread_create(test, 0);
     /*
      * ============================================================================
      * ARRANQUE DO PROCESSO INICIAL DO ESPAÇO DE UTILIZADOR (INIT / USER.ELF)

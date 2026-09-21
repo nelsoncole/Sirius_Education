@@ -91,16 +91,20 @@
 void syscall_init(void);
 
 /**
- * Manipulador mestre em C (SCI Dispatcher). Recebe o fluxo do Stub em 
- * Assembly, valida o índice contido em RAX e despacha para a função correta.
+ * Manipulador mestre em C (SCI Dispatcher) - Suporte Expandido a 6 Argumentos.
  * 
- * @param syscall_num O ID do serviço (vindo de RAX mapeado para RDI).
- * @param arg1 Primeiro argumento da chamada (vindo de RDI mapeado para RSI).
- * @param arg2 Segundo argumento da chamada (vindo de RSI mapeado para RDX).
- * @param arg3 Terceiro argumento da chamada (vindo de RDX mapeado para RCX).
- * @return O valor de retorno da operation que será devolvido à aplicação em RAX.
+ * @param syscall_num ID da chamada (RAX -> mapeado pelo stub Assembly para RDI)
+ * @param arg1        Primeiro argumento  (RDI -> mapeado para RSI)
+ * @param arg2        Segundo argumento   (RSI -> mapeado para RDX)
+ * @param arg3        Terceiro argumento  (RDX -> mapeado para RCX)
+ * @param arg4        Quarto argumento    (RCX -> mapeado para R8)
+ * @param arg5        Quinto argumento    (R8  -> mapeado para R9)
+ * @param arg6        Sexto argumento     (R9  -> mapeado na Stack/Stack frame se via C, ou via R10 no stub)
  */
-uint64_t syscall_dispatcher(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, uint64_t arg3);
+uint64_t syscall_dispatcher(uint64_t syscall_num, 
+                             uint64_t arg1, uint64_t arg2, uint64_t arg3, 
+                             uint64_t arg4, uint64_t arg5, uint64_t arg6);
+
 
 /*
  * ============================================================================

@@ -183,11 +183,19 @@ static long af_inet_recvfrom(socket_t* sock, void* buf, unsigned long len, int f
 
     if (sock->type == SOCK_DGRAM)
     {
-        /* Filtro UDP: Desembrulha os metadados (Tamanho do Payload + Origem) */
-        if (sock->rx_head == sock->rx_tail) 
+        /* 
+         * BLOQUEIO SEGURO UDP (Aguardar Mensagem):
+         * Se o buffer estiver completamente vazio, a thread cede o CPU de forma passiva 
+         * até que o udp_input receba um datagrama e avance o rx_head.
+         */
+        while (sock->rx_head == sock->rx_tail) 
         {
             spinlock_release(&sock->lock);
-            return 0; /* Buffer vazio */
+            
+            /* Coloca o core local em repouso passivo (ou chame scheduler_yield()) */
+            __asm__ __volatile__("hlt"); 
+            
+            spinlock_acquire(&sock->lock);
         }
 
         /* Passo A: Extrai o tamanho real do datagrama (4 bytes) */
@@ -226,34 +234,23 @@ static long af_inet_recvfrom(socket_t* sock, void* buf, unsigned long len, int f
             sock->rx_tail = (sock->rx_tail + (user_data_len - bytes_read)) % SOCKET_BUFFER_SIZE;
         }
     }
-        else if (sock->type == SOCK_STREAM)
+    else if (sock->type == SOCK_STREAM)
     {
-        /* 
-         * BLOQUEIO SEGURO (Mecanismo de Escuta Ativa):
-         * Se o buffer estiver completamente vazio, mas o socket ainda estiver Conectado (state == 3),
-         * a thread cede o CPU de forma passiva até que o tcp_input receba bytes do cabo.
-         */
+        /* BLOQUEIO SEGURO TCP */
         while (sock->rx_head == sock->rx_tail && sock->state == TCP_STATE_ESTABLISHED) 
         {
             spinlock_release(&sock->lock);
-            
-            /* Coloca o core local em repouso passivo (ou chame scheduler_yield()) */
             __asm__ __volatile__("hlt"); 
-            
             spinlock_acquire(&sock->lock);
         }
 
-        /* 
-         * Se o loop acima quebrou porque o estado mudou (Conexão Fechada) 
-         * e o buffer continua vazio, retorna 0 (Sinalização canónica de EOF POSIX).
-         */
         if (sock->rx_head == sock->rx_tail && sock->state != TCP_STATE_ESTABLISHED)
         {
             spinlock_release(&sock->lock);
-            return 0; /* EOF: O outro lado fechou a conexão de forma limpa */
+            return 0; /* EOF */
         }
 
-        /* Filtro TCP: Consumo linear de fluxo de bytes puros (sem metadados) */
+        /* Filtro TCP: Consumo linear de fluxo de bytes puros */
         while (sock->rx_head != sock->rx_tail && bytes_read < len) 
         {
             dest[bytes_read] = sock->rx_buffer[sock->rx_tail];
@@ -261,7 +258,6 @@ static long af_inet_recvfrom(socket_t* sock, void* buf, unsigned long len, int f
             bytes_read++;
         }
 
-        /* Popula o endereço de origem com base na conexão fixada */
         if (bytes_read > 0 && src_addr && addrlen && *addrlen >= sizeof(struct sockaddr_in)) {
             memcpy(src_addr, sock->remote_addr, sizeof(struct sockaddr_in));
             *addrlen = sizeof(struct sockaddr_in);
