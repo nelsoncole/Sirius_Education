@@ -97,6 +97,7 @@ C_OBJ := \
 	$(BUILD_DIR)/partitions.o \
 	$(BUILD_DIR)/tty.o \
 	$(BUILD_DIR)/vfs.o \
+	$(BUILD_DIR)/vfs_dup2.o \
 	$(BUILD_DIR)/ramfs.o \
 	$(BUILD_DIR)/vfs_tty.o \
 	$(BUILD_DIR)/console.o \
@@ -385,6 +386,9 @@ $(BUILD_DIR)/syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/vfs.o: $(FS_DIR)/vfs/vfs.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/vfs_dup2.o: $(FS_DIR)/vfs/vfs_dup2.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/ramfs.o: $(FS_DIR)/ramfs/ramfs.c | $(BUILD_DIR)

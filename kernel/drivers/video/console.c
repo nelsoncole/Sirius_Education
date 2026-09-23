@@ -2,11 +2,17 @@
  * ============================================================================
  *        Project: Sirius_Education
  *       Filename: console.c
- *    Description: Thread de Kernel do Emulador de Tela Assíncrono.
- *                 Consome a fila de saída da TTY e atualiza o hardware via kprintf.
+ *    Description: Thread de Kernel do Emulador de Tela Assíncrono e Bridge do
+ *                 Teclado com suporte nativo a chaveamento dinâmico de TTYs (F1-F6).
+ *                 Consome as filas de saída das TTYs dinamicamente a partir do foco.
  * 
  *        Author:  Nelson Cole
  *   Created Date: 15/09/2026
+ * 
+ *    Modified By: Nelson Cole
+ *  Modified Date: 23/09/2026
+ * 
+ *        License: MIT
  * ============================================================================
  */
 
@@ -20,63 +26,59 @@
 #define ASCII_NL   0x0A
 #define ASCII_CR   0x0D
 
-/**
- * tty_emulator_thread - Ponto de entrada da Thread de Kernel do Emulador.
- *                       Roda em segundo plano no Ring 0 com IRQs ativas.
- */
+/* Definições de Scancodes padrão IBM Set 1 para Teclas de Função F1-F6 */
+#define SCANCODE_F1   0x3B
+#define SCANCODE_F2   0x3C
+#define SCANCODE_F3   0x3D
+#define SCANCODE_F4   0x3E
+#define SCANCODE_F5   0x3F
+#define SCANCODE_F6   0x40
 
 extern void kprintf2(const char *format, ...);
+
+/**
+ * tty_emulator_thread - Ponto de entrada da Thread de Kernel do Emulador.
+ *                       Roda em segundo plano consumindo a TTY ativa no ecrã.
+ */
 void tty_emulator_thread() {
-
-    /* 1. Obtém o nó e a estrutura de controlo da TTY ativa */
-    vfs_node_t* tty_node = tty_vfs_get_node();
-    while (!tty_node) {
-        // Salvaguarda caso a thread inicie antes da TTY ser registada no VFS
-        tty_node = tty_vfs_get_node();
-    }
-
-    struct tty_device* tty = (struct tty_device*)tty_node->private_data;
     char c;
 
-    /* 2. LAÇO INFINITO DE EXECUÇÃO DA KTHREAD */
+    /* LAÇO INFINITO DE EXECUÇÃO DA KTHREAD */
     while (1) {
-        /* 
-         * 3. Sincronização por Consumo: Enquanto houver caracteres no output_buf,
-         *    retira-os de forma segura (respeitando o Spinlock SMP interno).
-         */
         int teve_dados = 0;
         
-        while (tty_pop_output(tty, &c)) {
-            teve_dados = 1;
+        /* 1. POLIMORFISMO: Resolve dinamicamente quem é a TTY ativa no monitor AGORA */
+        vfs_node_t* active_node = tty_vfs_get_active_node();
+        
+        if (active_node && active_node->private_data) {
+            struct tty_device* tty = (struct tty_device*)active_node->private_data;
 
-            /* 4. O Emulador interpreta os bytes e passa para o renderizador kprintf */
-            if (c == ASCII_BS) {
-                kprintf2("\b");
-            } 
-            else if (c == ASCII_NL) {
-                kprintf2("\n");
-            } 
-            else if (c == ASCII_CR) {
-                kprintf2("\r");
-            } 
-            else {
-                kprintf2("%c", c);
+            /* 2. Sincronização por Consumo: Esvazia a fila de output do terminal focado */
+            while (tty_pop_output(tty, &c)) {
+                teve_dados = 1;
+
+                /* 3. O Emulador interpreta os bytes e passa para o renderizador físico */
+                if (c == ASCII_BS) {
+                    kprintf2("\b");
+                } 
+                else if (c == ASCII_NL) {
+                    kprintf2("\n");
+                } 
+                else if (c == ASCII_CR) {
+                    kprintf2("\r");
+                } 
+                else {
+                    kprintf2("%c", c);
+                }
             }
         }
 
-        /* 
-         * 5. POLÍTICA DE COOPERAÇÃO/DESCANSO:
-         * Se o buffer esvaziou, a thread deve render o CPU para não fritar o núcleo a 100%.
-         * Dependendo do seu Kernel:
-         * - Se tiver uma chamada de sleep/delay: thread_sleep(10); // Dorme 10ms
-         * - Se tiver yield: scheduler_yield(); // Cede tempo para outros processos
-         * - Fallback provisório: asm("hlt") se as interrupções estiverem ligadas.
-         */
+        /* 4. POLÍTICA DE COOPERAÇÃO: Evita que a KThread frite o núcleo de CPU */
         if (!teve_dados) {
-            // Se o seu agendador suportar yield, use-o aqui para dar tempo à Shell
+            // Se o Sirius_Education tiver yield, descomente aqui:
             // scheduler_yield(); 
             
-            // Fallback físico seguro enquanto não usa yield/sleep de thread:
+            // Fallback passivo de baixo consumo
             __asm__ __volatile__("pause");
         }
     }
@@ -102,28 +104,38 @@ static const char g_kbd_us_shift_keymap[128] = {
 
 /**
  * tty_keyboard_bridge_thread - Thread de Kernel responsável por bombear as teclas para o TTY.
- *                              Consome a estrutura de eventos atómica de 16-bits.
+ *                              Captura e intercepta F1-F6 para chaveamento dinâmico.
  */
 void tty_keyboard_bridge_thread() {
 
-    /* 1. Aguarda e obtém o nó global da TTY unificada */
-    vfs_node_t* tty_node = tty_vfs_get_node();
-    while (!tty_node) {
-        tty_node = tty_vfs_get_node();
-    }
-    struct tty_device* tty = (struct tty_device*)tty_node->private_data;
-
     while (1) {
-        /* 2. BLOQUEIO SEGURO: Aguarda o snapshot estruturado do evento vindo da ISR */
+        /* 1. BLOQUEIO SEGURO: Aguarda o snapshot estruturado do evento vindo da ISR */
         kbd_event_t event = keyboard_get_event();
         
-        /* 3. Extrai e valida o scancode base puro (Set 1) */
+        /* 2. Extrai e valida o scancode base puro (Set 1) */
         uint8_t scancode = event.scancode;
         if (scancode >= 128) continue;
 
-        /* 4. FILTRO DE EVENTOS: Se a tecla foi libertada (Key Up / Release), ignora */
+        /* 3. FILTRO DE EVENTOS: Se a tecla foi libertada (Key Up / Release), ignora */
         if (event.modifiers_state & KBD_MOD_RELEASE) {
             continue; 
+        }
+
+        /* 4. REGRA DE INTERCEPÇÃO: Verifica se o utilizador premiu F1 a F6 para mudar de terminal */
+        if (scancode >= SCANCODE_F1 && scancode <= SCANCODE_F6) {
+            uint32_t target_tty_id = scancode - SCANCODE_F1; // Converte para índice (0 a 5)
+            
+            if (target_tty_id < MAX_TTY_DEVICES) {
+                kprintf("\n[CONSOLE] A alternar de terminal para /dev/tty%d...\n", target_tty_id);
+                
+                /* Executa a viragem de foco atómica de forma síncrona nos dois sub-sistemas */
+                tty_vfs_set_active_index(target_tty_id); // Atualiza o VFS do Core
+                tty_set_active_id(target_tty_id);        // Atualiza a tabela do driver físico
+                
+                /* TODO: Se possuir suporte gráfico ou buffers de ecrã virtuais isolados por TTY, 
+                         mande redesenhar/limpar o ecrã físico aqui. */
+            }
+            continue; // Consome o scancode sem enviar o caractere de controle para a Shell
         }
 
         /* 5. Avalia o estado dos modificadores gravados no snapshot do evento */
@@ -142,7 +154,6 @@ void tty_keyboard_bridge_thread() {
         /* 7. Regra do Caps Lock: Só inverte letras de 'a'-'z' ou 'A'-'Z' */
         if (caps_active && ascii_char != 0) {
             if (ascii_char >= 'a' && ascii_char <= 'z') {
-                /* Se o Shift também estiver ativo, o Caps anula-o voltando a ser minúscula */
                 ascii_char = shift_active ? ascii_char : (ascii_char - 32);
             } 
             else if (ascii_char >= 'A' && ascii_char <= 'Z') {
@@ -150,9 +161,12 @@ void tty_keyboard_bridge_thread() {
             }
         }
 
-        /* 8. INJEÇÃO ATÓMICA NA TTY: Se for um caractere ASCII legítimo, envia à TTY */
+        /* 8. INJEÇÃO DINÂMICA: Obtém o TTY focado no momento e joga os bytes nele */
         if (ascii_char != 0) {
-            tty_push_char_isr(tty, ascii_char);
+            struct tty_device* tty_focado = tty_get_current();
+            if (tty_focado) {
+                tty_push_char_isr(tty_focado, ascii_char);
+            }
         }
     }
 }

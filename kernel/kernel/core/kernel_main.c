@@ -151,16 +151,16 @@ void kernel_main(BOOT_INFO *boot_info)
      * ============================================================================
      */
     kprintf("[CPU] Inicializando estruturas Per-CPU para o BSP (Core 0)...\n");
-
     uint64_t real_stack_top = (uint64_t)&stack_top;
 
     // Configura a GDT, TSS, IST e o MSR IA32_GS_BASE exclusivos do BSP
     cpu_initialize_local(0, 0, real_stack_top);
 
-    // inicializa o g_tsc_hz
-    timer_init();
-
     kprintf("[SUCESSO] BSP configurado com stack em 0x%lx!\n", real_stack_top);
+
+    // inicializa o g_tsc_hz
+    kprintf("[TSC] inicializa o g_tsc_hz\n");
+    timer_init();
 
     /*
      * 6. Inicializar a IDT Global
@@ -193,7 +193,7 @@ void kernel_main(BOOT_INFO *boot_info)
 
     // 9.1. Programa os MSRs locais deste núcleo para suportar Syscalls
     syscall_init();
-    
+
     // 10. Inicializar o SMP (Application Processors - APs)
     // Faz o parsing da MADT, acorda os restantes núcleos via IPIs (INIT/STARTUP)
     // e executa a cpu_initialize_local() dinamicamente em cada um deles!
@@ -211,16 +211,32 @@ void kernel_main(BOOT_INFO *boot_info)
     // 14. Inicializa as tabelas globais de dispositivos de bloco
     block_subsystem_init();
     // 15. Inicializa o VFS (Cria a raiz virtual '/' em RAM)
-    vfs_init();  /* Cria a raiz '/' em memória RAM */
+    vfs_init(); /* Cria a raiz '/' em memória RAM */
     // Cria uma pasta na raiz usando a função pública de acesso
     vfs_node_t *root = vfs_get_root();
     if (root)
     {
-        vfs_mkdir(root, "mnt", 0x01FF); // Cria pasta na RAM
+        /* CRIA O DIRETÓRIO /dev NA RAM */
+        vfs_mkdir(root, "dev", 0x01FF);
+        vfs_node_t *dev = vfs_path_to_node("/dev");
+
+        if (dev)
+        {
+            /* INICIALIZA OS TERMINAIS PASSANDO O NÓ /dev COMO PAI */
+            tty_init();     /* Prepara os buffers circulares e spinlocks do TTY */
+            tty_vfs_init(dev);
+        }
+        else
+        {
+            kprintf("[BOOT] ERRO: Nao foi possivel instanciar o diretorio /dev.\n");
+        }
+
+        /* Criação das outras pastas em RAM */
+        vfs_mkdir(root, "mnt", 0x01FF);
         vfs_node_t *mnt = vfs_path_to_node("/mnt");
         if (mnt)
         {
-            vfs_mkdir(mnt, "hd", 0x01FF); // Cria /mnt/hd na RAM
+            vfs_mkdir(mnt, "hd0", 0x01FF); // Cria /mnt/hd na RAM
         }
     }
     else
@@ -233,9 +249,6 @@ void kernel_main(BOOT_INFO *boot_info)
             __asm__ __volatile__("hlt");
         }
     }
-    
-    tty_init();  /* Prepara os buffers circulares e spinlocks do TTY */
-    tty_vfs_init();  /* Cria e fixa o nó global da TTY no VFS */
 
     // 16. Driveres
     // 16.1
@@ -257,18 +270,19 @@ void kernel_main(BOOT_INFO *boot_info)
     // Aqui vamos inicializar as particoes de disco
     // vamos identificar o nome da particao de boot
     vfs_init_partitions();
-    if (g_boot_partition_name[0] == '\0') 
+    if (g_boot_partition_name[0] == '\0')
     {
         kprintf("[BOOT] Erro Fatal: Partição física de boot não encontrada por assinatura.\n");
         kprintf("[BOOT] Kernel travado em segurança para impedir falhas de hardware.\n");
-        while (1) {
+        while (1)
+        {
             __asm__ __volatile__("hlt");
         }
     }
 
     kprintf("[BOOT] Montando a partição de boot como raiz do VFS...\n");
-    //int status = vfs_mount(g_boot_partition_name, "/", "fat32");
-    int status = vfs_mount(g_boot_partition_name, "/mnt/hd", "fat32");
+    // int status = vfs_mount(g_boot_partition_name, "/", "fat32");
+    int status = vfs_mount(g_boot_partition_name, "/mnt/hd0", "fat32");
     if (status != 0)
     {
         kprintf("[BOOT] Erro Fatal: Falha crítica ao montar a partição '%s' usando o driver 'fat32' (Código: %d).\n",
@@ -281,70 +295,69 @@ void kernel_main(BOOT_INFO *boot_info)
         }
     }
 
-
     /* 18. Modules */
     kmod_init();
 
-    if (kmod_load_by_name("/mnt/hd/mods/sample_mod.ko") != 0) 
+    if (kmod_load_by_name("/mnt/hd0/mods/sample_mod.ko") != 0)
     {
-        kprintf("[kmod]: Erro critico: Falha ao carregar o modulo '/mnt/hd/mods/sample_mod.ko'.\n");
-        /* 
-         * Podes adicionar aqui um 'panic("Falha na carga do modulo essencial");' 
+        kprintf("[kmod]: Erro critico: Falha ao carregar o modulo '/mnt/hd0/mods/sample_mod.ko'.\n");
+        /*
+         * Podes adicionar aqui um 'panic("Falha na carga do modulo essencial");'
          * caso este driver fosse obrigatório para o boot do Sirius_Education.
          */
     }
     else
     {
-        kprintf("[kmod]: Modulo '/mnt/hd/mods/sample_mod.ko' carregado com sucesso!\n");
+        kprintf("[kmod]: Modulo '/mnt/hd0/mods/sample_mod.ko' carregado com sucesso!\n");
     }
 
-    if (kmod_load_by_name("/mnt/hd/mods/e1000.ko") != 0) 
+    if (kmod_load_by_name("/mnt/hd0/mods/e1000.ko") != 0)
     {
-        kprintf("[kmod]: Erro critico: Falha ao carregar o modulo '/mnt/hd/mods/e1000.ko'.\n");
-        /* 
-         * Podes adicionar aqui um 'panic("Falha na carga do modulo essencial");' 
+        kprintf("[kmod]: Erro critico: Falha ao carregar o modulo '/mnt/hd0/mods/e1000.ko'.\n");
+        /*
+         * Podes adicionar aqui um 'panic("Falha na carga do modulo essencial");'
          * caso este driver fosse obrigatório para o boot do Sirius_Education.
          */
     }
     else
     {
-        kprintf("[kmod]: Modulo '/mnt/hd/mods/e1000.ko' carregado com sucesso!\n");
+        kprintf("[kmod]: Modulo '/mnt/hd0/mods/e1000.ko' carregado com sucesso!\n");
     }
 
-	kprintf("\n========================================================================\n");
-	kprintf("Sirius OS carregado com sucesso. Sistema pronto.\n");
-	kprintf("========================================================================\n");
+    kprintf("\n========================================================================\n");
+    kprintf("Sirius OS carregado com sucesso. Sistema pronto.\n");
+    kprintf("========================================================================\n");
 
-    /* 
+    /*
      * Lança as duas Kthreads de segundo plano:
      * 1. A do Emulador (que consome o tty_pop_output e faz kprintf)
      * 2. A do Teclado (que consome o scancode bruto, traduz e injeta na TTY)
      */
     thread_create(tty_emulator_thread, 0);
     thread_create(tty_keyboard_bridge_thread, 0);
-    thread_create(network_rx_thread, 1);
+    thread_create(network_rx_thread, 0);
 
-    //thread_create(test, 0);
+    // thread_create(test, 0);
     /*
      * ============================================================================
      * ARRANQUE DO PROCESSO INICIAL DO ESPAÇO DE UTILIZADOR (INIT / USER.ELF)
      * ============================================================================
-     * A responsabilidade do Kernel cessa na inicialização do Hardware e do VFS. 
+     * A responsabilidade do Kernel cessa na inicialização do Hardware e do VFS.
      * Daqui em diante, o controlo do ecossistema é delegado ao executável nativo
      * '/System/user.elf' em Ring 3, que criará o ambiente do utilizador (Shell).
-     * 
+     *
      * DADOS VITAIS TRANSFERIDOS VIA ARGC/ARGV PARA A CRIAÇÃO DO AMBIENTE:
      * ----------------------------------------------------------------------------
      * 1. Origem de Boot (argv[1]): Passa o nome do volume ativo (ex: g_boot_partition_name)
      *    para que as aplicações saibam de onde ler ficheiros de configuração secundários.
-     * 
-     * 2. Modo de Operação (argv[2]): Sinaliza o estado do arranque (ex: "vga_mode", 
-     *    "text_mode", "safe_mode" ou "single_user") orientando a Shell sobre se deve 
+     *
+     * 2. Modo de Operação (argv[2]): Sinaliza o estado do arranque (ex: "vga_mode",
+     *    "text_mode", "safe_mode" ou "single_user") orientando a Shell sobre se deve
      *    ou não carregar interfaces gráficas complexas.
-     * 
+     *
      * 3. Terminal TTY Alvo (argv[3]): Especifica qual a porta serial ou console virtual
      *    ativa (ex: "/dev/tty0") para direcionar os descritores padrões (stdout/stdin).
-     * 
+     *
      * 4. Resolução de Ecrã (argv[4]): Passa a largura e altura detetadas pela UEFI
      *    (ex: "1024x768") para que as ferramentas do utilizador alinhem o texto perfeitamente.
      * ============================================================================
@@ -353,33 +366,35 @@ void kernel_main(BOOT_INFO *boot_info)
     // Buffer local na RAM para armazenar a string de resolução formatada (ex: "1024x768")
     char uefi_res_str[32];
     memset(uefi_res_str, 0, sizeof(uefi_res_str));
-    if (g_boot_info != NULL) {
+    if (g_boot_info != NULL)
+    {
         ksprintf(uefi_res_str, "%ux%u", g_boot_info->Graphics.Width, g_boot_info->Graphics.Height);
-    } else {
+    }
+    else
+    {
         // Fallback de segurança académica caso o bloco g_boot_info falhe
         strncpy(uefi_res_str, "800x600", sizeof(uefi_res_str) - 1);
     }
 
     // MONTAGEM DINÂMICA DOS ARGUMENTOS:
     int init_argc = 5;
-    char* init_argv[] = {
-        "/system/user.elf",          // argv[0]: Caminho do executável
-        g_boot_partition_name,       // argv[1]: Ex: "ahci0.1" (Origem de persistência)
-        "text_mode",                 // argv[2]: Modo gráfico/texto base
-        "/dev/tty0",                 // argv[3]: Terminal padrão do sistema
-        uefi_res_str                 // argv[4]: Resolução de tela REAL e dinâmica da UEFI!
+    char *init_argv[] = {
+        "/system/user.elf",    // argv[0]: Caminho do executável
+        g_boot_partition_name, // argv[1]: Ex: "ahci0.1" (Origem de persistência)
+        "text_mode",           // argv[2]: Modo gráfico/texto base
+        "/dev/tty0",           // argv[3]: Terminal padrão do sistema
+        uefi_res_str           // argv[4]: Resolução de tela REAL e dinâmica da UEFI!
     };
 
     kprintf("[BOOT] Lancando o processo mestre de User Space '/system/user.elf'...\n");
-    elf_load_and_create_process("/mnt/hd/system/user.elf", init_argc, init_argv, 0);
+    elf_load_and_create_process("/mnt/hd0/system/user.elf", init_argc, init_argv, 0);
 
-    fb_clear();
     vfs_print_tree("/");
-    
+
     // Liga o barramento local de interrupções com segurança
     __asm__ __volatile__("sti");
 
-	/*
+    /*
      * ============================================================================
      * ESTACIONAMENTO SEGURO DOS NÚCLEOS (IDLE STATE)
      * Transita o processador para o loop de baixo consumo. O núcleo permanece

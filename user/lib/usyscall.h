@@ -37,35 +37,42 @@
 #define SYS_UNLINK  12
 #define SYS_RMDIR   13
 #define SYS_RENAME  14
-#define SYS_IOCTL   15
+#define SYS_DUP2    15
+#define SYS_IOCTL   16
 
 /* Gestão de Processos e Memória Avançada */
-#define SYS_FORK    16
-#define SYS_EXECVE  17
-#define SYS_MMAP    18
-#define SYS_MUNMAP  19
-#define SYS_GETPID  20
-#define SYS_GETPPID 21
+#define SYS_FORK    17
+#define SYS_EXECVE  18
+#define SYS_MMAP    19
+#define SYS_MUNMAP  20
+#define SYS_GETPID  21
+#define SYS_GETPPID 22
 
 /* Sincronização, Tempo e Sinais */
-#define SYS_WAITPID   22
-#define SYS_SLEEP     23
-#define SYS_KILL      24
-#define SYS_SIGACTION 25
+#define SYS_WAITPID   23
+#define SYS_SLEEP     24
+#define SYS_KILL      25
+#define SYS_SIGACTION 26
 
 /* Subsistema de Sockets e Rede */
-#define SYS_SOCKET      26
-#define SYS_BIND        27
-#define SYS_LISTEN      28
-#define SYS_ACCEPT      29
-#define SYS_CONNECT     30
-#define SYS_SEND        31
-#define SYS_RECV        32
-#define SYS_SENDTO      33
-#define SYS_RECVFROM    34
-#define SYS_SHUTDOWN    35
-#define SYS_SETSOCKOPT  36
-#define SYS_GETSOCKOPT  37
+#define SYS_SOCKET      27
+#define SYS_BIND        28
+#define SYS_LISTEN      29
+#define SYS_ACCEPT      30
+#define SYS_CONNECT     31
+#define SYS_SEND        32
+#define SYS_RECV        33
+#define SYS_SENDTO      34
+#define SYS_RECVFROM    35
+#define SYS_SHUTDOWN    36
+#define SYS_SETSOCKOPT  37
+#define SYS_GETSOCKOPT  38
+
+/* Subsistema de modulo do kernel */
+#define SYS_KMOD_LOAD   39
+#define SYS_KMOD_UNLOAD 40
+#define SYS_KMOD_PRINT  41
+
 
 typedef unsigned long uint64_t;
 

@@ -6,7 +6,7 @@
  *                 Controlo de Linha e Sincronização SMP com buffers isolados.
  * 
  *        Author:  Nelson Cole
- *   Created Date: 14/09/2026
+ *   Created Date: 22/09/2026
  * ============================================================================
  */
 
@@ -14,6 +14,7 @@
 #define _TTY_H_
 
 #include <kernel/lib/stddef.h>
+#include <kernel/lib/stdint.h>
 #include <kernel/kernel/core/spinlock.h>
 
 /* Tamanho do Buffer Circular do TTY (Deve ser potência de 2 para otimização) */
@@ -22,6 +23,8 @@
 /* Flags de Configuração de Linha (Estilo termios do POSIX) */
 #define TTY_ICANON  0x00000001  /* Ativa Modo Canónico (Orientado a Linhas) */
 #define TTY_ECHO    0x00000002  /* Ativa o Eco de Caracteres na Tela */
+
+#define MAX_TTY_DEVICES 6
 
 /**
  * Estrutura de Controlo do Dispositivo TTY
@@ -63,6 +66,24 @@ void tty_init(void);
 /**
  * tty_get_current - Retorna o ponteiro para a instância ativa do TTY.
  *                   Essencial para ser mapeado pelos File Descriptors (VFS) no Ring 3.
+ */
+struct tty_device* tty_get_current(void);
+
+/**
+ * tty_register_driver_instance - Vincula um motor de buffer alocado no VFS ao driver físico.
+ * @id:  Índice numérico do terminal (0 a 5).
+ * @tty: Endereço físico da estrutura tty_device instanciada por kmalloc.
+ */
+void tty_register_driver_instance(uint32_t id, struct tty_device* tty);
+
+/**
+ * tty_set_active_id - Altera o foco de hardware do terminal ativo de forma atómica.
+ */
+void tty_set_active_id(uint32_t id);
+
+/**
+ * tty_get_current - Devolve a TTY focada no ecrã para operações síncronas abertas.
+ *                   Bate com o comportamento esperado por tfs_tty_open no teu VFS.
  */
 struct tty_device* tty_get_current(void);
 

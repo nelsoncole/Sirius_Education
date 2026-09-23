@@ -107,9 +107,10 @@ typedef struct vfs_node {
 
 /* Estrutura de controlo de sessão de ficheiro para o processo */
 typedef struct vfs_file {
-    vfs_node_t* node;     // Ponteiro para o nó do VFS correspondente
-    uint64_t    offset;   // Posição atual de leitura/escrita em bytes
-    uint32_t    flags;    // Flags com que o ficheiro foi aberto (READ, WRITE, etc)
+    vfs_node_t* node;           // Ponteiro para o nó do VFS correspondente
+    uint64_t    offset;         // Posição atual de leitura/escrita em bytes
+    uint32_t    flags;          // O_RDONLY, O_WRONLY, O_RDWR
+    uint32_t    ref_count;      // Contador de referências para partilha entre processos
 } vfs_file_t;
 
 typedef struct vfs_stat {
@@ -201,6 +202,9 @@ int vfs_unlink(vfs_node_t* parent, const char* name);
 int vfs_rmdir(vfs_node_t* parent, const char* name);
 int vfs_rename(vfs_node_t* parent, const char* old_name, const char* new_name);
 uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence);
+
+struct process;
+int k_dup2(struct process* proc, int oldfd, int newfd);
 
 void vfs_print_tree(const char* start_path);
 

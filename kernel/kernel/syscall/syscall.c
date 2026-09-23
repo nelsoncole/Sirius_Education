@@ -512,6 +512,17 @@ uint64_t sys_kmod_print(void) {
     return 0;
 }
 
+
+uint64_t sys_dup2(int oldfd, int newfd) {
+    // Obtém o processo atual de forma segura para SMP baseando-se na CPU ativa
+    cpu_data_block_t* cpu = get_current_cpu();
+    if (!cpu || !cpu->current_thread) return -1;
+    process_t* proc = cpu->current_thread->owner;
+
+    // Delega a execução para a função core
+    return k_dup2(proc, oldfd, newfd);
+}
+
 /*
  * ============================================================================
  * INTERFACE DE INICIALIZAÇÃO DE HARDWARE

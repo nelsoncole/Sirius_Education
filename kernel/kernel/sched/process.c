@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 05/09/2026
+ *  Modified Date: 22/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -39,35 +39,57 @@ typedef struct cpu_data_block cpu_data_block_t;
 /* Gerador incremental estático para atribuição única de PIDs */
 static pid_t g_next_pid = 1;
 
-static void process_init_standard_io(process_t* proc) {
-    // 1. Limpa toda a tabela para evitar ponteiros lixo
+/**
+ * process_init_standard_io - Inicializa os canais padrão (0, 1, 2) de um processo.
+ * @proc:     O processo que está a ser configurado.
+ * @tty_path: Caminho literal do terminal alvo (ex: "/dev/tty1"). Se NULL, usa fallback.
+ */
+void process_init_standard_io(process_t* proc, const char* tty_path) {
+    if (!proc) return;
+
+    // 1. Limpa toda a tabela para evitar ponteiros lixo residuais
     for (int i = 0; i < MAX_FILES_PER_PROCESS; i++) {
         proc->file_descriptor_table[i] = NULL;
     }
 
-    // 2. Obtém o nó global e unificado da TTY
-    vfs_node_t* tty_node = tty_vfs_get_node();
+    // 2. Determina dinamicamente o terminal alvo
+    const char* target_path = (tty_path != NULL) ? tty_path : "/dev/tty0";
 
-    // 3. Aloca e configura o FD 0 (stdin) - MODO LEITURA
+    // Obtém o nó da TTY específica varrendo a árvore do RamFS
+    vfs_node_t* tty_node = vfs_path_to_node(target_path);
+    if (!tty_node) {
+        kprintf("[PROC ERROR] Falha grave: %s nao encontrado para E/S padrao.\n", target_path);
+        return;
+    }
+
+    // Executa a abertura polimórfica para instanciar o driver privado correto
+    if (tty_node->ops && tty_node->ops->open) {
+        tty_node->ops->open(tty_node, 0x0002); // Abre em modo Leitura/Escrita (O_RDWR)
+    }
+
+    // 3. Aloca a descrição intermédia APENAS para o FD 0 (stdin)
     vfs_file_t* stdin_file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
+    if (!stdin_file) {
+        kprintf("[PROC ERROR] Falha de alocacao de memoria para stdin.\n");
+        return;
+    }
+    memset(stdin_file, 0, sizeof(vfs_file_t));
+    
     stdin_file->node = tty_node;
     stdin_file->offset = 0;
-    stdin_file->flags = VFS_MODE_READ;
+    stdin_file->flags = 0x0002; // Configura o descritor mestre em modo O_RDWR
+    stdin_file->ref_count = 1;  // Inicializa a primeira referência estável
+
+    // Guarda fisicamente na Entrada Padrão do processo alvo
     proc->file_descriptor_table[0] = stdin_file;
 
-    // 4. Aloca e configura o FD 1 (stdout) - MODO ESCRITA
-    vfs_file_t* stdout_file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
-    stdout_file->node = tty_node;
-    stdout_file->offset = 0;
-    stdout_file->flags = VFS_MODE_WRITE;
-    proc->file_descriptor_table[1] = stdout_file;
+    // 4. Clona stdin (0) -> Saída Padrão stdout (1)
+    k_dup2(proc, 0, 1);
 
-    // 5. Aloca e configura o FD 2 (stderr) - MODO ESCRITA
-    vfs_file_t* stderr_file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
-    stderr_file->node = tty_node;
-    stderr_file->offset = 0;
-    stderr_file->flags = VFS_MODE_WRITE;
-    proc->file_descriptor_table[2] = stderr_file;
+    // 5. Clona stdin (0) -> Saída de Erro stderr (2)
+    k_dup2(proc, 0, 2);
+
+    kprintf("[PROC] Canais de E/S padrao (0, 1, 2) linkados ao PID %d via %s.\n", proc->pid, target_path);
 }
 
 /**
@@ -112,7 +134,7 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
     memset(proc, 0, sizeof(process_t));
     proc->pid = g_next_pid++;
     proc->state = PROCESS_READY;
-    process_init_standard_io(proc);
+    process_init_standard_io(proc, "dev/tty0");
 
     /* 2. Configuração da Árvore de Páginas Isolada (PML4) */
     proc->cr3 = vmm_create_address_space();
