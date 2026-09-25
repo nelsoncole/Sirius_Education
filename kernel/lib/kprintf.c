@@ -18,11 +18,14 @@
  */
 
 #include <kernel/lib/stdio.h>
+#include <kernel/kernel/core/spinlock.h>
+#include <kernel/fs/vfs/vfs.h>
+#include <kernel/fs/dev/vfs_tty.h>
 
 extern void kernel_putchar(char c);
-volatile uint64_t kprintf_spinlock = 0;
+static spinlock_t kprintf_spinlock = {0};
 int bootverbose = 0;
-
+extern int tty_ready;
 /* --- Funções Auxiliares de Conversão --- */
 
 static void uint64_to_str(uint64_t value, char *buffer)
@@ -184,7 +187,7 @@ int kvsnprintf(char *buf, size_t max_len, const char *format, va_list ap)
             if (format[i] == 'l')
             {
                 long_long_flag = true;
-                i++; // CORRIGIDO: Avança o índice após o segundo 'l' para apontar corretamente para 'u', 'd', etc.
+                i++;
             }
         }
 
@@ -399,47 +402,25 @@ void kprintf(const char *format, ...)
     char write_buf[1024]; // Buffer de paginação temporário para a TTY
     va_list ap;
 
-    while (__atomic_test_and_set(&kprintf_spinlock, __ATOMIC_ACQUIRE))
-    {
-        __asm__ __volatile__("pause" ::: "memory");
-    }
+    unsigned long flags = spinlock_lock_irqsave(&kprintf_spinlock);
 
     va_start(ap, format);
     int len = kvsnprintf(write_buf, sizeof(write_buf), format, ap);
     va_end(ap);
 
     // Envia o bloco formatado da memória direto para o hardware de saída
-    for (int i = 0; i < len; i++)
+    if (tty_ready != 0)
     {
-        kernel_putchar(write_buf[i]);
-        if (write_buf[i] == '\n')
+        vfs_node_t *tty0_node = tty_vfs_get_node_by_index(1);
+        if (tty0_node)
         {
-            kernel_putchar('\r');
+            vfs_write(tty0_node, 0, len, write_buf); 
         }
     }
-
-    __atomic_clear(&kprintf_spinlock, __ATOMIC_RELEASE);
-}
-
-void kprintf2(const char *format, ...)
-{
-    if (bootverbose)
-        return;
-
-    char write_buf[1024]; // Buffer de paginação temporário para a TTY
-    va_list ap;
-
-    va_start(ap, format);
-    int len = kvsnprintf(write_buf, sizeof(write_buf), format, ap);
-    va_end(ap);
-
-    // Envia o bloco formatado da memória direto para o hardware de saída
-    for (int i = 0; i < len; i++)
+    else
     {
-        kernel_putchar(write_buf[i]);
-        if (write_buf[i] == '\n')
-        {
-            kernel_putchar('\r');
-        }
+        for (int i = 0; i < len; i++) kernel_putchar(write_buf[i]);
     }
+
+    spinlock_unlock_irqrestore(&kprintf_spinlock, flags);
 }

@@ -19,13 +19,15 @@ KMODS_DIR   := kernel/kmods
 
 USER_DIR        := user
 USER_BUILD_DIR  := build/user
+LIBC_DIR 		:= $(USER_DIR)/libc
+LIBC_A   		:= $(LIBC_DIR)/libc.a
 
 BUILD_DIR       := build
 SYSROOT_DIR     := sysroot
 SYSROOT_SYSTEM  := $(SYSROOT_DIR)/System
 
 LINKER      := scripts/linker/x86_64.ld
-USER_LINKER := $(USER_DIR)/lib/user_x86_64.ld
+USER_LINKER := $(USER_DIR)/libc/user_x86_64.ld
 
 # ============================================================
 # Artefactos de BUILD
@@ -96,10 +98,12 @@ C_OBJ := \
 	$(BUILD_DIR)/block.o \
 	$(BUILD_DIR)/partitions.o \
 	$(BUILD_DIR)/tty.o \
+	$(BUILD_DIR)/vfs_tty_kbd.o \
 	$(BUILD_DIR)/vfs.o \
 	$(BUILD_DIR)/vfs_dup2.o \
 	$(BUILD_DIR)/ramfs.o \
 	$(BUILD_DIR)/vfs_tty.o \
+	$(BUILD_DIR)/vfs_pty.o \
 	$(BUILD_DIR)/console.o \
 	$(BUILD_DIR)/fat32.o \
 	$(BUILD_DIR)/socket.o \
@@ -125,9 +129,8 @@ C_OBJ := \
 # Objetos do User Space
 # ============================================================
 
-USER_OBJS := \
-	$(USER_BUILD_DIR)/crt0.o \
-	$(USER_BUILD_DIR)/user.o
+USER_CRT0_OBJ := $(USER_BUILD_DIR)/crt0.o
+USER_APP_OBJ  := $(USER_BUILD_DIR)/user.o
 
 # ============================================================
 # Compiler Flags - Kernel
@@ -160,7 +163,8 @@ USER_CFLAGS := -m64 \
                -nostdinc \
                -Wall \
                -Wextra \
-               -I./include
+               -I./include \
+			   -Iuser/libc/include
 
 # ============================================================
 # Assembly / Linker Flags
@@ -203,15 +207,15 @@ $(USER_BUILD_DIR): | $(BUILD_DIR)
 # User Space
 # ============================================================
 
-$(USER_TARGET): $(USER_OBJS) $(USER_LINKER) | $(USER_BUILD_DIR)
-	$(LD) $(USER_LDFLAGS) $(USER_OBJS) -o $@
+$(USER_TARGET): $(USER_CRT0_OBJ) $(USER_APP_OBJ) $(USER_LINKER) $(LIBC_A) | $(USER_BUILD_DIR)
+	$(LD) $(USER_LDFLAGS) $(USER_CRT0_OBJ) $(USER_APP_OBJ) $(LIBC_A) -o $@
 
-$(USER_BUILD_DIR)/crt0.o: $(USER_DIR)/lib/crt0.asm | $(USER_BUILD_DIR)
+$(USER_BUILD_DIR)/crt0.o: $(LIBC_DIR)/src/arch/x86_64/crt0.asm | $(USER_BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
 
 $(USER_BUILD_DIR)/user.o: $(USER_DIR)/user.c | $(USER_BUILD_DIR)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
-
+	
 # ============================================================
 # Trampoline
 #
@@ -333,6 +337,9 @@ $(BUILD_DIR)/partitions.o: $(DRIVERS_DIR)/storage/partitions.c | $(BUILD_DIR)
 $(BUILD_DIR)/tty.o: $(DRIVERS_DIR)/tty/tty.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/vfs_tty_kbd.o: $(DRIVERS_DIR)/tty/vfs_tty_kbd.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/console.o: $(DRIVERS_DIR)/video/console.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -395,6 +402,9 @@ $(BUILD_DIR)/ramfs.o: $(FS_DIR)/ramfs/ramfs.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/vfs_tty.o: $(FS_DIR)/dev/vfs_tty.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/vfs_pty.o: $(FS_DIR)/dev/vfs_pty.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/fat32.o: $(FS_DIR)/fat/fat32.c | $(BUILD_DIR)

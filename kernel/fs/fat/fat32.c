@@ -555,7 +555,7 @@ static int fat32_open(vfs_node_t *node, uint32_t flags) {
     }
 
     // 2. Se o ficheiro for aberto para escrita, mas o nó for Read-Only no FAT (Atributo 0x01)
-    if ((flags & VFS_MODE_WRITE) && (node->permissions & 0x01)) { 
+    if ((flags & VFS_MODE_WRITE) && (node->permissions == 0x0155)) { 
         return -3; // Erro: Permissão de escrita negada no hardware físico
     }
 

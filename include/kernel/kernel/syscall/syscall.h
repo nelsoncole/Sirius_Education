@@ -44,44 +44,45 @@
 #define SYS_UNLINK  12
 #define SYS_RMDIR   13
 #define SYS_RENAME  14
-#define SYS_DUP2    15
-#define SYS_IOCTL   16
+#define SYS_MKDIR   15
+#define SYS_DUP2    16
+#define SYS_IOCTL   17
 
 /* Gestão de Processos e Memória Avançada */
-#define SYS_FORK    17
-#define SYS_EXECVE  18
-#define SYS_MMAP    19
-#define SYS_MUNMAP  20
-#define SYS_GETPID  21
-#define SYS_GETPPID 22
+#define SYS_FORK    18
+#define SYS_EXECVE  19
+#define SYS_MMAP    20
+#define SYS_MUNMAP  21
+#define SYS_GETPID  22
+#define SYS_GETPPID 23
 
 /* Sincronização, Tempo e Sinais */
-#define SYS_WAITPID   23
-#define SYS_SLEEP     24
-#define SYS_KILL      25
-#define SYS_SIGACTION 26
+#define SYS_WAITPID   24
+#define SYS_SLEEP     25
+#define SYS_KILL      26
+#define SYS_SIGACTION 27
 
 /* Subsistema de Sockets e Rede */
-#define SYS_SOCKET      27
-#define SYS_BIND        28
-#define SYS_LISTEN      29
-#define SYS_ACCEPT      30
-#define SYS_CONNECT     31
-#define SYS_SEND        32
-#define SYS_RECV        33
-#define SYS_SENDTO      34
-#define SYS_RECVFROM    35
-#define SYS_SHUTDOWN    36
-#define SYS_SETSOCKOPT  37
-#define SYS_GETSOCKOPT  38
+#define SYS_SOCKET      28
+#define SYS_BIND        29
+#define SYS_LISTEN      30
+#define SYS_ACCEPT      31
+#define SYS_CONNECT     32
+#define SYS_SEND        33
+#define SYS_RECV        34
+#define SYS_SENDTO      35
+#define SYS_RECVFROM    36
+#define SYS_SHUTDOWN    37
+#define SYS_SETSOCKOPT  38
+#define SYS_GETSOCKOPT  39
 
 /* Subsistema de modulo do kernel */
-#define SYS_KMOD_LOAD   39
-#define SYS_KMOD_UNLOAD 40
-#define SYS_KMOD_PRINT  41
+#define SYS_KMOD_LOAD   40
+#define SYS_KMOD_UNLOAD 41
+#define SYS_KMOD_PRINT  42
 
 /* Número total de chamadas suportadas nesta fase com suporte de Rede Completo */
-#define MAX_SYSCALLS 42
+#define MAX_SYSCALLS 43
 
 
 /**
@@ -131,6 +132,7 @@ uint64_t sys_chmod(const char* path, uint16_t mode);
 uint64_t sys_unlink(const char* path);
 uint64_t sys_rmdir(const char* path);
 uint64_t sys_rename(const char* old_path, const char* new_name);
+uint64_t sys_mkdir(const char* path, uint32_t mode);
 
 uint64_t sys_dup2(int oldfd, int newfd);
 

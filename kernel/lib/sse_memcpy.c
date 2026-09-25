@@ -227,3 +227,40 @@ void *avx2_memcpy(void *s1, const void *s2, size_t len)
 
 	return retval;
 }
+
+// Variável global controlada pelo código de deteção de CPUID no boot
+extern int g_cpu_has_avx2;
+
+/**
+ * optimized_memcpy - Copia blocos de memória selecionando dinamicamente
+ *                    a melhor extensão SIMD disponível no hardware.
+ */
+void *optimized_memcpy(void *dst, const void *src, size_t bytes) {
+    if (!dst || !src || bytes == 0) return dst;
+
+    /* 
+     * HEURÍSTICA DE TAMANHO: Para blocos muito pequenos (ex: menos de 64 bytes),
+     * o custo de configurar os registadores YMM/XMM ou desalinhamentos não compensa.
+     * Nestes casos, uma cópia byte a byte simples é mais eficiente.
+     */
+    if (bytes < 64) {
+        uint8_t *d = (uint8_t *)dst;
+        const uint8_t *s = (const uint8_t *)src;
+        for (size_t i = 0; i < bytes; i++) {
+            d[i] = s[i];
+        }
+        return dst;
+    }
+
+    /* 
+     * SELEÇÃO DINÂMICA: Despacha para a rotina vetorial baseada na
+     * capacidade real reportada pelo CPUID no arranque do Sirius OS.
+     */
+    if (g_cpu_has_avx2) {
+        avx2_memcpy(dst, src, bytes);
+    } else {
+        sse_memcpy(dst, src, bytes);
+    }
+
+    return dst;
+}

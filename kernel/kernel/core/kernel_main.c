@@ -38,6 +38,7 @@
 #include <kernel/drivers/storage/partitions.h>
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/fs/dev/vfs_tty.h>
+#include <kernel/fs/dev/vfs_pty.h>
 #include <kernel/fs/fat/fat32.h>
 #include <kernel/klib.h>
 #include <kernel/kernel/sched/process_loader.h>
@@ -56,16 +57,15 @@ extern void tty_keyboard_bridge_thread();
  * Usamos o tipo 'char' apenas para o C entender que é um endereço.
  */
 extern char stack_top;
-extern volatile int kprintf_spinlock;
 extern uint32_t g_lapic_ticks_calibrated;
 extern int bootverbose;
-
+extern int tty_ready;
 void kernel_main(BOOT_INFO *boot_info)
 {
-    kprintf_spinlock = 0;
     g_lapic_ticks_calibrated = 0;
     bootverbose = 0;
     g_cpu_has_avx2 = 0;
+    tty_ready = 0;
 
     /*
      * O bootloader entregou as informações para o kernel.
@@ -225,6 +225,7 @@ void kernel_main(BOOT_INFO *boot_info)
             /* INICIALIZA OS TERMINAIS PASSANDO O NÓ /dev COMO PAI */
             tty_init();     /* Prepara os buffers circulares e spinlocks do TTY */
             tty_vfs_init(dev);
+            pty_vfs_init(dev);
         }
         else
         {
@@ -281,7 +282,6 @@ void kernel_main(BOOT_INFO *boot_info)
     }
 
     kprintf("[BOOT] Montando a partição de boot como raiz do VFS...\n");
-    // int status = vfs_mount(g_boot_partition_name, "/", "fat32");
     int status = vfs_mount(g_boot_partition_name, "/mnt/hd0", "fat32");
     if (status != 0)
     {
@@ -333,7 +333,7 @@ void kernel_main(BOOT_INFO *boot_info)
      * 1. A do Emulador (que consome o tty_pop_output e faz kprintf)
      * 2. A do Teclado (que consome o scancode bruto, traduz e injeta na TTY)
      */
-    thread_create(tty_emulator_thread, 0);
+    thread_create(tty_emulator_thread, 1);
     thread_create(tty_keyboard_bridge_thread, 0);
     thread_create(network_rx_thread, 0);
 

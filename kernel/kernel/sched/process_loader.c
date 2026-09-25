@@ -19,6 +19,7 @@
 #include <kernel/kernel/sched/process_loader.h>
 #include <kernel/kernel/sched/scheduler.h>
 #include <kernel/fs/vfs/vfs.h>
+#include <kernel/fs/dev/vfs_pty.h>
 #include <kernel/klib.h>
 
 /**
@@ -75,8 +76,36 @@ process_t* elf_load_and_create_process(const char* path, int argc, char** argv, 
     kprintf("[ELF] Transferência concluída (%d bytes). Instanciando processo com %d argumento(s)...\n", 
             bytes_lidos, argc);
 
-    // 4. CORREÇÃO CRÍTICA: Encaminha os argumentos recebidos para a criação da Stack
-    process_t* proc = process_create(binary_buffer, binary_size, argc, argv, cpu_id);
+    // 4. Encaminha os argumentos recebidos para a criação da Stack
+    process_t *proc = process_create(binary_buffer, binary_size, argc, argv, cpu_id);
+    if (proc)
+    {
+        vfs_node_t *ptmx_node = vfs_path_to_node("/dev/ptmx");
+        if (!ptmx_node || !ptmx_node->ops || !ptmx_node->ops->open)
+        {
+            kprintf("[BOOT ERROR] Fábrica /dev/ptmx não disponível.\n");
+
+            process_init_standard_io(proc, "/dev/tty0");
+        }
+        else{
+            // O open do ptmx vai criar internamente o par e preencher o private_data
+            ptmx_node->ops->open(ptmx_node, 0x0002);
+            // Extrai o ID gerado de dentro do private_data de forma segura
+            // (Precisas de incluir a estrutura pty_pair_t ou criar uma função auxiliar para ler o ID)
+            pty_pair_t *pair = (pty_pair_t *)ptmx_node->private_data;
+            int pty_id = pair->id;
+
+            // Monta dinamicamente a string do caminho da Réplica para o filho
+            char pts_path[32];
+            ksprintf(pts_path, "/dev/pts/%d", pty_id);
+
+            // Injeta os canais de E/S adequados ao contexto (ex: a tua nova PTY)
+            process_init_standard_io(proc, pts_path);
+        }
+
+        // ATIVAÇÃO: Esta função muda o estado para PROCESS_READY e insere-o na RunQueue
+        scheduler_ready_process(proc);
+    }
 
     // 5. Liberta o buffer temporário da Pool após a criação do processo (Evita Memory Leak)
     pool_free(binary_buffer, alloc_size);

@@ -152,6 +152,55 @@ vfs_node_t* vfs_path_to_node(const char* path) {
     return current_node;
 }
 
+/**
+ * vfs_get_parent_and_child - Isola o caminho, resolve e retorna o nó parente.
+ * @path:       O caminho completo vindo de Ring 3 (ex: "/mnt/hd0/nova_pasta").
+ * @out_child:  Ponteiro de memória para gravar apenas o nome do filho (ex: "nova_pasta").
+ *              (Pode ser NULL se o utilizador apenas quiser o nó parente).
+ * @return:     Ponteiro para o vfs_node_t do parente, ou NULL em caso de falha.
+ */
+vfs_node_t* vfs_get_parent_and_child(const char* path, char* out_child) {
+    if (!path || path[0] == '\0') return NULL;
+
+    size_t len = strlen(path);
+    int last_slash = -1;
+
+    // 1. Localiza a última barra '/' com uma varredura reversa rápida
+    for (int i = (int)len - 1; i >= 0; i--) {
+        if (path[i] == '/') {
+            last_slash = i;
+            break;
+        }
+    }
+
+    char parent_path[256];
+
+    // 2. Divide as strings de forma cirúrgica
+    if (last_slash == -1) {
+        // Se não possui barra, o parente é a raiz padrão "/"
+        strcpy(parent_path, "/");
+        if (out_child) strcpy(out_child, path);
+    } 
+    else {
+        // Isola a string do caminho do diretório parente
+        memcpy(parent_path, path, last_slash);
+        parent_path[last_slash] = '\0';
+        
+        // Se a barra estava no índice 0, o parente é a raiz absoluta "/"
+        if (last_slash == 0) {
+            strcpy(parent_path, "/");
+        }
+        
+        // Isola o nome bruto do filho
+        if (out_child) {
+            strcpy(out_child, &path[last_slash + 1]);
+        }
+    }
+
+    // 3. Resolve e retorna o nó virtual do parente diretamente pelo teu motor VFS
+    return vfs_path_to_node(parent_path);
+}
+
 
 //-----------------------------------------------------------------------------
 // API DE ACESSO AO CORE DO VFS
@@ -486,23 +535,55 @@ int vfs_umount(const char* mount_path) {
 //-----------------------------------------------------------------------------
 // OPERAÇÃO CENTRAL DE ABERTURA DE FICHEIROS (VFS OPEN)
 //-----------------------------------------------------------------------------
+
+/**
+ * vfs_open - Abre ou cria de forma dinâmica um nó no VFS do Kernel.
+ *            Garante isolamento de drivers polimórficos e proteção contra memory leaks.
+ */
+#define O_CREAT     0x0200
 vfs_node_t* vfs_open(const char* path, uint32_t flags) {
     if (!path || path[0] == '\0') return NULL;
 
-    // 1. Resolve o caminho por inteiro de forma segura (RAMFS-Safe) usando o motor central
+    // 1. Tenta resolver o caminho por inteiro através do motor de Name Lookup central
     vfs_node_t* target_node = vfs_path_to_node(path);
+    
+    // 2. Se o ficheiro não existe, mas a flag O_CREAT está ativa, aciona a fábrica
     if (!target_node) {
-        return NULL; // Ficheiro ou diretório intermédio não encontrado
+        if (flags & O_CREAT) {
+            char file_name[64];
+            
+            // Puxa de forma limpa o nó parente real e o nome isolado do filho
+            vfs_node_t* parent_node = vfs_get_parent_and_child(path, file_name);
+            
+            if (parent_node && parent_node->ops && parent_node->ops->create) {
+                // Executa a criação física no RamFS ou FAT32 (Modo padrão de escrita: 0644)
+                int res = parent_node->ops->create(parent_node, file_name, 0644);
+                
+                if (res == 0) {
+                    // Re-avalia o caminho para capturar o nó virtual recém-nascido na RAM
+                    target_node = vfs_path_to_node(path);
+                    if (target_node) goto process_driver_open;
+                }
+            }
+        }
+        return NULL; // Ficheiro ou diretório intermédio real não encontrado
     }
 
-    // 2. Dispara a inicialização polimórfica específica do driver (ex: FAT32 ler clusters)
+process_driver_open:
+
+    /* 3. BLINDAGEM DEFENSIVA EXTREMA: Garantia contra pânicos de ponteiro nulo */
+    if (!target_node) {
+        return NULL;
+    }
+
+    // 4. Dispara a inicialização polimórfica específica do driver (ex: clusters, caches)
     if (target_node->ops && target_node->ops->open) {
         int res_open = target_node->ops->open(target_node, flags);
         
         if (res_open != 0) {
             kprintf("[VFS OPEN] Erro: O driver falhou ao abrir o ficheiro '%s' (Codigo: %d).\n", path, res_open);
             
-            // Proteção de memória: Só limpa o nó se ele NÃO for um nó estrutural persistente da RAMFS
+            // Proteção de memória SMP: Só desaloca se não pertencer ao core estável e persistente do RamFS
             if (target_node != g_vfs_root && target_node->ops != &g_ramfs_ops) {
                 kfree(target_node); 
             }
@@ -510,9 +591,10 @@ vfs_node_t* vfs_open(const char* path, uint32_t flags) {
         }
     }
 
-    // Devolve o nó pronto para operações de read/write polimórficas
+    // Devolve o nó pronto e testado pelo driver para o sys_open encapsular no FD
     return target_node; 
 }
+
 
 int vfs_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
     if (!node || !buffer) return -1;

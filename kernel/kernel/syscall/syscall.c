@@ -56,6 +56,7 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
     [SYS_UNLINK]    = sys_unlink,
     [SYS_RMDIR]     = sys_rmdir,
     [SYS_RENAME]    = sys_rename,
+    [SYS_MKDIR]     = sys_mkdir,
     [SYS_IOCTL]     = sys_ioctl,
 
     /* Gestão de Memória Estrita (Rodam com CLI) */
@@ -309,25 +310,73 @@ uint64_t sys_chmod(const char* path, uint16_t mode) {
     return (uint64_t)res;
 }
 
+/**
+ * sys_unlink - Chamada de sistema para apagar ficheiros do VFS.
+ */
 uint64_t sys_unlink(const char* path) {
-    if (!path) return (uint64_t)-1;
+    if (!path || path[0] == '\0') return (uint64_t)-1;
 
-    vfs_node_t* parent = vfs_open("/", 0); 
-    return (uint64_t)vfs_unlink(parent, path);
+    char file_name[128];
+    // Resolve o parente real e isola apenas o nome do ficheiro (ex: "arqui")
+    vfs_node_t* parent_node = vfs_get_parent_and_child(path, file_name);
+    if (!parent_node) {
+        return (uint64_t)-1;
+    }
+
+    // Invoca o motor interno passando o parente correto e o nome do alvo
+    return (uint64_t)vfs_unlink(parent_node, file_name);
 }
 
+/**
+ * sys_rmdir - Chamada de sistema para remover diretorias do VFS.
+ */
 uint64_t sys_rmdir(const char* path) {
-    if (!path) return (uint64_t)-1;
+    if (!path || path[0] == '\0') return (uint64_t)-1;
 
-    vfs_node_t* parent = vfs_open("/", 0);
-    return (uint64_t)vfs_rmdir(parent, path);
+    char dir_name[128];
+    // Resolve o parente real e isola apenas o nome da pasta (ex: "nova_pasta")
+    vfs_node_t* parent_node = vfs_get_parent_and_child(path, dir_name);
+    if (!parent_node) {
+        return (uint64_t)-1;
+    }
+
+    // Invoca o motor interno passando o parente correto e o nome do alvo
+    return (uint64_t)vfs_rmdir(parent_node, dir_name);
 }
 
+/**
+ * sys_rename - Chamada de sistema para renomear um nó dentro do VFS.
+ */
 uint64_t sys_rename(const char* old_path, const char* new_name) {
-    if (!old_path || !new_name) return (uint64_t)-1;
+    if (!old_path || old_path[0] == '\0' || !new_name || new_name[0] == '\0') {
+        return (uint64_t)-1;
+    }
 
-    vfs_node_t* parent = vfs_open("/", 0);
-    return (uint64_t)vfs_rename(parent, old_path, new_name);
+    char old_name[128];
+    // Resolve o parente real de onde o arquivo original reside
+    vfs_node_t* parent_node = vfs_get_parent_and_child(old_path, old_name);
+    if (!parent_node) {
+        return (uint64_t)-1;
+    }
+
+    /* 
+     * Invoca o motor interno. 
+     * O vfs_rename padrão do teu Kernel recebe o nó pai, o nome antigo 
+     * (ex: "arqui") e o novo nome desejado (ex: "arqui_velho").
+     */
+    return (uint64_t)vfs_rename(parent_node, old_name, new_name);
+}
+
+uint64_t sys_mkdir(const char* path, uint32_t mode) {
+    char dir_name[64];
+
+    vfs_node_t* parent_node = vfs_get_parent_and_child(path, dir_name);
+    
+    if (!parent_node || !parent_node->ops || !parent_node->ops->mkdir) {
+        return (uint64_t)-1;
+    }
+
+    return (uint64_t)vfs_mkdir(parent_node, dir_name, mode);
 }
 
 /**
@@ -359,11 +408,57 @@ uint64_t sys_brk(void *addr)
     return brk(target_break);
 }
 
+/**
+ * sys_ioctl - Chamada de sistema para controlo de dispositivos e operações especiais do VFS.
+ * @fd:      Descritor de ficheiro do processo de Ring 3.
+ * @request: Código de comando da operação (ex: 0x1001 para a árvore do VFS).
+ * @arg:     Ponteiro opcional para argumentos ou buffers de dados.
+ */
 uint64_t sys_ioctl(int fd, unsigned long request, void *arg) {
-    (void)request;
-    (void)arg;
+    // 1. Obtém a estrutura do processo que invocou a Syscall a partir do escalonador
+    process_t* proc = get_current_process();
+    if (!proc || fd < 0 || fd >= MAX_FILES_PER_PROCESS) {
+        return (uint64_t)-1; // EBADF: Descritor inválido
+    }
+
+    // 2. Extrai a estrutura física de controlo do ficheiro aberto
+    vfs_file_t* file = proc->file_descriptor_table[fd];
+    if (!file || !file->node) {
+        return (uint64_t)-1; // EBADF: Ficheiro não aberto
+    }
+
+    vfs_node_t* node = file->node;
+
+    // Log de diagnóstico atómico (Mantive o teu formato original)
     kprintf("[SCI] sys_ioctl: fd=%d, req=0x%lx, arg=0x%lx\n", fd, request, (uint64_t)arg);
-    return 0;
+
+    // ============================================================================
+    // INTEGRAÇÃO CRUCIAL DA ÁRVORE DO VFS (Comando Mágico 0x1001)
+    // ============================================================================
+    if (request == 0x1001) {
+        // O utilizador passa no argumento 'arg' o caminho de início (ex: "/")
+        const char* start_path = (const char*)arg;
+        if (!start_path) {
+            start_path = "/";
+        }
+
+        // Invoca de forma síncrona a tua função recursiva nativa do Kernel!
+        // Ela varre os inodes e faz o kprintf direto na tty0 ativa.
+        vfs_print_tree(start_path);
+        return 0; // Sucesso absoluto
+    }
+
+    // ============================================================================
+    // ROTEAMENTO POLIMÓRFICO PADRÃO PARA DRIVERS (PTY, TTY, AHCI, ETC.)
+    // ============================================================================
+    // Se o driver do dispositivo (como o teu vfs_pty.c) tiver a operação ioctl ativa:
+    /*if (node->ops && node->ops->ioctl) {
+        // Encaminha a execução para o driver físico tratar as flags do hardware
+        return (uint64_t)node->ops->ioctl(node, request, arg);
+    }*/
+
+    // Se o driver não suportar comandos ioctl, retorna erro de operação não suportada (ENOTTY)
+    return (uint64_t)-1; 
 }
 
 uint64_t sys_fork(void) {

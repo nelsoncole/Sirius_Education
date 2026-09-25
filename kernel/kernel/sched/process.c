@@ -41,10 +41,11 @@ static pid_t g_next_pid = 1;
 
 /**
  * process_init_standard_io - Inicializa os canais padrão (0, 1, 2) de um processo.
- * @proc:     O processo que está a ser configurado.
- * @tty_path: Caminho literal do terminal alvo (ex: "/dev/tty1"). Se NULL, usa fallback.
+ * @proc:    O processo que está a ser configurado.
+ * @io_path: Caminho literal do terminal alvo (ex: "/dev/tty1", "/dev/pts/0"). 
+ *           Se NULL, faz fallback para a consola física "/dev/tty0".
  */
-void process_init_standard_io(process_t* proc, const char* tty_path) {
+void process_init_standard_io(process_t* proc, const char* io_path) {
     if (!proc) return;
 
     // 1. Limpa toda a tabela para evitar ponteiros lixo residuais
@@ -52,19 +53,19 @@ void process_init_standard_io(process_t* proc, const char* tty_path) {
         proc->file_descriptor_table[i] = NULL;
     }
 
-    // 2. Determina dinamicamente o terminal alvo
-    const char* target_path = (tty_path != NULL) ? tty_path : "/dev/tty0";
+    // 2. Determina dinamicamente o terminal alvo (Usa /dev/tty0 físico se io_path for NULL)
+    const char* target_path = (io_path != NULL) ? io_path : "/dev/tty0";
 
-    // Obtém o nó da TTY específica varrendo a árvore do RamFS
-    vfs_node_t* tty_node = vfs_path_to_node(target_path);
-    if (!tty_node) {
+    // Obtém o nó do terminal específico (Pode ser /dev/ttyX ou /dev/pts/X)
+    vfs_node_t* term_node = vfs_path_to_node(target_path);
+    if (!term_node) {
         kprintf("[PROC ERROR] Falha grave: %s nao encontrado para E/S padrao.\n", target_path);
         return;
     }
 
-    // Executa a abertura polimórfica para instanciar o driver privado correto
-    if (tty_node->ops && tty_node->ops->open) {
-        tty_node->ops->open(tty_node, 0x0002); // Abre em modo Leitura/Escrita (O_RDWR)
+    // Executa a abertura polimórfica para instanciar o driver privado correto (TTY ou PTY)
+    if (term_node->ops && term_node->ops->open) {
+        term_node->ops->open(term_node, 0x0002); // Abre em modo O_RDWR (Gera tfs_pty_replica_open se for pty)
     }
 
     // 3. Aloca a descrição intermédia APENAS para o FD 0 (stdin)
@@ -75,10 +76,10 @@ void process_init_standard_io(process_t* proc, const char* tty_path) {
     }
     memset(stdin_file, 0, sizeof(vfs_file_t));
     
-    stdin_file->node = tty_node;
+    stdin_file->node = term_node; // Associa dinamicamente o nó resolvido pelo VFS
     stdin_file->offset = 0;
-    stdin_file->flags = 0x0002; // Configura o descritor mestre em modo O_RDWR
-    stdin_file->ref_count = 1;  // Inicializa a primeira referência estável
+    stdin_file->flags = 0x0002;   // Modo O_RDWR
+    stdin_file->ref_count = 1;
 
     // Guarda fisicamente na Entrada Padrão do processo alvo
     proc->file_descriptor_table[0] = stdin_file;
@@ -133,8 +134,8 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
 
     memset(proc, 0, sizeof(process_t));
     proc->pid = g_next_pid++;
-    proc->state = PROCESS_READY;
-    process_init_standard_io(proc, "dev/tty0");
+    // Nasce como um embrião/protegido, impedindo o escalonador de o puxar antes do tempo
+    proc->state = PROCESS_EMBRYO;
 
     /* 2. Configuração da Árvore de Páginas Isolada (PML4) */
     proc->cr3 = vmm_create_address_space();

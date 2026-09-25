@@ -37,6 +37,13 @@ void tty_vfs_init(vfs_node_t* dev_node);
 vfs_node_t* tty_vfs_get_node_by_name(const char* name);
 
 /**
+ * Acesso direto e seguro ao nó TTY através do seu índice físico.
+ * @index: O índice da TTY pretendida (0 até MAX_TTY_DRV_DEVICES - 1).
+ * @return: O ponteiro para o vfs_node_t correspondente, ou NULL se inválido/inexistente.
+ */
+vfs_node_t* tty_vfs_get_node_by_index(int index);
+
+/**
  * Resolve e retorna dinamicamente o nó da TTY ativa.
  * Substitui o antigo ponteiro fixo global por um lookup seguro no array de estados.
  */

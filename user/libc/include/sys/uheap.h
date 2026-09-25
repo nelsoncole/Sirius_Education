@@ -21,10 +21,8 @@
 
 // Consome as macros SYS_BRK e as funções inline syscallX
 #include "usyscall.h"
-
-typedef unsigned long uint64_t;
-typedef long int intptr_t;
-typedef unsigned long size_t;
+#include <stdint.h>
+#include <stddef.h>
 
 #ifndef null
 #define null ((void *)0)

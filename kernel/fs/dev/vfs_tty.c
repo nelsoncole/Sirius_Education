@@ -20,6 +20,7 @@
 
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/drivers/tty/tty.h>
+#include <kernel/fs/dev/vfs_tty.h>
 #include <kernel/klib.h>
 
 /* Protótipos das operações em conformidade estrita com vfs_operations_t */
@@ -35,7 +36,7 @@ static vfs_operations_t g_tty_vfs_ops = {
     .read    = tfs_tty_read,
     .write   = tfs_tty_write,
     .flush   = NULL,
-    .finddir = NULL, /* Nós de caracteres não contêm subdiretórios */
+    .finddir = NULL,
     .readdir = NULL,
     .mkdir   = NULL,
     .create  = NULL,
@@ -47,7 +48,7 @@ static vfs_operations_t g_tty_vfs_ops = {
 };
 
 /* Array para gerir os nós das TTYs do sistema e o seu respetivo Lock de proteção */
-static vfs_node_t* g_tty_devices[MAX_TTY_DEVICES] = {NULL};
+static vfs_node_t* g_tty_devices[MAX_TTY_DRV_DEVICES] = {NULL};
 static spinlock_t  g_vfs_tty_lock; // Lock estático para proteger as tabelas globais deste driver
 
 /* Controlo e mapeamento dinâmico de Inodes e Terminal Ativo */
@@ -157,7 +158,7 @@ void tty_vfs_init(vfs_node_t* dev_node) {
     kprintf("[VFS TTY] A popular o diretorio /dev com terminais virtuais via VFS...\n");
 
     char tty_name[8];
-    for (int i = 0; i < MAX_TTY_DEVICES; i++) {
+    for (int i = 0; i < MAX_TTY_DRV_DEVICES; i++) {
         tty_name[0] = 't'; 
         tty_name[1] = 't'; 
         tty_name[2] = 'y';
@@ -173,7 +174,21 @@ void tty_vfs_init(vfs_node_t* dev_node) {
         if (target_node) {
             // Configura os buffers do TTY
             tty_vfs_setup_nodestruct(target_node);
-            
+
+
+            // INJEÇÃO DO CONTEXTO DE VÍDEO DEDICADO POR TTY
+            if (target_node->private_data) {
+                struct tty_device* tty = (struct tty_device*)target_node->private_data;
+                
+                // tty0 e tty1 têm shell texto com histórico (3 páginas)
+                // tty2 em diante será reservada para modo gráfico (apenas 1 página/Backbuffer simples)
+                if (i < 2) {
+                    tty_init_video_context(tty, 3); // 3 páginas para o scroll circular
+                } else {
+                    tty_init_video_context(tty, 1); // 1 única página (apenas para transições ou GUI)
+                }
+            }
+
             // Associa com segurança ao mapa estático indexado
             spin_lock(&g_vfs_tty_lock);
             g_tty_devices[i] = target_node;
@@ -193,7 +208,7 @@ vfs_node_t* tty_vfs_get_node_by_name(const char* name) {
     if (!name) return NULL;
 
     spin_lock(&g_vfs_tty_lock);
-    for (int i = 0; i < MAX_TTY_DEVICES; i++) {
+    for (int i = 0; i < MAX_TTY_DRV_DEVICES; i++) {
         if (g_tty_devices[i] && strcmp(g_tty_devices[i]->name, name) == 0) {
             vfs_node_t* node = g_tty_devices[i];
             spin_unlock(&g_vfs_tty_lock);
@@ -205,13 +220,35 @@ vfs_node_t* tty_vfs_get_node_by_name(const char* name) {
 }
 
 /**
+ * Acesso direto e seguro ao nó TTY através do seu índice físico.
+ * @index: O índice da TTY pretendida (0 até MAX_TTY_DRV_DEVICES - 1).
+ * @return: O ponteiro para o vfs_node_t correspondente, ou NULL se inválido/inexistente.
+ */
+vfs_node_t* tty_vfs_get_node_by_index(int index) {
+    // 1. Validação de limites para evitar estouro de array (Out of Bounds)
+    if (index < 0 || index >= MAX_TTY_DRV_DEVICES) {
+        return NULL;
+    }
+
+    // 2. Proteção atómica: Garante que outra thread não modifica o vetor concorrentemente
+    spin_lock(&g_vfs_tty_lock);
+    
+    vfs_node_t* node = g_tty_devices[index];
+    
+    spin_unlock(&g_vfs_tty_lock);
+
+    // Retorna o nó (pode ser NULL caso essa TTY intermédia não tenha sido registada)
+    return node;
+}
+
+/**
  * Resolve e retorna dinamicamente o nó da TTY ativa.
  * Substitui o antigo ponteiro fixo global por um lookup seguro no array de estados.
  */
 vfs_node_t* tty_vfs_get_active_node(void) {
     spin_lock(&g_vfs_tty_lock);
     uint32_t active_idx = g_active_tty_index;
-    vfs_node_t* node = (active_idx < MAX_TTY_DEVICES) ? g_tty_devices[active_idx] : NULL;
+    vfs_node_t* node = (active_idx < MAX_TTY_DRV_DEVICES) ? g_tty_devices[active_idx] : NULL;
     spin_unlock(&g_vfs_tty_lock);
     return node;
 }
@@ -220,7 +257,7 @@ vfs_node_t* tty_vfs_get_active_node(void) {
  * Altera programaticamente o ID do console em foco (ex: Alt+F1..F6).
  */
 void tty_vfs_set_active_index(uint32_t index) {
-    if (index >= MAX_TTY_DEVICES) return;
+    if (index >= MAX_TTY_DRV_DEVICES) return;
 
     spin_lock(&g_vfs_tty_lock);
     g_active_tty_index = index;

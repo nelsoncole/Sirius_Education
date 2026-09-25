@@ -159,6 +159,14 @@ extern char g_boot_partition_name[32];
 vfs_node_t* vfs_get_root(void);
 vfs_node_t* vfs_resolve_mountpoint(vfs_node_t* node);
 vfs_node_t* vfs_path_to_node(const char* path);
+/**
+ * vfs_get_parent_and_child - Isola o caminho, resolve e retorna o nó parente.
+ * @path:       O caminho completo vindo de Ring 3 (ex: "/mnt/hd0/nova_pasta").
+ * @out_child:  Ponteiro de memória para gravar apenas o nome do filho (ex: "nova_pasta").
+ *              (Pode ser NULL se o utilizador apenas quiser o nó parente).
+ * @return:     Ponteiro para o vfs_node_t do parente, ou NULL em caso de falha.
+ */
+vfs_node_t* vfs_get_parent_and_child(const char* path, char* out_child);
 
 /*Torna a tabela do ramfs.c visível para o vfs.c */
 extern vfs_operations_t g_ramfs_ops;

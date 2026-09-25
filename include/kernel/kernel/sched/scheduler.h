@@ -65,6 +65,12 @@ void idle_thread_routine(void);
  */
 void scheduler_init(void);
 /**
+ * scheduler_ready_process - Ativa o processo e insere a sua thread principal
+ *                          na fila de execução da CPU correta de forma segura.
+ * @proc: O ponteiro para o PCB do processo que acabou de ser configurado.
+ */
+void scheduler_ready_process(struct process* proc);
+/**
  * Realiza a troca de contexto local do núcleo (Task Switch).
  * Chamada de dentro do handler do Timer do LAPIC (Interrupção 32).
  */
@@ -78,6 +84,12 @@ void* task_switch(void* regs);
  * @param code Código de status de finalização que será reportado ao processo pai.
  */
 void scheduler_exit(int code);
+
+/**
+ * scheduler_yield - Permite que uma Thread de Kernel (KThread) abdique voluntariamente
+ *                   do processador, devolvendo o controlo ao escalonador de imediato.
+ */
+void scheduler_yield(void);
 
 
 #endif /* _SCHEDULER_H_ */

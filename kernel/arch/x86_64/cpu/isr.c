@@ -28,7 +28,6 @@
 unsigned long g_system_ticks = 0;
 
 extern int handle_user_stack_growth(uint64_t fault_address);
-extern int kprintf2(const char *fmt, ...);
 
 // Lista com as strings de diagnóstico das 32 exceções nativas da CPU Intel/AMD
 const char *exception_messages[] = {
@@ -115,34 +114,34 @@ void* interrupt_handler_c(registers_t *regs)
             }
         }
 
-        kprintf2("\n========================================================================\n");
-        kprintf2(" !!! EXCECAO CRITICA DO PROCESSADOR DETECTADA [ CORE %lu ] !!!\n", current_cpu_id);
-        kprintf2("========================================================================\n");
-        kprintf2(" Excecao N.: %lu -> [ #%s ]\n", regs->int_no, exception_messages[regs->int_no]);
-        kprintf2(" Cod. Erro : 0x%lX\n", regs->error_code);
+        kprintf("\n========================================================================\n");
+        kprintf(" !!! EXCECAO CRITICA DO PROCESSADOR DETECTADA [ CORE %lu ] !!!\n", current_cpu_id);
+        kprintf("========================================================================\n");
+        kprintf(" Excecao N.: %lu -> [ #%s ]\n", regs->int_no, exception_messages[regs->int_no]);
+        kprintf(" Cod. Erro : 0x%lX\n", regs->error_code);
 
         if (active_pid > 0)
         {
-            kprintf2(" Origem    : PID: %u | TID: %u (Espaço de Utilizador / Ring 3)\n", active_pid, active_tid);
+            kprintf(" Origem    : PID: %u | TID: %u (Espaço de Utilizador / Ring 3)\n", active_pid, active_tid);
         }
         else if (active_tid > 0)
         {
-            kprintf2(" Origem    : TID: %u (Linha de Execução do Kernel / Ring 0)\n", active_tid);
+            kprintf(" Origem    : TID: %u (Linha de Execução do Kernel / Ring 0)\n", active_tid);
         }
         else
         {
-            kprintf2(" Origem    : Inicialização Primitiva / Idle Thread Transitória\n");
+            kprintf(" Origem    : Inicialização Primitiva / Idle Thread Transitória\n");
         }
 
-        kprintf2("------------------------------------------------------------------------\n");
-        kprintf2(" REGISTRADORES DE EXECUCAO (Long Mode):\n");
-        kprintf2("  * RIP: 0x%016lX  |  CS : 0x%lX  |  RFLAGS: 0x%lX\n", regs->rip, regs->cs, regs->rflags);
-        kprintf2("  * RSP: 0x%016lX  |  SS : 0x%lX\n", regs->rsp, regs->ss);
-        kprintf2("  * RAX: 0x%lX  |  RBX: 0x%lX  |  RCX   : 0x%lX  |  RDX: 0x%lX\n", regs->rax, regs->rbx, regs->rcx, regs->rdx);
-        kprintf2("  * RDI: 0x%lX  |  RSI: 0x%lX  |  RBP   : 0x%lX\n", regs->rdi, regs->rsi, regs->rbp);
-        kprintf2("  * R8 : 0x%lX  |  R9 : 0x%lX  |  R10   : 0x%lX  |  R11: 0x%lX\n", regs->r8, regs->r9, regs->r10, regs->r11);
-        kprintf2("  * R12: 0x%lX  |  R13: 0x%lX  |  R14   : 0x%lX  |  R15: 0x%lX\n", regs->r12, regs->r13, regs->r14, regs->r15);
-        kprintf2("------------------------------------------------------------------------\n");
+        kprintf("------------------------------------------------------------------------\n");
+        kprintf(" REGISTRADORES DE EXECUCAO (Long Mode):\n");
+        kprintf("  * RIP: 0x%016lX  |  CS : 0x%lX  |  RFLAGS: 0x%lX\n", regs->rip, regs->cs, regs->rflags);
+        kprintf("  * RSP: 0x%016lX  |  SS : 0x%lX\n", regs->rsp, regs->ss);
+        kprintf("  * RAX: 0x%lX  |  RBX: 0x%lX  |  RCX   : 0x%lX  |  RDX: 0x%lX\n", regs->rax, regs->rbx, regs->rcx, regs->rdx);
+        kprintf("  * RDI: 0x%lX  |  RSI: 0x%lX  |  RBP   : 0x%lX\n", regs->rdi, regs->rsi, regs->rbp);
+        kprintf("  * R8 : 0x%lX  |  R9 : 0x%lX  |  R10   : 0x%lX  |  R11: 0x%lX\n", regs->r8, regs->r9, regs->r10, regs->r11);
+        kprintf("  * R12: 0x%lX  |  R13: 0x%lX  |  R14   : 0x%lX  |  R15: 0x%lX\n", regs->r12, regs->r13, regs->r14, regs->r15);
+        kprintf("------------------------------------------------------------------------\n");
         
         // Se for um Page Fault (#PF, Vetor 14), capturamos o endereço linear falho no CR2
         if (regs->int_no == 14)
@@ -150,26 +149,26 @@ void* interrupt_handler_c(registers_t *regs)
             unsigned long cr2_val;
             __asm__ __volatile__("mov %%cr2, %0" : "=r"(cr2_val));
 
-            kprintf2("\n==================================================\n");
-            kprintf2("                 CRASH: PAGE FAULT                \n");
-            kprintf2("==================================================\n");
-            kprintf2("Endereço Virtual Falho (CR2): 0x%016lX\n", cr2_val);
-            kprintf2("Código de Erro Bruto (ERR):   0x%lX\n", regs->error_code);
-            kprintf2("--------------------------------------------------\n");
+            kprintf("\n==================================================\n");
+            kprintf("                 CRASH: PAGE FAULT                \n");
+            kprintf("==================================================\n");
+            kprintf("Endereço Virtual Falho (CR2): 0x%016lX\n", cr2_val);
+            kprintf("Código de Erro Bruto (ERR):   0x%lX\n", regs->error_code);
+            kprintf("--------------------------------------------------\n");
 
             /* Decodificação física dos bits do Código de Erro x86_64 */
-            kprintf2("Causa:      %s\n", (regs->error_code & (1ULL << 0)) ? "Violação de Proteção" : "Página Não Presente");
-            kprintf2("Privilégio: %s\n", (regs->error_code & (1ULL << 2)) ? "Ring 3 (User Space)" : "Ring 0 (Kernel Space)");
-            kprintf2("Operação:   %s\n", (regs->error_code & (1ULL << 4)) ? "Busca de Instrução (Execute)" : "Leitura / Escrita");
-            kprintf2("==================================================\n");
+            kprintf("Causa:      %s\n", (regs->error_code & (1ULL << 0)) ? "Violação de Proteção" : "Página Não Presente");
+            kprintf("Privilégio: %s\n", (regs->error_code & (1ULL << 2)) ? "Ring 3 (User Space)" : "Ring 0 (Kernel Space)");
+            kprintf("Operação:   %s\n", (regs->error_code & (1ULL << 4)) ? "Busca de Instrução (Execute)" : "Leitura / Escrita");
+            kprintf("==================================================\n");
         }
-        kprintf2("========================================================================\n");
-        kprintf2("Kernel em estado de panico controlado. Sistema suspenso.\n");
+        kprintf("========================================================================\n");
+        kprintf("Kernel em estado de panico controlado. Sistema suspenso.\n");
 
         // Verifica se o processo é do Ring3
         if ((regs->cs & 3) == 3)
         {
-             kprintf2("\n[Process Crash] PID %u causou %s fatal no RIP: %p (RSP: %p)\n", 
+             kprintf("\n[Process Crash] PID %u causou %s fatal no RIP: %p (RSP: %p)\n", 
                     get_current_cpu()->current_thread->owner->pid, exception_messages[regs->int_no], (void*)regs->rip, (void*)regs->rsp);
             
             // Mata o processo de forma limpa libertando o Core
@@ -255,7 +254,7 @@ void* interrupt_handler_c(registers_t *regs)
     // TRATAMENTO DO ERRO DO LOCAL APIC (Vetor 254)
     if (regs->int_no == 254)
     {
-        kprintf2("[LAPIC] Alerta de erro interno detetado por hardware!\n");
+        kprintf("[LAPIC] Alerta de erro interno detetado por hardware!\n");
         lapic_eoi(); // Avisa o chip que a interrupção foi processada
         return regs;
     }

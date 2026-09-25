@@ -36,6 +36,7 @@
 typedef uint32_t pid_t;
 
 typedef enum {
+    PROCESS_EMBRYO,
     PROCESS_READY,
     PROCESS_RUNNING,
     PROCESS_ZOMBIE
@@ -78,6 +79,14 @@ typedef struct process {
     void* signal_handlers[MAX_SIGNALS];
 
 } process_t;
+
+/**
+ * process_init_standard_io - Inicializa os canais padrão (0, 1, 2) de um processo.
+ * @proc:    O processo que está a ser configurado.
+ * @io_path: Caminho literal do terminal alvo (ex: "/dev/tty1", "/dev/pts/0"). 
+ *           Se NULL, faz fallback para a consola física "/dev/tty0".
+ */
+void process_init_standard_io(process_t* proc, const char* io_path);
 
 /**
  * Cria um novo processo com o seu próprio espaço de endereçamento.

@@ -183,6 +183,36 @@ void scheduler_init(void)
 }
 
 /**
+ * scheduler_ready_process - Ativa o processo e insere a sua thread principal
+ *                          na fila de execução da CPU correta de forma segura.
+ * @proc: O ponteiro para o PCB do processo que acabou de ser configurado.
+ */
+void scheduler_ready_process(struct process* proc) 
+{
+    if (!proc || !proc->main_thread) return;
+
+    // 1. O processo deixa de ser um embrião e passa a estar formalmente ativo
+    proc->state = PROCESS_READY;
+
+    // 2. Extrai a thread principal que foi instanciada no processo
+    thread_t* main_th = proc->main_thread;
+
+    // 3. Captura o ID da CPU onde a thread foi vinculada no momento da criação
+    // (Assumindo que guardas o cpu_id na estrutura da thread ou usas o bloco atual)
+    uint32_t cpu_id = main_th->cpu_id; 
+
+    // 4. Injeta com segurança a thread na fila do Core correto (Muda o passo 5 antigo para aqui!)
+    cpu_data_block_t* cpu = get_cpu_data_block(cpu_id); 
+    if (cpu != NULL) {
+        enqueue_thread(cpu, main_th);
+    } else {
+        enqueue_thread(get_current_cpu(), main_th);
+    }
+
+    kprintf("[Scheduler] Thread principal do PID %d despachada para o Core CPU %d.\n", proc->pid, cpu_id);
+}
+
+/**
  * Encerra voluntariamente o processo atual, liberta o seu espaço de endereçamento 
  * e remove-o permanentemente da fila de execução do Escalonador (Scheduler).
  * 
@@ -404,4 +434,90 @@ void* task_switch(void* regs)
     }
 
     return next->kernel_stack;
+}
+
+/**
+ * scheduler_yield - Permite que uma Thread de Kernel (KThread) abdique voluntariamente
+ *                   do processador, devolvendo o controlo ao escalonador de imediato.
+ */
+void scheduler_yield(void) {
+    // 1. Bloqueia as interrupções para garantir que a troca de contexto é atómica
+    __asm__ __volatile__("cli");
+
+    cpu_data_block_t* cpu = get_current_cpu();
+    thread_t* current = cpu->current_thread;
+
+    // Se estivermos na Idle Task (TID 0) ou sem tarefa válida, não faz sentido ceder
+    if (!current || current->tid == 0 || current->state != THREAD_RUNNING) {
+        __asm__ __volatile__("sti");
+        return;
+    }
+
+    /* 
+     * MÁGICA DA PREEMPÇÃO VOLUNTÁRIA:
+     * Construímos a estrutura registers_t na pilha atual linha por linha,
+     * respeitando a ordem exata exigida pelo teu task_switch.
+     */
+    __asm__ __volatile__ (
+        // A. CONTEXTO DE HARDWARE (Salvo ficticiamente em Ring 0)
+        "movq %%ss, %%rax\n"
+        "pushq %%rax\n"             // registers_t.ss
+        "pushq %%rsp\n"             // registers_t.rsp (Pilha atual de kernel)
+        "pushfq\n"                  // registers_t.rflags
+        "movq %%cs, %%rax\n"
+        "pushq %%rax\n"             // registers_t.cs
+        "leaq 1f(%%rip), %%rax\n"   // Endereço físico de retorno seguro (etiqueta 1)
+        "pushq %%rax\n"             // registers_t.rip
+        
+        // B. METADADOS DAS MACROS
+        "pushq $0\n"                // registers_t.error_code (Nulo falso)
+        "pushq $0x81\n"             // registers_t.int_no (Vetor arbitrário para yield)
+
+        // C. REGISTADORES GERAIS (Ordem inversa da tua estrutura registers_t)
+        "pushq %%rbp\n"
+        "pushq %%rdi\n"
+        "pushq %%rsi\n"
+        "pushq %%rdx\n"
+        "pushq %%rcx\n"
+        "pushq %%rax\n"
+        "pushq %%rbx\n"
+        "pushq %%r8\n"
+        "pushq %%r9\n"
+        "pushq %%r10\n"
+        "pushq %%r11\n"
+        "pushq %%r12\n"
+        "pushq %%r13\n"
+        "pushq %%r14\n"
+        "pushq %%r15\n"
+
+        // D. INVOCAR O ESCALONADOR
+        "movq %%rsp, %%rdi\n"        // Passa o RSP (ponteiro registers_t) como 1º argumento para task_switch
+        "call task_switch\n"        // Executa a escolha da próxima tarefa próspera
+        
+        // E. RESTAURAR A NOVA TAREFA SELECIONADA
+        "movq %%rax, %%rsp\n"        // Altera o RSP do CPU para a pilha da nova tarefa (next->kernel_stack)
+        "popq %%r15\n"
+        "popq %%r14\n"
+        "popq %%r13\n"
+        "popq %%r12\n"
+        "popq %%r11\n"
+        "popq %%r10\n"
+        "popq %%r9\n"
+        "popq %%r8\n"
+        "popq %%rbx\n"
+        "popq %%rax\n"
+        "popq %%rcx\n"
+        "popq %%rdx\n"
+        "popq %%rsi\n"
+        "popq %%rdi\n"
+        "popq %%rbp\n"
+        
+        "addq $16, %%rsp\n"         // Limpa registers_t.int_no e error_code da nova pilha
+        "iretq\n"                   // Executa o retorno atómico de hardware, restaurando rip, cs e rflags
+        
+        "1:\n"                      // Ponto de aterragem exato quando esta Thread voltar a acordar!
+        :
+        :
+        : "rax", "rdi", "memory"
+    );
 }
