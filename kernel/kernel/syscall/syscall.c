@@ -57,6 +57,8 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
     [SYS_RMDIR]     = sys_rmdir,
     [SYS_RENAME]    = sys_rename,
     [SYS_MKDIR]     = sys_mkdir,
+    [SYS_GETDENTS]  = sys_getdents,
+    [SYS_DUP2]      = sys_dup2,
     [SYS_IOCTL]     = sys_ioctl,
 
     /* Gestão de Memória Estrita (Rodam com CLI) */
@@ -347,24 +349,41 @@ uint64_t sys_rmdir(const char* path) {
 /**
  * sys_rename - Chamada de sistema para renomear um nó dentro do VFS.
  */
-uint64_t sys_rename(const char* old_path, const char* new_name) {
-    if (!old_path || old_path[0] == '\0' || !new_name || new_name[0] == '\0') {
-        return (uint64_t)-1;
+uint64_t sys_rename(const char* old_path, const char* new_path) {
+    if (!old_path || old_path[0] == '\0' || !new_path || new_path[0] == '\0') {
+        return (uint64_t)-1; // EINVAL
     }
 
     char old_name[128];
-    // Resolve o parente real de onde o arquivo original reside
-    vfs_node_t* parent_node = vfs_get_parent_and_child(old_path, old_name);
-    if (!parent_node) {
-        return (uint64_t)-1;
+    char new_name[128];
+
+    // 1. Resolve o diretório pai de ORIGEM e isola o nome antigo
+    vfs_node_t* old_parent = vfs_get_parent_and_child(old_path, old_name);
+    if (!old_parent) {
+        return (uint64_t)-2; // ENOENT
+    }
+
+    // 2. Resolve o diretório pai de DESTINO e isola o novo nome
+    vfs_node_t* new_parent = vfs_get_parent_and_child(new_path, new_name);
+    if (!new_parent) {
+        return (uint64_t)-2; // ENOENT
+    }
+
+    // ============================================================================
+    // APLICADO AQUI:
+    // Se new_name[0] for '\0', significa que o caminho terminava em '/'!
+    // Logo, o utilizador quer apenas MOVER para dentro da pasta mantendo o nome.
+    // ============================================================================
+    if (new_name[0] == '\0') {
+        // Herda o nome original do ficheiro para o destino
+        strcpy(new_name, old_name);
     }
 
     /* 
-     * Invoca o motor interno. 
-     * O vfs_rename padrão do teu Kernel recebe o nó pai, o nome antigo 
-     * (ex: "arqui") e o novo nome desejado (ex: "arqui_velho").
+     * AGORA SIM, INVOCAÇÃO DO MOTOR COM 4 ARGUMENTOS REAIS:
+     * 1. Nó pai antigo | 2. Nome antigo | 3. Nó pai novo | 4. Novo nome
      */
-    return (uint64_t)vfs_rename(parent_node, old_name, new_name);
+    return (uint64_t)vfs_rename(old_parent, old_name, new_parent, new_name);
 }
 
 uint64_t sys_mkdir(const char* path, uint32_t mode) {
@@ -428,6 +447,7 @@ uint64_t sys_ioctl(int fd, unsigned long request, void *arg) {
     }
 
     vfs_node_t* node = file->node;
+    (void)node;
 
     // Log de diagnóstico atómico (Mantive o teu formato original)
     kprintf("[SCI] sys_ioctl: fd=%d, req=0x%lx, arg=0x%lx\n", fd, request, (uint64_t)arg);

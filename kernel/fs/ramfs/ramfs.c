@@ -43,7 +43,7 @@ static int         ramfs_unlink(vfs_node_t* parent, const char* name);
 static int         ramfs_rmdir(vfs_node_t* parent, const char* name);
 static int         ramfs_stat(vfs_node_t* node, vfs_stat_t* buf);
 static int         ramfs_chmod(vfs_node_t* node, uint16_t mode);
-static int         ramfs_rename(vfs_node_t* parent, const char* old_name, const char* new_name);
+static int         ramfs_rename(vfs_node_t* old_dir, const char* old_name, vfs_node_t* new_dir, const char* new_name);
 
 /* Trancas Globais do Core do VFS para segurança de listas SMP */
 extern void vfs_lock_tables(void);
@@ -323,18 +323,71 @@ static int ramfs_chmod(vfs_node_t *node, uint16_t mode)
     node->permissions = mode;
     return 0;
 }
-static int ramfs_rename(vfs_node_t *parent, const char *old_name, const char *new_name)
+/**
+ * @brief Renomeia ou move um ficheiro/pasta nativamente em RAM (Padrão POSIX de 4 argumentos).
+ */
+static int ramfs_rename(vfs_node_t* old_dir, const char* old_name, vfs_node_t* new_dir, const char* new_name)
 {
-    if (!parent || !old_name || !new_name)
-        return -1;
-    vfs_node_t *target = ramfs_finddir(parent, old_name);
+    if (!old_dir || !new_dir || !old_name || !new_name)
+        return -1; // EINVAL
+
+    // 1. Resolve os pontos de montagem para garantir consistência
+    old_dir = vfs_resolve_mountpoint(old_dir);
+    new_dir = vfs_resolve_mountpoint(new_dir);
+
+    // 2. Procura se o objeto de origem realmente existe no diretório pai antigo
+    vfs_node_t* target = ramfs_finddir(old_dir, old_name);
     if (!target)
-        return -2;
-    if (ramfs_finddir(parent, new_name) != NULL)
-        return -3; // Destino já existe
+        return -2; // ENOENT: Origem não encontrada
+
+    // 3. BLOQUEIO DE DUPLICIDADE: Garante que o novo nome já não habita no destino
+    if (ramfs_finddir(new_dir, new_name) != NULL)
+        return -3; // EEXIST: O nome destino já existe
+
+    // Tranca as tabelas globais do VFS antes de manipular os ponteiros de memória (SMP-safe)
     vfs_lock_tables();
+
+    // 4. Caso o objeto esteja a ser MOVIDO para uma DIRETORIA DIFERENTE
+    if (old_dir != new_dir) 
+    {
+        ramfs_entry_t* prev = NULL;
+        ramfs_entry_t* curr = (ramfs_entry_t*)old_dir->private_data;
+        ramfs_entry_t* target_entry = NULL;
+
+        // 4.1. Remove a entrada da lista encadeada do diretório pai antigo (old_dir)
+        while (curr != NULL) 
+        {
+            if (curr->node == target) 
+            {
+                target_entry = curr; // Isolamos o contentor da entrada
+                if (prev == NULL) {
+                    old_dir->private_data = curr->next; // Era a primeira entrada da lista
+                } else {
+                    prev->next = curr->next; // Salta o elemento atual
+                }
+                break;
+            }
+            prev = curr;
+            curr = curr->next;
+        }
+
+        // 4.2. Anexa a entrada isolada no início da lista encadeada do novo diretório (new_dir)
+        if (target_entry != NULL) 
+        {
+            target_entry->next = (ramfs_entry_t*)new_dir->private_data;
+            new_dir->private_data = target_entry;
+            
+            // Atualiza a pertença do sistema de ficheiros no nó movido
+            target->fs = new_dir->fs;
+        }
+    }
+
+    // 5. Atualiza o nome de forma atómica e garante o terminador nulo na string
     strncpy(target->name, new_name, sizeof(target->name) - 1);
     target->name[sizeof(target->name) - 1] = '\0';
+
+    // Liberta as trancas das tabelas estruturais
     vfs_unlock_tables();
-    return 0;
+
+    return 0; // Sucesso absoluto na translação em RAM!
 }

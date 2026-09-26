@@ -25,13 +25,16 @@ ASMFLAGS:= -f elf64
 TARGET  := libc.a
 
 # 4. Mapeamento Automático de Diretorias e Ficheiros de Origem
-SRC_DIRS := src/stdio src/string src/ctype src/stdlib src/sys
+SRC_DIRS := \
+			src/stdio src/string src/ctype src/stdlib \
+			src/errno src/assert src/math src/sys src/time \
+			src/signal src/setjmp
 
 # Coleta todos os ficheiros .c dentro das pastas especificadas
 C_SRCS   := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))
 
 # CORREÇÃO: O único ficheiro Assembly autónomo da tua arquitetura
-ASM_SRCS := src/arch/x86_64/crt0.asm
+ASM_SRCS := src/setjmp/setjmp.asm src/setjmp/longjmp.asm
 
 # 5. Mapeamento dos Ficheiros de Objeto de Saída (.o)
 OBJS     := $(C_SRCS:.c=.o) $(ASM_SRCS:.asm=.o)

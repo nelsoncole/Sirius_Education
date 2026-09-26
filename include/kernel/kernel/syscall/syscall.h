@@ -20,69 +20,73 @@
 #define _SYSCALL_H_
 
 #include <kernel/lib/stdint.h>
-#include <kernel/fs/vfs/vfs.h> // Importante para reconhecer o tipo vfs_stat_t
+#include <kernel/fs/vfs/vfs.h>
+#include <kernel/fs/vfs/sys_dirent.h>
 
 /*
  * CONFIGURAÇÃO DOS NÚMEROS DE CHAMADA DE SISTEMA (SYSCALL NUMBERS)
  * ------------------------------------------------------------------------
  * Índices lógicos passados no registador RAX pelas aplicações em Ring 3.
  */
-#define SYS_READ   0
-#define SYS_WRITE  1
-#define SYS_BRK    2
-#define SYS_EXIT   3
+enum {
+    SYS_READ = 0,
+    SYS_WRITE,
+    SYS_BRK,
+    SYS_EXIT,
 
-/* Expansão das operações do Sistema de Ficheiros Virtual (VFS) */
-#define SYS_MOUNT   4
-#define SYS_UMOUNT  5
-#define SYS_OPEN    6
-#define SYS_CLOSE   7
-#define SYS_SEEK    8
-#define SYS_FLUSH   9
-#define SYS_STAT    10
-#define SYS_CHMOD   11
-#define SYS_UNLINK  12
-#define SYS_RMDIR   13
-#define SYS_RENAME  14
-#define SYS_MKDIR   15
-#define SYS_DUP2    16
-#define SYS_IOCTL   17
+    /* Expansão das operações do Sistema de Ficheiros Virtual (VFS) */
+    SYS_MOUNT,
+    SYS_UMOUNT,
+    SYS_OPEN,
+    SYS_CLOSE,
+    SYS_SEEK,
+    SYS_FLUSH,
+    SYS_STAT,
+    SYS_CHMOD,
+    SYS_UNLINK,
+    SYS_RMDIR,
+    SYS_RENAME,
+    SYS_MKDIR,
+    SYS_GETDENTS,
+    SYS_DUP2,
+    SYS_IOCTL,
 
-/* Gestão de Processos e Memória Avançada */
-#define SYS_FORK    18
-#define SYS_EXECVE  19
-#define SYS_MMAP    20
-#define SYS_MUNMAP  21
-#define SYS_GETPID  22
-#define SYS_GETPPID 23
+    /* Gestão de Processos e Memória Avançada */
+    SYS_FORK,
+    SYS_EXECVE,
+    SYS_MMAP,
+    SYS_MUNMAP,
+    SYS_GETPID,
+    SYS_GETPPID,
 
-/* Sincronização, Tempo e Sinais */
-#define SYS_WAITPID   24
-#define SYS_SLEEP     25
-#define SYS_KILL      26
-#define SYS_SIGACTION 27
+    /* Sincronização, Tempo e Sinais */
+    SYS_WAITPID,
+    SYS_SLEEP,
+    SYS_KILL,
+    SYS_SIGACTION,
 
-/* Subsistema de Sockets e Rede */
-#define SYS_SOCKET      28
-#define SYS_BIND        29
-#define SYS_LISTEN      30
-#define SYS_ACCEPT      31
-#define SYS_CONNECT     32
-#define SYS_SEND        33
-#define SYS_RECV        34
-#define SYS_SENDTO      35
-#define SYS_RECVFROM    36
-#define SYS_SHUTDOWN    37
-#define SYS_SETSOCKOPT  38
-#define SYS_GETSOCKOPT  39
+    /* Subsistema de Sockets e Rede */
+    SYS_SOCKET,
+    SYS_BIND,
+    SYS_LISTEN,
+    SYS_ACCEPT,
+    SYS_CONNECT,
+    SYS_SEND,
+    SYS_RECV,
+    SYS_SENDTO,
+    SYS_RECVFROM,
+    SYS_SHUTDOWN,
+    SYS_SETSOCKOPT,
+    SYS_GETSOCKOPT,
 
-/* Subsistema de modulo do kernel */
-#define SYS_KMOD_LOAD   40
-#define SYS_KMOD_UNLOAD 41
-#define SYS_KMOD_PRINT  42
+    /* Subsistema de módulo do kernel */
+    SYS_KMOD_LOAD,
+    SYS_KMOD_UNLOAD,
+    SYS_KMOD_PRINT,
 
-/* Número total de chamadas suportadas nesta fase com suporte de Rede Completo */
-#define MAX_SYSCALLS 43
+    /* O compilador define automaticamente MAX_SYSCALLS com o valor total correto (43) */
+    MAX_SYSCALLS
+};
 
 
 /**

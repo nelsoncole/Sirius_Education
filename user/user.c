@@ -21,6 +21,15 @@
 
 #define MAX_ARGS 16
 
+struct sys_dirent
+{
+    uint64_t d_ino;          // Número único do Inode (específico do FS)
+    uint64_t d_off;          // Próximo offset (índice seguinte na tabela do VFS)
+    unsigned short d_reclen; // Tamanho total desta estrutura nesta iteração (com padding)
+    unsigned char d_type;    // Tipo do nó (DT_DIR, DT_REG, etc.)
+    char d_name[];           // Nome do elemento terminado em '\0' (tamanho dinâmico)
+}__attribute__((packed));
+
 /**
  * @brief Remove os caracteres de quebra de linha (\n ou \r) do final da string.
  */
@@ -74,6 +83,7 @@ static int execute_builtin(int argc, char *argv[])
         printf("  cd <dir> - Altera a diretoria atual (ex: cd .., cd bin).\n");
         printf("  mkdir    - Cria uma nova diretoria no VFS.\n");
         printf("  touch    - Cria um novo ficheiro em /mnt/hd0/.\n");
+        printf("  rename   - Renomeia/Move um ficheiro ou pasta.\n");
         printf("  vfstree  - Imprime a arvore completa do VFS.\n");
         printf("  clear    - Limpa o terminal de texto.\n");
         printf("  echo     - Imprime os argumentos passados.\n");
@@ -123,7 +133,20 @@ static int execute_builtin(int argc, char *argv[])
             return 1;
         }
 
-        int ret = (int)syscall2(SYS_MKDIR, (uint64_t)argv[1], 0755); 
+         char caminho_completo[256];
+        
+        // Se o utilizador já digitou o caminho absoluto completo, preserva-o.
+        // Caso contrário, força o roteamento dinâmico para a diretoria do disco hd0.
+        if (argv[1][0] == '/')
+        {
+            sprintf(caminho_completo, "%s", argv[1]);
+        }
+        else
+        {
+            sprintf(caminho_completo, "/mnt/hd0/%s", argv[1]);
+        }
+
+        int ret = (int)syscall2(SYS_MKDIR, (uint64_t)caminho_completo, 0755); 
         if (ret < 0)
         {
             printf("SiriusOS: mkdir: falha ao criar a diretoria '%s'\n", argv[1]);
@@ -166,6 +189,51 @@ static int execute_builtin(int argc, char *argv[])
         return 1;
     }
 
+    /* COMANDO RENAME (Renomear / Mover ficheiros ou pastas) */
+    if (strcmp(argv[0], "rename") == 0)
+    {
+        if (argc < 3 || argv[1] == NULL || argv[2] == NULL)
+        {
+            printf("SiriusOS: rename: argumentos em falta. Uso: rename <origem> <destino>\n");
+            return 1;
+        }
+
+        char caminho_antigo[256];
+        char caminho_novo[256];
+
+        // 1. Roteamento Inteligente do caminho de Origem
+        if (argv[1][0] == '/')
+        {
+            sprintf(caminho_antigo, "%s", argv[1]);
+        }
+        else
+        {
+            sprintf(caminho_antigo, "/mnt/hd0/%s", argv[1]);
+        }
+
+        // 2. Roteamento Inteligente do caminho de Destino
+        if (argv[2][0] == '/')
+        {
+            sprintf(caminho_novo, "%s", argv[2]);
+        }
+        else
+        {
+            sprintf(caminho_novo, "/mnt/hd0/%s", argv[2]);
+        }
+
+        // 3. Invoca a chamada de sistema SYS_RENAME mapeada na tua usyscall.h
+        int ret = (int)syscall2(SYS_RENAME, (uint64_t)caminho_antigo, (uint64_t)caminho_novo);
+        if (ret < 0)
+        {
+            printf("SiriusOS: rename: falha ao renomear de '%s' para '%s' (Erro: %d)\n", argv[1], argv[2], ret);
+        }
+        else
+        {
+            printf("SiriusOS: '%s' renomeado para '%s' com sucesso.\n", argv[1], argv[2]);
+        }
+        return 1;
+    }
+
     /* COMANDO VFSTREE (Árvore do VFS Real) */
     if (strcmp(argv[0], "vfstree") == 0)
     {
@@ -177,27 +245,70 @@ static int execute_builtin(int argc, char *argv[])
     /* COMANDO LS / DIR */
     if (strcmp(argv[0], "ls") == 0 || strcmp(argv[0], "dir") == 0)
     {
-        int fd = open(".", O_RDONLY);
+        
+        // 1. Abre a diretoria pretendida
+        int fd = open("/mnt/hd0/", O_RDONLY);
         if (fd >= 0)
         {
-            char buf[512];
-            // Garante que o buffer vem limpo da RAM antes da leitura
-            memset(buf, 0, sizeof(buf)); 
-            
-            int bytes = read(fd, buf, sizeof(buf) - 1);
-            if (bytes > 0)
+            // 2. Aloca um buffer generoso (ex: 1024 bytes) para ler várias entradas de uma só vez
+            size_t buf_size = 1024;
+            struct sys_dirent *dirp = (struct sys_dirent *)malloc(buf_size);
+            if (dirp != NULL)
             {
-                buf[bytes] = '\0'; // Garante terminação nula segura para a string
-                write(STDOUT_FILENO, buf, (size_t)bytes);
-                printf("\n");
-                close(fd);
-                return 1;
+                // Limpa a memória alocada antes de usar
+                memset(dirp, 0, buf_size);
+
+                // 3. Invoca a chamada de sistema passando: fd, ponteiro do buffer e tamanho total
+                // Nota: Ajustei para syscall3 porque precisas de passar 3 argumentos (fd, buffer, tamanho)
+                int bytes = (int)syscall3(SYS_GETDENTS, (uint64_t)fd, (uint64_t)dirp, (uint64_t)buf_size);
+                
+                if (bytes > 0)
+                {
+                    int bpos = 0;
+                    uint8_t *buffer_ptr = (uint8_t *)dirp;
+
+                    // 4. Ciclo iterativo para ler as estruturas em memória
+                    while (bpos < bytes)
+                    {
+                        struct sys_dirent *d = (struct sys_dirent *)(buffer_ptr + bpos);
+                        
+                        // Imprime o nome do ficheiro ou pasta
+                        printf("%s", d->d_name);
+
+                        // Se for um diretório (DT_DIR = 4), adiciona uma barra decorativa '/'
+                        if (d->d_type == 4)
+                        {
+                            printf("/");
+                        }
+
+                        printf("  "); // Espaçamento entre os elementos listados
+                        
+                        // Avança o ponteiro exatamente o número de bytes que esta entrada ocupa (alinhado por 8-bytes)
+                        bpos += d->d_reclen;
+                    }
+                    printf("\n");
+                }
+                else if (bytes == 0)
+                {
+                    printf("(Diretório vazio)\n");
+                }
+                else
+                {
+                    printf("Erro ao ler diretório (Código: %d)\n", bytes);
+                }
+
+                // Liberta sempre a memória alocada dinamicamente
+                free(dirp);
             }
+            else
+            {
+                printf("Erro: Memória insuficiente para executar o ls.\n");
+            }
+
             close(fd);
+            return 1;
         }
-        
-        /* Fallback caso a diretoria atual ainda esteja vazia ou em montagem */
-        printf(".   ..   bin/   dev/   sys/   mnt/   user.elf   init.bin\n");
+
         return 1;
     }
 
@@ -205,7 +316,7 @@ static int execute_builtin(int argc, char *argv[])
     if (strcmp(argv[0], "exit") == 0)
     {
         printf("[SHELL] A terminar sessao do utilizador. Adeus!\n");
-        _exit(0); 
+        exit(0); 
         return 1;
     }
 
@@ -223,7 +334,7 @@ int main(int argc, char* argv[])
     char input_buffer[256];
     char *cmd_args[MAX_ARGS];
 
-    printf("\033[2J\033[H"); 
+    //printf("\033[2J\033[H"); 
     printf("==================================================\n");
     printf("        Bem-vindo ao Sirius_Education OS          \n");
     printf("    Modo Ring 3 e Pseudo-Terminais Ativos         \n");

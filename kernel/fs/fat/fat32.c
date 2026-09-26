@@ -1151,31 +1151,33 @@ static int fat32_chmod(vfs_node_t* node, uint16_t mode) {
 }
 
 /* Renomeia ou move um arquivo alterando apenas os metadados das tabelas de diretório */
-static int fat32_rename(vfs_node_t* parent, const char* old_name, const char* new_name) {
-    // 1. BLOQUEIO DE DUPLICIDADE: Verifica se o novo nome já existe no diretório pai
-    vfs_node_t* check_exist = fat32_finddir(parent, new_name);
+static int fat32_rename(vfs_node_t* old_parent, const char* old_name, vfs_node_t* new_parent, const char* new_name) {
+    if (!old_parent || !new_parent || !old_name || !new_name) return -1;
+
+    // 1. BLOQUEIO DE DUPLICIDADE: Verifica se o novo nome já existe no diretório pai de DESTINO
+    vfs_node_t* check_exist = fat32_finddir(new_parent, new_name);
     if (check_exist != NULL) {
-        kprintf("[FAT32 RENAME] Erro: O nome destino '%s' já existe.\n", new_name);
-        kfree(check_exist); // Liberta a memória do nó encontrado no lookup
-        return -3;          // Retorna erro de alvo já existente (Equivalente POSIX a -EEXIST)
+        kprintf("[FAT32 RENAME] Erro: O nome destino '%s' já existe no diretório alvo.\n", new_name);
+        kfree(check_exist); 
+        return -3;          // -EEXIST
     }
 
-    // Localiza os metadados do nó antigo para roubar o cluster inicial e os atributos
-    vfs_node_t* old_node = fat32_finddir(parent, old_name);
-    if (!old_node) return -1;
+    // Localiza os metadados do nó antigo no diretório pai de ORIGEM
+    vfs_node_t* old_node = fat32_finddir(old_parent, old_name);
+    if (!old_node) return -1; // -ENOENT
 
-    // 2. Adiciona uma cópia idêntica apontando para o mesmo cluster inicial com o NOVO nome
+    // 2. Adiciona a nova entrada no diretório pai de DESTINO (reutilizando o cluster inicial 'inode')
     uint8_t old_attr = (old_node->flags & VFS_DIRECTORY) ? 0x10 : 0x20;
-    if (fat32_add_entry(parent, new_name, old_attr, old_node->inode, (uint32_t)old_node->size) != 0) {
+    if (fat32_add_entry(new_parent, new_name, old_attr, old_node->inode, (uint32_t)old_node->size) != 0) {
         kfree(old_node);
         return -2;
     }
 
-    // 3. Invalida e remove a entrada antiga (LFN + SFN) do disco rígido
-    fat32_invalidate_entries(parent, old_name);
+    // 3. Invalida e remove a entrada antiga do diretório pai de ORIGEM
+    fat32_invalidate_entries(old_parent, old_name);
 
     kfree(old_node);
-    return 0; // Renomeado nativamente em milissegundos!
+    return 0; // Ficheiro movido e/ou renomeado com sucesso!
 }
 
 /**

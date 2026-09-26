@@ -35,10 +35,14 @@
 #define VFS_MOUNTPOINT  (1 << 5)   /* Ponto de Montagem Ativo */
 
 /* Modos de Abertura de Ficheiros */
-#define VFS_MODE_READ   0x01
-#define VFS_MODE_WRITE  0x02
-#define VFS_MODE_CREATE 0x04
-#define VFS_MODE_TRUNC  0x08
+#define VFS_MODE_READ   0x00
+#define VFS_MODE_WRITE  0x01
+#define VFS_MODE_RDWR   0x02
+
+#define VFS_MODE_CREATE     0x0200
+#define VFS_MODE__APPEND    0x0008
+#define VFS_MODE_TRUNC      0x0400
+#define VFS_MODE__NONBLOCK  0x4000
 
 /* Diretrizes nativas para o vfs_seek (Padrão POSIX) */
 #define VFS_SEEK_SET  0
@@ -83,7 +87,7 @@ typedef struct vfs_operations {
     int (*chmod)(struct vfs_node* node, uint16_t mode);
     
     // Move ou renomeia um arquivo/pasta de forma nativa no sistema de arquivos
-    int (*rename)(struct vfs_node* node, const char* old_name, const char* new_name);
+    int (*rename)(struct vfs_node* old_dir, const char* old_name, struct vfs_node* new_dir, const char* new_name);
 } vfs_operations_t;
 
 
@@ -208,7 +212,7 @@ int vfs_stat(vfs_node_t* node, vfs_stat_t* buf);
 int vfs_chmod(vfs_node_t* node, uint16_t mode);
 int vfs_unlink(vfs_node_t* parent, const char* name);
 int vfs_rmdir(vfs_node_t* parent, const char* name);
-int vfs_rename(vfs_node_t* parent, const char* old_name, const char* new_name);
+int vfs_rename(vfs_node_t* old_dir, const char* old_name, vfs_node_t* new_dir, const char* new_name);
 uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence);
 
 struct process;

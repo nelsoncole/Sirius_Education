@@ -163,9 +163,31 @@ vfs_node_t* vfs_get_parent_and_child(const char* path, char* out_child) {
     if (!path || path[0] == '\0') return NULL;
 
     size_t len = strlen(path);
-    int last_slash = -1;
+    char parent_path[256];
+    memset(parent_path, 0, sizeof(parent_path));
 
-    // 1. Localiza a última barra '/' com uma varredura reversa rápida
+    // ============================================================================
+    // REGRA DO NELSON: Se termina com '/', o parente é o próprio caminho completo
+    // e o out_child[0] fica estritamente com '\0'.
+    // ============================================================================
+    if (len > 1 && path[len - 1] == '/') {
+        // Copia o caminho inteiro preservando a barra final (ex: "/mnt/hd0/nelson/")
+        strncpy(parent_path, path, sizeof(parent_path) - 1);
+        parent_path[sizeof(parent_path) - 1] = '\0';
+
+        // O filho fica garantidamente vazio
+        if (out_child) {
+            out_child[0] = '\0';
+        }
+
+        // Devolve o nó resolvido da própria pasta de destino
+        return vfs_path_to_node(parent_path);
+    }
+
+    // ============================================================================
+    // CASO PADRÃO: Caminho regular terminando em ficheiro (sem barra no fim)
+    // ============================================================================
+    int last_slash = -1;
     for (int i = (int)len - 1; i >= 0; i--) {
         if (path[i] == '/') {
             last_slash = i;
@@ -173,9 +195,6 @@ vfs_node_t* vfs_get_parent_and_child(const char* path, char* out_child) {
         }
     }
 
-    char parent_path[256];
-
-    // 2. Divide as strings de forma cirúrgica
     if (last_slash == -1) {
         // Se não possui barra, o parente é a raiz padrão "/"
         strcpy(parent_path, "/");
@@ -197,7 +216,6 @@ vfs_node_t* vfs_get_parent_and_child(const char* path, char* out_child) {
         }
     }
 
-    // 3. Resolve e retorna o nó virtual do parente diretamente pelo teu motor VFS
     return vfs_path_to_node(parent_path);
 }
 
@@ -583,10 +601,9 @@ process_driver_open:
         if (res_open != 0) {
             kprintf("[VFS OPEN] Erro: O driver falhou ao abrir o ficheiro '%s' (Codigo: %d).\n", path, res_open);
             
-            // Proteção de memória SMP: Só desaloca se não pertencer ao core estável e persistente do RamFS
-            if (target_node != g_vfs_root && target_node->ops != &g_ramfs_ops) {
-                kfree(target_node); 
-            }
+            // CORREÇÃO: Removeu-se o bloco destrutivo de kfree().
+            // Se o driver falhou a abertura, o nó NÃO deve ser apagado da RAM,
+            // pois ele pertence à estrutura viva do VFS/Mount. Apenas abortamos a abertura.
             return NULL; 
         }
     }
@@ -610,39 +627,36 @@ int vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
     if (!node || !buffer) return -1;
     node = vfs_resolve_mountpoint(node);
 
+    if (node->flags & VFS_DIRECTORY) {
+        return -21; // Is a directory: Erro padrão POSIX! (-EISDIR)
+    }
+
     if (node->ops && node->ops->write) {
         return node->ops->write(node, offset, size, buffer);
     }
     return -2;
 }
 
-//-----------------------------------------------------------------------------
-// OPERAÇÃO CENTRAL DE FECHO DE SESSÃO DO NÓ (VFS CLOSE)
-//-----------------------------------------------------------------------------
+/**
+ * vfs_close - Fecha o acesso a um nó do VFS sem desalocar a sua estrutura viva.
+ * @node: Ponteiro para o nó de Ring 0 que foi manipulado pelo descritor.
+ */
 void vfs_close(vfs_node_t* node) {
     if (!node) return;
 
     // 1. Resolve o nó real do hardware caso o ficheiro seja um ponto de montagem
     vfs_node_t* real_node = vfs_resolve_mountpoint(node);
     
-    // 2. Notifica o driver de armazenamento (ex: FAT32, RamFS) para fechar a sessão
+    // 2. Notifica o driver de armazenamento (ex: FAT32, RamFS) para encerrar as rotinas da sessão
     if (real_node->ops && real_node->ops->close) {
-        real_node->ops->close(real_node); // No RamFS isto apenas retorna 0 de forma segura
+        real_node->ops->close(real_node); // Executa o fecho a nível de hardware/FS
     }
     
-    // 3. GESTÃO DE MEMÓRIA DA SESSÃO (SMP & Cache Safe):
-    // Só podemos libertar o nó se ele NÃO for a raiz e NÃO pertencer ao RamFS estável!
-    if (node != g_vfs_root && node != vfs_resolve_mountpoint(g_vfs_root) && node->ops != &g_ramfs_ops) {
-        
-        // Se o nó real do driver for diferente do nó de controlo e também não for da RAM estável
-        if (real_node != node && real_node != g_vfs_root && 
-            real_node != vfs_resolve_mountpoint(g_vfs_root) && real_node->ops != &g_ramfs_ops) 
-        {
-            kfree(real_node); // Limpa o nó gerado internamente pelo driver de disco (ex: FAT32)
-        }
-        
-        kfree(node); // Limpa o nó de sessão temporário gerado no open
-    }
+    // 3. GESTÃO DE MEMÓRIA:
+    // REMOVIDO EM DEFINITIVO: Qualquer chamada a kfree(node) ou kfree(real_node).
+    // Como os teus nós são persistentes na RAM e geridos de forma estática 
+    // pelas montagens (mounts), fechar um ficheiro ou diretório NÃO pode apagar 
+    // a sua estrutura da topologia viva do VFS.
 }
 
 int vfs_flush(vfs_node_t* node) {
@@ -771,13 +785,19 @@ int vfs_rmdir(vfs_node_t* parent, const char* name) {
     return -2;
 }
 
-int vfs_rename(vfs_node_t* parent, const char* old_name, const char* new_name) {
-    if (!parent || !old_name || !new_name) return -1;
-    parent = vfs_resolve_mountpoint(parent);
-    if (parent->ops && parent->ops->rename) {
-        return parent->ops->rename(parent, old_name, new_name);
+int vfs_rename(vfs_node_t* old_dir, const char* old_name, vfs_node_t* new_dir, const char* new_name) {
+    if (!old_dir || !new_dir || !old_name || !new_name) return -1;
+
+    // Resolve os pontos de montagem de ambos os diretórios para garantir que operamos no hardware correto
+    old_dir = vfs_resolve_mountpoint(old_dir);
+    new_dir = vfs_resolve_mountpoint(new_dir);
+
+    // Invoca o driver correspondente (FAT32, RamFS, etc.) injetando os 4 argumentos
+    if (old_dir->ops && old_dir->ops->rename) {
+        return old_dir->ops->rename(old_dir, old_name, new_dir, new_name);
     }
-    return -2;
+
+    return -2; // Operação não suportada pelo driver do sistema de ficheiros
 }
 
 //-----------------------------------------------------------------------------

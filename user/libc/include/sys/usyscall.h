@@ -5,12 +5,13 @@
  *    Description: Invólucros universais em Assembly Inline para a instrução
  *                 nativa 'syscall' em ambiente x86_64 (Ring 3).
  *                 Respeita a System V AMD64 ABI e protege RCX/R11.
+ *                 Totalmente otimizado e seguro para compilação em -O2.
  *
  *         Author: Nelson Cole
  *   Created Date: 17/09/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 17/09/2026
+ *  Modified Date: 25/09/2026
  *
  *        License: MIT
  * ============================================================================
@@ -21,90 +22,102 @@
 
 #include <stdint.h>
 
-/* Operações Básicas de I/O, Memória e Execução */
-#define SYS_READ   0
-#define SYS_WRITE  1
-#define SYS_BRK    2
-#define SYS_EXIT   3
+enum {
+    /* Operações Básicas de I/O, Memória e Execução */
+    SYS_READ = 0,
+    SYS_WRITE,
+    SYS_BRK,
+    SYS_EXIT,
 
-/* Expansão das operações do Sistema de Ficheiros Virtual (VFS) */
-#define SYS_MOUNT   4
-#define SYS_UMOUNT  5
-#define SYS_OPEN    6
-#define SYS_CLOSE   7
-#define SYS_SEEK    8
-#define SYS_FLUSH   9
-#define SYS_STAT    10
-#define SYS_CHMOD   11
-#define SYS_UNLINK  12
-#define SYS_RMDIR   13
-#define SYS_RENAME  14
-#define SYS_MKDIR   15
-#define SYS_DUP2    16
-#define SYS_IOCTL   17
+    /* Expansão das operações do Sistema de Ficheiros Virtual (VFS) */
+    SYS_MOUNT,
+    SYS_UMOUNT,
+    SYS_OPEN,
+    SYS_CLOSE,
+    SYS_SEEK,
+    SYS_FLUSH,
+    SYS_STAT,
+    SYS_CHMOD,
+    SYS_UNLINK,
+    SYS_RMDIR,
+    SYS_RENAME,
+    SYS_MKDIR,
+    SYS_GETDENTS,
+    SYS_DUP2,
+    SYS_IOCTL,
 
-/* Gestão de Processos e Memória Avançada */
-#define SYS_FORK    18
-#define SYS_EXECVE  19
-#define SYS_MMAP    20
-#define SYS_MUNMAP  21
-#define SYS_GETPID  22
-#define SYS_GETPPID 23
+    /* Gestão de Processos e Memória Avançada */
+    SYS_FORK,
+    SYS_EXECVE,
+    SYS_MMAP,
+    SYS_MUNMAP,
+    SYS_GETPID,
+    SYS_GETPPID,
 
-/* Sincronização, Tempo e Sinais */
-#define SYS_WAITPID   24
-#define SYS_SLEEP     25
-#define SYS_KILL      26
-#define SYS_SIGACTION 27
+    /* Sincronização, Tempo e Sinais */
+    SYS_WAITPID,
+    SYS_SLEEP,
+    SYS_KILL,
+    SYS_SIGACTION,
 
-/* Subsistema de Sockets e Rede */
-#define SYS_SOCKET      28
-#define SYS_BIND        29
-#define SYS_LISTEN      30
-#define SYS_ACCEPT      31
-#define SYS_CONNECT     32
-#define SYS_SEND        33
-#define SYS_RECV        34
-#define SYS_SENDTO      35
-#define SYS_RECVFROM    36
-#define SYS_SHUTDOWN    37
-#define SYS_SETSOCKOPT  38
-#define SYS_GETSOCKOPT  39
+    /* Subsistema de Sockets e Rede */
+    SYS_SOCKET,
+    SYS_BIND,
+    SYS_LISTEN,
+    SYS_ACCEPT,
+    SYS_CONNECT,
+    SYS_SEND,
+    SYS_RECV,
+    SYS_SENDTO,
+    SYS_RECVFROM,
+    SYS_SHUTDOWN,
+    SYS_SETSOCKOPT,
+    SYS_GETSOCKOPT,
 
-/* Subsistema de modulo do kernel */
-#define SYS_KMOD_LOAD   40
-#define SYS_KMOD_UNLOAD 41
-#define SYS_KMOD_PRINT  42
+    /* Subsistema de módulo do kernel */
+    SYS_KMOD_LOAD,
+    SYS_KMOD_UNLOAD,
+    SYS_KMOD_PRINT,
 
+    /* O compilador define automaticamente MAX_SYSCALLS com o valor total correto (43) */
+    MAX_SYSCALLS
+};
 
 /**
  * @brief Syscall com 0 argumentos.
  * RAX = Número da Syscall
  */
+__attribute__((optimize("O0")))
 static inline uint64_t syscall0(uint64_t num) 
 {
     uint64_t ret;
+    register uint64_t _num asm("rax") = num;
+
     __asm__ __volatile__(
         "syscall"
         : "=a"(ret)
-        : "a"(num)
-        : "rcx", "r11", "memory"
+        : "r"(_num)
+        : "rcx", "r11", "cc", "memory"
     );
     return ret;
 }
 
 /**
- * @brief Syscall com 1 argumento (A que a sua sbrk_user precisa!).
+ * @brief Syscall com 1 argumento (Usada pela sbrk_user).
  * RAX = Número da Syscall, RDI = Argumento 1
  */
+__attribute__((optimize("O0")))
 static inline uint64_t syscall1(uint64_t num, uint64_t arg1) 
 {
     uint64_t ret;
+    register uint64_t _num asm("rax") = num;
+    register uint64_t _a1  asm("rdi") = arg1;
+
     __asm__ __volatile__(
         "syscall"
         : "=a"(ret)
-        : "a"(num), "D"(arg1) // "D" força o GCC a colocar arg1 diretamente em RDI
-        : "rcx", "r11", "memory"
+        : "r"(_num), "r"(_a1)
+        : "rcx", "r11", "cc", "memory"
     );
     return ret;
 }
@@ -113,30 +126,41 @@ static inline uint64_t syscall1(uint64_t num, uint64_t arg1)
  * @brief Syscall com 2 argumentos.
  * RAX = Número, RDI = Arg1, RSI = Arg2
  */
+__attribute__((optimize("O0")))
 static inline uint64_t syscall2(uint64_t num, uint64_t arg1, uint64_t arg2) 
 {
     uint64_t ret;
+    register uint64_t _num asm("rax") = num;
+    register uint64_t _a1  asm("rdi") = arg1;
+    register uint64_t _a2  asm("rsi") = arg2;
+
     __asm__ __volatile__(
         "syscall"
         : "=a"(ret)
-        : "a"(num), "D"(arg1), "S"(arg2) // "S" força o uso do registo RSI
-        : "rcx", "r11", "memory"
+        : "r"(_num), "r"(_a1), "r"(_a2)
+        : "rcx", "r11", "cc", "memory"
     );
     return ret;
 }
 
 /**
- * @brief Syscall com 3 argumentos (Pronta para o seu futuro sys_write).
+ * @brief Syscall com 3 argumentos (Usada pelo sys_getdents e sys_ioctl).
  * RAX = Número, RDI = Arg1, RSI = Arg2, RDX = Arg3
  */
+__attribute__((optimize("O0")))
 static inline uint64_t syscall3(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3) 
 {
     uint64_t ret;
+    register uint64_t _num asm("rax") = num;
+    register uint64_t _a1  asm("rdi") = arg1;
+    register uint64_t _a2  asm("rsi") = arg2;
+    register uint64_t _a3  asm("rdx") = arg3;
+
     __asm__ __volatile__(
         "syscall"
         : "=a"(ret)
-        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3) // "d" força o uso do registo RDX
-        : "rcx", "r11", "memory"
+        : "r"(_num), "r"(_a1), "r"(_a2), "r"(_a3)
+        : "rcx", "r11", "cc", "memory"
     );
     return ret;
 }
@@ -145,15 +169,21 @@ static inline uint64_t syscall3(uint64_t num, uint64_t arg1, uint64_t arg2, uint
  * @brief Syscall com 4 argumentos.
  * RAX = Número, RDI = Arg1, RSI = Arg2, RDX = Arg3, R10 = Arg4
  */
+__attribute__((optimize("O0")))
 static inline uint64_t syscall4(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4)
 {
     uint64_t ret;
+    register uint64_t _num asm("rax") = num;
+    register uint64_t _a1  asm("rdi") = arg1;
+    register uint64_t _a2  asm("rsi") = arg2;
+    register uint64_t _a3  asm("rdx") = arg3;
+    register uint64_t _a4  asm("r10") = arg4; // Vinculação explícita ao R10 antes do ASM
+
     __asm__ __volatile__(
-        "movq %5, %%r10\n\t"   /* Move o 4º argumento para R10 antes do disparo */
         "syscall"
         : "=a"(ret)
-        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3), "r"(arg4)
-        : "rcx", "r11", "r10", "memory"
+        : "r"(_num), "r"(_a1), "r"(_a2), "r"(_a3), "r"(_a4)
+        : "rcx", "r11", "cc", "memory"
     );
     return ret;
 }
@@ -162,38 +192,49 @@ static inline uint64_t syscall4(uint64_t num, uint64_t arg1, uint64_t arg2, uint
  * @brief Syscall com 5 argumentos.
  * RAX = Número, RDI = Arg1, RSI = Arg2, RDX = Arg3, R10 = Arg4, R8 = Arg5
  */
+__attribute__((optimize("O0")))
 static inline uint64_t syscall5(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5)
 {
     uint64_t ret;
+    register uint64_t _num asm("rax") = num;
+    register uint64_t _a1  asm("rdi") = arg1;
+    register uint64_t _a2  asm("rsi") = arg2;
+    register uint64_t _a3  asm("rdx") = arg3;
+    register uint64_t _a4  asm("r10") = arg4;
+    register uint64_t _a5  asm("r8")  = arg5; // Vinculação explícita ao R8
+
     __asm__ __volatile__(
-        "movq %5, %%r10\n\t"   /* 4º argumento em R10 */
-        "movq %6, %%r8\n\t"    /* 5º argumento em R8  */
         "syscall"
         : "=a"(ret)
-        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3), "r"(arg4), "r"(arg5)
-        : "rcx", "r11", "r10", "r8", "memory"
+        : "r"(_num), "r"(_a1), "r"(_a2), "r"(_a3), "r"(_a4), "r"(_a5)
+        : "rcx", "r11", "cc", "memory"
     );
     return ret;
 }
 
 /**
- * @brief Syscall com 6 argumentos (Pronta para o seu sys_sendto).
+ * @brief Syscall com 6 argumentos.
  * RAX = Número, RDI = Arg1, RSI = Arg2, RDX = Arg3, R10 = Arg4, R8 = Arg5, R9 = Arg6
  */
+__attribute__((optimize("O0")))
 static inline uint64_t syscall6(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6)
 {
     uint64_t ret;
+    register uint64_t _num asm("rax") = num;
+    register uint64_t _a1  asm("rdi") = arg1;
+    register uint64_t _a2  asm("rsi") = arg2;
+    register uint64_t _a3  asm("rdx") = arg3;
+    register uint64_t _a4  asm("r10") = arg4;
+    register uint64_t _a5  asm("r8")  = arg5;
+    register uint64_t _a6  asm("r9")  = arg6; // Vinculação explícita ao R9
+
     __asm__ __volatile__(
-        "movq %5, %%r10\n\t"   /* 4º argumento em R10 */
-        "movq %6, %%r8\n\t"    /* 5º argumento em R8  */
-        "movq %7, %%r9\n\t"    /* 6º argumento em R9  */
         "syscall"
         : "=a"(ret)
-        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3), "r"(arg4), "r"(arg5), "r"(arg6)
-        : "rcx", "r11", "r10", "r8", "r9", "memory"
+        : "r"(_num), "r"(_a1), "r"(_a2), "r"(_a3), "r"(_a4), "r"(_a5), "r"(_a6)
+        : "rcx", "r11", "cc", "memory"
     );
     return ret;
 }
-
 
 #endif /* _USYSCALL_H_ */
