@@ -89,6 +89,8 @@ C_OBJ := \
 	$(BUILD_DIR)/scheduler.o \
 	$(BUILD_DIR)/thread.o \
 	$(BUILD_DIR)/process.o \
+	$(BUILD_DIR)/clone.o \
+	$(BUILD_DIR)/fork.o \
 	$(BUILD_DIR)/process_loader.o \
 	$(BUILD_DIR)/syscall.o \
 	$(BUILD_DIR)/pci.o \
@@ -384,6 +386,12 @@ $(BUILD_DIR)/thread.o: $(KERNEL_DIR)/sched/thread.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/process.o: $(KERNEL_DIR)/sched/process.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/clone.o: $(KERNEL_DIR)/sched/clone.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/fork.o: $(KERNEL_DIR)/sched/fork.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/process_loader.o: $(KERNEL_DIR)/sched/process_loader.c | $(BUILD_DIR)

@@ -112,6 +112,14 @@
 #define VMM_SCRATCH_WINDOW           (VMM_SCRATCH_ISOLATED_BASE)        // Slot / PT Índice 496 (Legado)
 #define VMM_SCRATCH_WINDOW_0         (VMM_SCRATCH_WINDOW + PAGE_SIZE)   // Slot / PT Índice 497 (Janela 0)
 #define VMM_SCRATCH_WINDOW_1         (VMM_SCRATCH_WINDOW_0 + PAGE_SIZE) // Slot / PT Índice 498 (Janela 1)
+#define VMM_SCRATCH_WINDOW_2         (VMM_SCRATCH_WINDOW_1 + PAGE_SIZE) // Slot / PT Índice 499 (Janela 2)
+#define VMM_SCRATCH_WINDOW_3         (VMM_SCRATCH_WINDOW_2 + PAGE_SIZE) // Slot / PT Índice 500 (Janela 3)
+#define VMM_SCRATCH_WINDOW_4         (VMM_SCRATCH_WINDOW_3 + PAGE_SIZE) // Slot / PT Índice 501 (Janela 4)
+#define VMM_SCRATCH_WINDOW_5         (VMM_SCRATCH_WINDOW_4 + PAGE_SIZE) // Slot / PT Índice 502 (Janela 5)
+#define VMM_SCRATCH_WINDOW_6         (VMM_SCRATCH_WINDOW_5 + PAGE_SIZE) // Slot / PT Índice 503 (Janela 6)
+#define VMM_SCRATCH_WINDOW_7         (VMM_SCRATCH_WINDOW_6 + PAGE_SIZE) // Slot / PT Índice 504 (Janela 7)
+#define VMM_SCRATCH_WINDOW_8         (VMM_SCRATCH_WINDOW_7 + PAGE_SIZE) // Slot / PT Índice 505 (Janela 8)
+#define VMM_SCRATCH_WINDOW_9         (VMM_SCRATCH_WINDOW_8 + PAGE_SIZE) // Slot / PT Índice 506 (Janela 9)
 
 
 /*

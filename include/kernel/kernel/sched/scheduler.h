@@ -76,20 +76,22 @@ void scheduler_ready_process(struct process* proc);
  */
 void* task_switch(void* regs);
 /**
- * Encerra voluntariamente o processo atual, liberta o seu espaço de endereçamento 
- * e remove-o permanentemente da fila de execução do Escalonador (Scheduler).
- * 
- * NOTA DE ARQUITETURA: Esta função assume o controlo da Stack e NUNCA mais retorna.
- * 
- * @param code Código de status de finalização que será reportado ao processo pai.
+ * schedule - Força a preempção e troca imediata de contexto de forma agnóstica.
+ *            Suporta chamadas vindas de threads em estado THREAD_BLOCKED (ex: sys_waitpid).
  */
-void scheduler_exit(int code);
-
+void schedule(void);
 /**
  * scheduler_yield - Permite que uma Thread de Kernel (KThread) abdique voluntariamente
  *                   do processador, devolvendo o controlo ao escalonador de imediato.
  */
 void scheduler_yield(void);
-
+/**
+ * scheduler_exit - Encerra o fluxo da thread ativa e passa o processador.
+ *                  Responsabilidade exclusiva de E/S e Contexto. Não limpa o PCB.
+ * 
+ * NOTA DE ARQUITETURA: Esta rotina assume o controlo da Stack e NUNCA mais retorna.
+ * @code: Código de status de finalização reportado ao Pai.
+ */
+void scheduler_exit(int code);
 
 #endif /* _SCHEDULER_H_ */

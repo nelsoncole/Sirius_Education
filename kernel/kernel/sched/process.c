@@ -19,25 +19,85 @@
 #include <kernel/kernel/sched/process.h>
 #include <kernel/kernel/sched/scheduler.h>
 #include <kernel/kernel/sched/process_loader.h>
-
-/* 
- * Evita conflitos de dependências cíclicas com cpu.h garantindo 
- * que as estruturas de agendamento e CPU se reconhecem mutuamente.
- */
-struct cpu_data_block;
-typedef struct cpu_data_block cpu_data_block_t;
-
 #include <kernel/arch/x86_64/cpu/cpu.h>
 #include <kernel/kernel/mm/pmm.h>
 #include <kernel/kvmm.h>
-#include <kernel/kernel/sched/scheduler.h>
 #include <kernel/klib.h>
+#include <kernel/kernel/core/spinlock.h>
 
 /* Flags x86_64: Presente (0x1) | Read-Write (0x2) | User-Supervisor (0x4) */
 #define PAGE_USER_FLAGS         (0x1 | 0x2 | 0x4)
 
 /* Gerador incremental estático para atribuição única de PIDs */
-static pid_t g_next_pid = 1;
+pid_t g_next_pid = 1;
+
+/* Registo global estável para auditoria e gestão de parentesco */
+process_t* g_process_list_head = NULL;
+/* Spinlock central para proteção da lista em ambiente SMP */
+static spinlock_t g_process_list_lock = {0};
+
+void process_list_spinlock_acquire(void) {
+    spinlock_acquire(&g_process_list_lock);
+}
+
+void process_list_spinlock_release(void) {
+    spinlock_release(&g_process_list_lock);
+}
+
+/**
+ * process_list_insert - Insere atonicamente um novo processo na lista global.
+ * @proc: Ponteiro para o Bloco de Controlo do Processo (PCB) a ser inserido.
+ */
+void process_list_insert(process_t* proc)
+{
+    if (!proc) return;
+
+    /* Bloqueia o Spinlock: Se outra CPU estiver a mexer na lista, este núcleo espera aqui */
+    spinlock_acquire(&g_process_list_lock);
+
+    /* Insere na cabeça da lista ligada */
+    proc->next = g_process_list_head;
+    g_process_list_head = proc;
+
+    /* Liberta o Spinlock para as restantes CPUs poderem aceder */
+    spinlock_release(&g_process_list_lock);
+}
+
+/**
+ * process_list_remove - Remove atonicamente um processo da lista global.
+ * @proc: Ponteiro para o PCB a ser removido.
+ */
+void process_list_remove(process_t* proc)
+{
+    if (!proc || !g_process_list_head) return;
+
+    /* Garante exclusão mútua em ambiente SMP */
+    spinlock_acquire(&g_process_list_lock);
+
+    /* Caso especial: O processo a remover é o primeiro da lista */
+    if (g_process_list_head == proc) 
+    {
+        g_process_list_head = g_process_list_head->next;
+        spinlock_release(&g_process_list_lock);
+        return;
+    }
+
+    /* Varrer a lista para encontrar o nó anterior */
+    process_t* current = g_process_list_head;
+    while (current->next != NULL && current->next != proc) 
+    {
+        current = current->next;
+    }
+
+    /* Se encontrou o nó, desvincula-o da corrente */
+    if (current->next == proc) 
+    {
+        current->next = proc->next;
+    }
+
+    /* Liberta a região crítica */
+    spinlock_release(&g_process_list_lock);
+}
 
 /**
  * process_init_standard_io - Inicializa os canais padrão (0, 1, 2) de um processo.
@@ -307,7 +367,13 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
     }
 
     /* 4. Criação e vinculação da Thread Principal em Ring 3 usando o RSP ajustado */
-    thread_t* main_th = user_thread_create((void(*)(void))proc->code_base, (void*)proc->stack_top, cpu_id);
+    thread_t* main_th = user_thread_create(
+        (void(*)(void*))proc->code_base,
+        NULL,
+        (void*)proc->stack_top,
+        cpu_id
+    );
+
     if (!main_th) 
     {
         kprintf("[Process] Erro: Falha ao criar a thread principal.\n");
@@ -319,16 +385,10 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
     main_th->owner = proc;
     proc->main_thread = main_th;
 
-    /* 5. Injeta a tarefa na fila de prontos do Escalonador */
-    cpu_data_block_t* cpu = get_cpu_data_block(cpu_id); 
-    if (cpu != NULL) 
-        enqueue_thread(cpu, main_th);
-    else 
-        enqueue_thread(get_current_cpu(), main_th);
-
     kprintf("[Process] Processo %d [ELF64] pronto com %d argumento(s)! RSP: 0x%lx | RIP: 0x%lx\n", 
-            proc->pid, argc, proc->stack_top, proc->code_base);
+            proc->pid, proc->stack_top, proc->code_base);
 
+    process_list_insert(proc);
     return proc;
 }
 
@@ -340,50 +400,44 @@ void process_destroy(process_t* proc)
 {
     if (!proc) return;
 
-    kprintf("[Process] A destruir e libertar recursos do processo %d...\n", proc->pid);
+    kprintf("[Process] A destruir e libertar recursos do processo %d com janelas fixas...\n", proc->pid);
 
-    /* 
-     * 1. VARREDURA E LIMPEZA DA MMU (ESPAÇO DO UTILIZADOR)
-     * Percorre a metade inferior (índices 0 a 255) do PML4 do processo.
-     */
     if (proc->cr3 != 0) 
     {
-        /* Mapeia o PML4 do processo para inspeção na Janela Temporária */
-        PML4_TABLE* pml4 = (PML4_TABLE*)vmm_scratch_map(proc->cr3);
+        unsigned long pml4_phys = proc->cr3;
         
         for (int i = 0; i < 256; i++) 
         {
-            /* Se a entrada do PML4 estiver presente, aponta para uma PDPT */
+            /* GARANTIA JIT: Remapeia o PML4 na Janela 2 a cada ciclo para limpar resíduos de TLB */
+            PML4_TABLE* pml4 = (PML4_TABLE*)vmm_scratch_map_internal(pml4_phys, 2);
+
             if (pml4[i].p) 
             {
                 unsigned long pdpt_phys = (unsigned long)pml4[i].phy_addr_pdpt << 12;
                 
-                /* Mapeia a PDPT */
-                PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map(pdpt_phys);
-                
                 for (int j = 0; j < 512; j++) 
                 {
-                    /* Se presente e não for uma página gigante (1 GB) */
+                    /* BLINDAGEM: Restaura a integridade da Janela 3 antes de ler pdpt[j] */
+                    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys, 3);
+
                     if (pdpt[j].p && !pdpt[j].rs1) 
                     {
                         unsigned long pd_phys = (unsigned long)pdpt[j].phy_addr_pd << 12;
                         
-                        /* Mapeia o Diretorio de Páginas (PD) */
-                        PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map(pd_phys);
-                        
                         for (int k = 0; k < 512; k++) 
                         {
-                            /* Se presente e não for uma página de 2 MB (ps = 0) */
+                            /* Restaura a integridade da Janela 4 antes de ler pd[k] */
+                            PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys, 4);
+
                             if (pd[k].p && !pd[k].ps) 
                             {
                                 unsigned long pt_phys = (unsigned long)pd[k].phy_addr_pt << 12;
                                 
-                                /* Mapeia a Tabela de Páginas (PT) */
-                                PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map(pt_phys);
+                                /* Mapeia a PT na Janela 5 */
+                                PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys, 5);
                                 
                                 for (int l = 0; l < 512; l++) 
                                 {
-                                    /* Se a página de dados física de 4KB estiver mapeada, liberta-a */
                                     if (pt[l].p) 
                                     {
                                         unsigned long page_phys = (unsigned long)pt[l].frames << 12;
@@ -391,15 +445,11 @@ void process_destroy(process_t* proc)
                                     }
                                 }
                                 
-                                /* Liberta a própria PT física após limpar as suas páginas */
+                                /* Liberta a PT física após expurgar as páginas */
                                 pmm_free_page(pt_phys);
-                                
-                                /* Remapeia defensivamente o PD para continuar o laço local de forma estável */
-                                pd = (PAGE_DIRECTORY*)vmm_scratch_map(pd_phys);
                             }
                             else if (pd[k].p && pd[k].ps) 
                             {
-                                /* Caso tenha mapeado páginas diretas de 2MB, limpa o frame bruto */
                                 unsigned long mega_page_phys = (unsigned long)pd[k].phy_addr_pt << 12;
                                 pmm_free_page(mega_page_phys);
                             }
@@ -407,53 +457,69 @@ void process_destroy(process_t* proc)
                         
                         /* Liberta o PD físico */
                         pmm_free_page(pd_phys);
-                        
-                        /* Remapeia a PDPT para continuar o loop local */
-                        pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map(pdpt_phys);
                     }
                 }
                 
                 /* Liberta a PDPT física */
                 pmm_free_page(pdpt_phys);
-                
-                /* Remapeia o PML4 para continuar a varredura raiz */
-                pml4 = (PML4_TABLE*)vmm_scratch_map(proc->cr3);
             }
         }
         
-        /* 2. LIBERTAÇÃO DA RAÍZ DA MMU (O próprio PML4 do processo) */
-        pmm_free_page(proc->cr3);
+        /* Liberta a raíz PML4 */
+        pmm_free_page(pml4_phys);
     }
-
-    /* 
-     * 3. LIMPEZA DA ESTRUTURA E THREADS ASSOCIADAS
-     */
+    
+    /* 2. LIMPEZA DA ESTRUTURA E THREADS ASSOCIADAS */
     if (proc->main_thread != NULL) 
     {
         if (proc->main_thread->kernel_stack) 
         {
-            /* Recupera a base real do stack alocado (4KB) a partir do topo */
             void* stack_raw = (void*)((uint64_t)proc->main_thread->kernel_stack & ~0xFFFUL);
             kfree(stack_raw);
         }
-        // LIMPEZA DO VFS: Fecha todos os ficheiros que este processo deixou abertos para evitar memory leaks
+        
+        // LIMPEZA DO VFS: Fecho regulamentar baseado em Contagem de Referências
         for (int i = 0; i < MAX_FILES_PER_PROCESS; i++)
         {
             if (proc->file_descriptor_table[i] != NULL)
             {
-                vfs_close(proc->file_descriptor_table[i]->node);
-                kfree(proc->file_descriptor_table[i]);
+                /* 1. Decrementa a referência já que este processo está a largar o ficheiro */
+                proc->file_descriptor_table[i]->ref_count--;
+
+                /* 
+                 * 2. DECISÃO DE DESTRUIÇÃO:
+                 * O recurso só é destruído se mais NINGUÉM no sistema o estiver a usar.
+                 */
+                if (proc->file_descriptor_table[i]->ref_count == 0)
+                {
+                    kprintf("[VFS] A fechar recurso partilhado globalmente: %s\n", 
+                            proc->file_descriptor_table[i]->node->name);
+                    
+                    /* Fecha o nó no sistema de ficheiros virtual */
+                    vfs_close(proc->file_descriptor_table[i]->node);
+                    
+                    /* Liberta a estrutura do descritor de ficheiro da RAM */
+                    kfree(proc->file_descriptor_table[i]);
+                }
+                else 
+                {
+                    kprintf("[VFS] Ficheiro mantido ativo. Outros processos ainda o utilizam (ref_count: %d).\n", 
+                            proc->file_descriptor_table[i]->ref_count);
+                }
+
+                /* 3. Desvincula o ponteiro local deste processo morto por segurança */
                 proc->file_descriptor_table[i] = NULL;
             }
         }
 
         kfree(proc->main_thread);
+
     }
 
-    /* 4. Liberta o Bloco de Controlo do Processo (PCB) */
+    /* 3. Desalocação final do PCB */
     kfree(proc);
     
-    kprintf("[Process] Processo %d destruido com sucesso.\n", proc->pid);
+    kprintf("[Process] Processo %d destruido com sucesso total.\n", proc->pid);
 }
 
 /**

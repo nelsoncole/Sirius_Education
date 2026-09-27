@@ -85,6 +85,14 @@ void* vmm_scratch_map_internal(unsigned long phys_addr, int window);
  */
 unsigned long vmm_create_address_space(void);
 
+/**
+ * vmm_clone_address_space - Clona profundamente o espaço virtual de um processo pai.
+ * @parent_pml4_phys: O CR3 (endereço físico do PML4) do processo pai.
+ * 
+ * Retorna o endereço físico do novo PML4 (CR3) do processo filho com todos os dados copiados.
+ */
+unsigned long vmm_clone_address_space(unsigned long parent_pml4_phys);
+
 unsigned long vmm_get_physical_address(PML4_TABLE* pml4, unsigned long page_va);
 
 uintptr_t vmm_get_physical(uintptr_t virtual_address);

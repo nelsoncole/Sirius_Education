@@ -54,9 +54,16 @@ enum {
     SYS_GETPID,
     SYS_GETPPID,
 
+    /* Protótipos de Identidade e Privilégios (UID / GID) */
+    SYS_GETUID,
+    SYS_GETGID,
+    SYS_SETUID,
+    SYS_SETGID,
+
     /* Sincronização, Tempo e Sinais */
     SYS_WAITPID,
     SYS_SLEEP,
+    SYS_USLEEP,
     SYS_KILL,
     SYS_SIGACTION,
 

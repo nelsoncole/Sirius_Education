@@ -359,8 +359,8 @@ int net_driver_receive(const void* buffer, uint32_t packet_size)
 }
 
 extern int net_init_dhcp_client(void);
-void network_rx_thread(void)
-{
+void network_rx_thread(void* arg) {
+    (void)arg;
     kprintf("[NET CORE] Thread de processamento de pacotes (RX) ativa em Ring 0.\n");
 
     net_init_dhcp_client();

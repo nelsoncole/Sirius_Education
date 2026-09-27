@@ -71,7 +71,8 @@ void tty_flush_to_screen(struct tty_device *tty) {
  * tty_emulator_thread - Ponto de entrada da Thread de Kernel do Emulador.
  *                       Roda em segundo plano consumindo e isolando todas as TTYs.
  */
-void tty_emulator_thread() {
+void tty_emulator_thread(void* arg) {
+    (void)arg;
     char c;
 
     tty_ready = 1;

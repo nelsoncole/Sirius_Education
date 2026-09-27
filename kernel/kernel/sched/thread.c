@@ -22,11 +22,11 @@
 /* ID incremental estático para atribuição única de TIDs */
 static uint32_t g_next_tid = 1;
 
-static thread_t* thread_create_common(void (*entry_point)(void), void* user_stack_top, uint32_t cpu_id, uint64_t cs, uint64_t ss)
+static thread_t* thread_create_common(void (*entry_point)(void*), void* arg, void* user_stack_top, uint32_t cpu_id, uint64_t cs, uint64_t ss)
 {
     /* 1. Alocação de Memória */
     thread_t* thread = (thread_t*)kmalloc(sizeof(thread_t));
-    void* kernel_stack_raw = (void*)kmalloc(4096); /* Pilha de kernel obrigatória para as ISF */
+    void* kernel_stack_raw = (void*)kmalloc(8192); /* Pilha de kernel obrigatória para as ISF */
 
     if (!thread || !kernel_stack_raw) 
     {
@@ -39,7 +39,7 @@ static thread_t* thread_create_common(void (*entry_point)(void), void* user_stac
     memset(thread, 0, sizeof(thread_t));
 
     /* O topo absoluto da pilha limpa (Será usado pelo Syscall e TSS) */
-    uint64_t absolute_top = (uint64_t)kernel_stack_raw + 4096;
+    uint64_t absolute_top = (uint64_t)kernel_stack_raw + 8192;
 
     /* 2. Moldamos o frame para o Escalonador */
     uint64_t stack_top = absolute_top - sizeof(stack_frame_t);
@@ -50,6 +50,7 @@ static thread_t* thread_create_common(void (*entry_point)(void), void* user_stac
 
     /* 3. Forja o contexto de privilégios para Ring 3 (User Mode) */
     frame->rip        = (uint64_t)entry_point;
+    frame->rdi        = (uint64_t)arg; // O primeiro argumento em x86_64 vai sempre em RDI
     frame->cs         = cs;   /* Seletor de Código de Utilizador (Ring 3) */
     frame->rflags     = 0x202;  /* Mantém interrupções ativas no espaço do utilizador */
     frame->int_no     = 32;     /* Simula a origem vinda de interrupção externa */
@@ -72,22 +73,26 @@ static thread_t* thread_create_common(void (*entry_point)(void), void* user_stac
 
     thread->next         = NULL;
 
-    /* Envia a thread do utilizador para o processador responsável */
-    cpu_data_block_t* target_cpu = get_cpu_data_block(cpu_id);
-    enqueue_thread(target_cpu, thread);
-
     return thread;
 }
 
 /**
  * Cria e configura uma nova thread de Kernel, forjando o seu stack inicial.
  */
-thread_t* thread_create(void (*entry_point)(void), uint32_t cpu_id)
+thread_t* thread_create(void (*entry_point)(void*), void* arg, uint32_t cpu_id)
 {
-    thread_t* thread = thread_create_common(entry_point, NULL, cpu_id, 0x8, 0x10);
+    thread_t* thread = thread_create_common(entry_point, arg, NULL, cpu_id, 0x8, 0x10);
     if (!thread) 
     {
         return NULL;
+    }
+
+    /* Envia a thread do utilizador para o processador responsável */
+    cpu_data_block_t* target_cpu = get_cpu_data_block(cpu_id);
+    if (target_cpu != NULL) {
+        enqueue_thread(target_cpu, thread);
+    } else {
+        enqueue_thread(get_current_cpu(), thread);
     }
 
     return thread;
@@ -96,9 +101,9 @@ thread_t* thread_create(void (*entry_point)(void), uint32_t cpu_id)
 /**
  * Cria e configura uma nova thread de Utilizador (Ring 3), com contexto e isolamento adequados.
  */
-thread_t* user_thread_create(void (*entry_point)(void), void* user_stack_top, uint32_t cpu_id)
+thread_t* user_thread_create(void (*entry_point)(void*), void* arg, void* user_stack_top, uint32_t cpu_id)
 {
-    thread_t* thread = thread_create_common(entry_point, user_stack_top, cpu_id, 0x2B, 0x23);
+    thread_t* thread = thread_create_common(entry_point, arg, user_stack_top, cpu_id, 0x2B, 0x23);
     if (!thread) 
     {
         return NULL;

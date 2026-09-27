@@ -47,8 +47,8 @@ static const char g_kbd_us_shift_keymap[128] = {
  * tty_keyboard_bridge_thread - Thread de Kernel responsável por bombear as teclas para o TTY.
  *                              Captura e intercepta F1-F6 para chaveamento dinâmico.
  */
-void tty_keyboard_bridge_thread()
-{
+void tty_keyboard_bridge_thread(void* arg) {
+    (void)arg;
 
     while (1)
     {

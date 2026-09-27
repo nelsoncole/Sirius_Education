@@ -9,7 +9,7 @@
  *   Created Date: 30/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 30/08/2026
+ *  Modified Date: 27/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -340,7 +340,7 @@ unsigned long vmm_create_address_space(void)
      * 2. Mapeia a nova página PML4 alocada na Janela Temporária 
      * substituindo o mapeamento antigo.
      */
-    unsigned long long* new_pml4_raw = (unsigned long long*)vmm_scratch_map_internal(new_pml4_phys, 0);
+    unsigned long long* new_pml4_raw = (unsigned long long*)vmm_scratch_map_internal(new_pml4_phys, 1);
 
     /* 3. Limpa a metade inferior (Índices 0 a 255 -> Espaço do Utilizador) */
     for (int i = 0; i < 256; i++) 
@@ -357,6 +357,127 @@ unsigned long vmm_create_address_space(void)
     /* Retorna o endereço físico perfeitamente alinhado a 4KB */
     return (new_pml4_phys & ~0xFFFUL);
 }
+
+/**
+ * vmm_clone_address_space - Clona profundamente o espaço virtual de um processo pai.
+ * @parent_pml4_phys: O CR3 (endereço físico do PML4) do processo pai.
+ */
+unsigned long vmm_clone_address_space(unsigned long parent_pml4_phys)
+{
+    /* 1. REAPROVEITAMENTO ARQUITETURAL: Base limpa com a metade do Kernel mapeada */
+    unsigned long child_pml4_phys = vmm_create_address_space(); 
+    if (!child_pml4_phys) return 0;
+
+    /* Variáveis puras de endereços físicos para proteção absoluta do Stack de 4KB */
+    unsigned long parent_pdpt_phys, child_pdpt_phys;
+    unsigned long parent_pd_phys,   child_pd_phys;
+    unsigned long parent_pt_phys,   child_pt_phys;
+    unsigned long parent_page_phys, child_page_phys;
+
+    /* Ponteiros de tabelas fixos por nível para evitar remapeamentos redundantes */
+    unsigned long long* pml4_parent = (unsigned long long*)vmm_scratch_map_internal(parent_pml4_phys, 0);
+    unsigned long long* pml4_child  = (unsigned long long*)vmm_scratch_map_internal(child_pml4_phys, 1);
+    unsigned long long* pdpt_parent = NULL;
+    unsigned long long* pdpt_child  = NULL;
+    unsigned long long* pd_parent   = NULL;
+    unsigned long long* pd_child    = NULL;
+    unsigned long long* pt_parent   = NULL;
+    unsigned long long* pt_child    = NULL;
+
+    unsigned long long flags_backup = 0;
+
+    /* 2. Clona estritamente as seções alocadas na Metade do Utilizador (Índices 0 a 255) */
+    for (int i = 0; i < 256; i++) 
+    {
+        /* Inspeciona a entrada 'i' do PML4 do Pai (Janela 0 está intacta) */
+        if (!(pml4_parent[i] & 0x1)) continue;
+
+        /* Salva o endereço e as flags originais do Pai deste nível */
+        parent_pdpt_phys = pml4_parent[i] & ~0xFFFUL;
+        flags_backup     = pml4_parent[i] & 0xFFF;
+        
+        child_pdpt_phys  = pmm_alloc_page();
+        if (!child_pdpt_phys) return 0;
+
+        /* Mapeia e limpa a nova PDPT física do Filho na Janela 3 para remover lixo */
+        pdpt_child = (unsigned long long*)vmm_scratch_map_internal(child_pdpt_phys, 3);
+        memset(pdpt_child, 0, 4096);
+
+        /* Regista a nova PDPT limpa no PML4 do Filho (Janela 1 está intacta) */
+        pml4_child[i] = child_pdpt_phys | flags_backup;
+
+        /* Mapeia a PDPT do Pai na Janela 2 (Apenas uma vez por iteração do nível i) */
+        pdpt_parent = (unsigned long long*)vmm_scratch_map_internal(parent_pdpt_phys, 2);
+
+        for (int j = 0; j < 512; j++)
+        {
+            /* Inspeciona a entrada 'j' da PDPT do Pai (Janela 2 está intacta) */
+            if (!(pdpt_parent[j] & 0x1)) continue;
+
+            parent_pd_phys = pdpt_parent[j] & ~0xFFFUL;
+            flags_backup   = pdpt_parent[j] & 0xFFF;
+            
+            child_pd_phys  = pmm_alloc_page();
+            if (!child_pd_phys) return 0;
+
+            /* Mapeia e limpa o novo PD físico do Filho na Janela 5 */
+            pd_child = (unsigned long long*)vmm_scratch_map_internal(child_pd_phys, 5);
+            memset(pd_child, 0, 4096);
+
+            /* Regista o PD limpo na PDPT do Filho (Janela 3 está intacta) */
+            pdpt_child[j] = child_pd_phys | flags_backup; 
+
+            /* Mapeia o PD do Pai na Janela 4 (Apenas uma vez por iteração do nível j) */
+            pd_parent = (unsigned long long*)vmm_scratch_map_internal(parent_pd_phys, 4);
+
+            for (int k = 0; k < 512; k++)
+            {
+                /* Inspeciona a entrada 'k' do PD do Pai (Janela 4 está intacta) */
+                if (!(pd_parent[k] & 0x1)) continue;
+
+                parent_pt_phys = pd_parent[k] & ~0xFFFUL;
+                flags_backup   = pd_parent[k] & 0xFFF;
+                
+                child_pt_phys  = pmm_alloc_page();
+                if (!child_pt_phys) return 0;
+
+                /* Mapeia e limpa a nova PT física do Filho na Janela 7 */
+                pt_child = (unsigned long long*)vmm_scratch_map_internal(child_pt_phys, 7);
+                memset(pt_child, 0, 4096);
+
+                /* Regista a PT limpa no PD do Filho (Janela 5 está intacta) */
+                pd_child[k] = child_pt_phys | flags_backup;
+
+                /* Mapeia a PT do Pai na Janela 6 (Apenas uma vez por iteração do nível k) */
+                pt_parent = (unsigned long long*)vmm_scratch_map_internal(parent_pt_phys, 6);
+
+                for (int m = 0; m < 512; m++)
+                {
+                    /* Inspeciona a entrada 'm' da PT do Pai (Janela 6 está intacta) */
+                    if (!(pt_parent[m] & 0x1)) continue;
+
+                    parent_page_phys = pt_parent[m] & ~0xFFFUL;
+                    flags_backup     = pt_parent[m] & 0xFFF;
+                    
+                    child_page_phys  = pmm_alloc_page();
+                    if (!child_page_phys) return 0;
+
+                    /* Grava o mapeamento final na PT do Filho (Janela 7 está intacta) */
+                    pt_child[m] = child_page_phys | flags_backup;
+
+                    /* Janelas 8 e 9: CÓPIA REAL DE DADOS (Isolamento total e atómico) */
+                    void* src_data  = (void*)vmm_scratch_map_internal(parent_page_phys, 8);
+                    void* dest_data = (void*)vmm_scratch_map_internal(child_page_phys, 9);
+                    
+                    memcpy(dest_data, src_data, 4096); 
+                }
+            }
+        }
+    }
+
+    return child_pml4_phys;
+}
+
 
 /*
  * TRADUÇÃO DE ENDEREÇO VIRTUAL PARA FÍSICO (VMM GET PHYSICAL ADDRESS)

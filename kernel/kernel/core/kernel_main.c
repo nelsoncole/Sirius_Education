@@ -48,9 +48,9 @@
 #include <kernel/kmods/kmod.h>
 #include <kernel/kernel/net/net.h>
 
-extern void test(void);
-extern void tty_emulator_thread(void);
-extern void tty_keyboard_bridge_thread();
+extern void test(void* arg);
+extern void tty_emulator_thread(void* arg);
+extern void tty_keyboard_bridge_thread(void* arg);
 
 /*
  * IMPORTANTE: Declara o rótulo do Assembly como um símbolo externo.
@@ -333,9 +333,9 @@ void kernel_main(BOOT_INFO *boot_info)
      * 1. A do Emulador (que consome o tty_pop_output e faz kprintf)
      * 2. A do Teclado (que consome o scancode bruto, traduz e injeta na TTY)
      */
-    thread_create(tty_emulator_thread, 1);
-    thread_create(tty_keyboard_bridge_thread, 0);
-    thread_create(network_rx_thread, 0);
+    thread_create(tty_emulator_thread,NULL, 1);
+    thread_create(tty_keyboard_bridge_thread, NULL, 0);
+    thread_create(network_rx_thread, NULL, 0);
 
     // thread_create(test, 0);
     /*

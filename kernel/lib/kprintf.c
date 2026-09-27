@@ -21,6 +21,7 @@
 #include <kernel/kernel/core/spinlock.h>
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/fs/dev/vfs_tty.h>
+#include <kernel/drivers/tty/tty.h>
 
 extern void kernel_putchar(char c);
 static spinlock_t kprintf_spinlock = {0};
@@ -394,6 +395,8 @@ int ksprintf(char *buf, const char *format, ...)
 //-----------------------------------------------------------------------------
 // IMPLEMENTAÇÃO DE KPRINTF (Utiliza o Core e envia para a TTY)
 //-----------------------------------------------------------------------------
+/* A Replica ESCREVE (Ex: printf do Bash) direcionando síncronamente para a tty0 */
+extern void tty_putc_backbuffer_X(struct tty_device *tty, char c);
 void kprintf(const char *format, ...)
 {
     if (bootverbose)
@@ -411,11 +414,19 @@ void kprintf(const char *format, ...)
     // Envia o bloco formatado da memória direto para o hardware de saída
     if (tty_ready != 0)
     {
-        vfs_node_t *tty0_node = tty_vfs_get_node_by_index(1);
+        vfs_node_t* tty0_node = tty_vfs_get_node_by_name("tty1");
         if (tty0_node)
         {
-            vfs_write(tty0_node, 0, len, write_buf); 
+            struct tty_device* tty0_device = (struct tty_device*)tty0_node->private_data;
+            const char* src = (const char*)write_buf;
+            for (int i = 0; i < len; i++)
+            {
+                tty_putc_backbuffer_X(tty0_device, src[i]);
+            }
+
+            __sync_lock_test_and_set(&tty0_device->refresh_needed, 1);
         }
+
     }
     else
     {

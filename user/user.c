@@ -3,9 +3,8 @@
  *        Project: Sirius_Education
  *       Filename: user.c
  *    Description: Shell Interpretador de Comandos Avançado (Ring 3 REPL).
- *                 Suporta navegação (cd), criação de pastas (mkdir),
- *                 ficheiros (touch) em caminhos do VFS e do disco hd0.
- *                 Execução 100% síncrona baseada puramente em Built-ins.
+ *                 Suporta comandos Built-ins e carregamento de programas
+ *                 externos concorrentes usando fork() e waitpid().
  * 
  *         Author: Nelson Cole
  *   Created Date: 25/09/2026
@@ -18,8 +17,10 @@
 #include <string.h>
 #include <fcntl.h>
 #include <sys/usyscall.h>
+#include <sys/wait.h>
 
 #define MAX_ARGS 16
+#define MAX_LINE 256
 
 struct sys_dirent
 {
@@ -48,16 +49,9 @@ static void trim_newline(char *str)
  */
 static void print_vfs_tree(void)
 {
-    // Abre a raiz literal para obter um File Descriptor válido no processo
     int fd = open("/", O_RDONLY);
     if (fd >= 0)
     {
-        /* 
-         * Dispara o IOCTL passando o código mágico 0x1001.
-         * O argumento "/" diz ao teu vfs_print_tree() onde iniciar a varredura.
-         * Como a tua sys_ioctl executa o kprintf() diretamente na tty0 ativa,
-         * o desenho da árvore vai saltar no ecrã de forma síncrona!
-         */
         syscall3(SYS_IOCTL, (uint64_t)fd, 0x1001, (uint64_t)"/");
         close(fd);
     }
@@ -69,6 +63,7 @@ static void print_vfs_tree(void)
 
 /**
  * @brief Executa os comandos internos embutidos na Shell (Built-ins).
+ * @return 1 se o comando for um built-in processado, 0 caso contrário.
  */
 static int execute_builtin(int argc, char *argv[])
 {
@@ -76,7 +71,7 @@ static int execute_builtin(int argc, char *argv[])
 
     if (strcmp(argv[0], "help") == 0)
     {
-        printf("--- SiriusOS Shell Avançada v1.3 ---\n");
+        printf("--- SiriusOS Shell Avançada v1.4 ---\n");
         printf("Comandos suportados nativamente:\n");
         printf("  help     - Exibe este menu de ajuda.\n");
         printf("  ls / dir - Lista os ficheiros da diretoria atual.\n");
@@ -107,7 +102,6 @@ static int execute_builtin(int argc, char *argv[])
         return 1;
     }
 
-    /* COMANDO CD (Navegação de Diretoria) */
     if (strcmp(argv[0], "cd") == 0)
     {
         if (argc < 2 || argv[1] == NULL)
@@ -124,7 +118,6 @@ static int execute_builtin(int argc, char *argv[])
         return 1;
     }
 
-    /* COMANDO MKDIR (Criação de Pastas) */
     if (strcmp(argv[0], "mkdir") == 0)
     {
         if (argc < 2 || argv[1] == NULL)
@@ -133,16 +126,10 @@ static int execute_builtin(int argc, char *argv[])
             return 1;
         }
 
-         char caminho_completo[256];
-        
-        // Se o utilizador já digitou o caminho absoluto completo, preserva-o.
-        // Caso contrário, força o roteamento dinâmico para a diretoria do disco hd0.
-        if (argv[1][0] == '/')
-        {
+        char caminho_completo[256];
+        if (argv[1][0] == '/') {
             sprintf(caminho_completo, "%s", argv[1]);
-        }
-        else
-        {
+        } else {
             sprintf(caminho_completo, "/mnt/hd0/%s", argv[1]);
         }
 
@@ -154,7 +141,6 @@ static int execute_builtin(int argc, char *argv[])
         return 1;
     }
 
-    /* COMANDO TOUCH (Criação de Arquivos em /mnt/hd0/) */
     if (strcmp(argv[0], "touch") == 0)
     {
         if (argc < 2 || argv[1] == NULL)
@@ -164,32 +150,21 @@ static int execute_builtin(int argc, char *argv[])
         }
 
         char caminho_completo[256];
-        
-        // Se o utilizador já digitou o caminho absoluto completo, preserva-o.
-        // Caso contrário, força o roteamento dinâmico para a diretoria do disco hd0.
-        if (argv[1][0] == '/')
-        {
+        if (argv[1][0] == '/') {
             sprintf(caminho_completo, "%s", argv[1]);
-        }
-        else
-        {
+        } else {
             sprintf(caminho_completo, "/mnt/hd0/%s", argv[1]);
         }
 
-        // Utiliza o open() regulamentar POSIX da tua LibC com suporte a O_CREAT
         int fd = open(caminho_completo, O_CREAT | O_RDWR);
-        if (fd >= 0)
-        {
+        if (fd >= 0) {
             close(fd); 
-        }
-        else
-        {
+        } else {
             printf("SiriusOS: touch: falha ao criar o ficheiro '%s'\n", caminho_completo);
         }
         return 1;
     }
 
-    /* COMANDO RENAME (Renomear / Mover ficheiros ou pastas) */
     if (strcmp(argv[0], "rename") == 0)
     {
         if (argc < 3 || argv[1] == NULL || argv[2] == NULL)
@@ -201,174 +176,147 @@ static int execute_builtin(int argc, char *argv[])
         char caminho_antigo[256];
         char caminho_novo[256];
 
-        // 1. Roteamento Inteligente do caminho de Origem
-        if (argv[1][0] == '/')
-        {
-            sprintf(caminho_antigo, "%s", argv[1]);
-        }
-        else
-        {
-            sprintf(caminho_antigo, "/mnt/hd0/%s", argv[1]);
-        }
+        if (argv[1][0] == '/') sprintf(caminho_antigo, "%s", argv[1]);
+        else sprintf(caminho_antigo, "/mnt/hd0/%s", argv[1]);
 
-        // 2. Roteamento Inteligente do caminho de Destino
-        if (argv[2][0] == '/')
-        {
-            sprintf(caminho_novo, "%s", argv[2]);
-        }
-        else
-        {
-            sprintf(caminho_novo, "/mnt/hd0/%s", argv[2]);
-        }
+        if (argv[2][0] == '/') sprintf(caminho_novo, "%s", argv[2]);
+        else sprintf(caminho_novo, "/mnt/hd0/%s", argv[2]);
 
-        // 3. Invoca a chamada de sistema SYS_RENAME mapeada na tua usyscall.h
         int ret = (int)syscall2(SYS_RENAME, (uint64_t)caminho_antigo, (uint64_t)caminho_novo);
-        if (ret < 0)
-        {
+        if (ret < 0) {
             printf("SiriusOS: rename: falha ao renomear de '%s' para '%s' (Erro: %d)\n", argv[1], argv[2], ret);
-        }
-        else
-        {
+        } else {
             printf("SiriusOS: '%s' renomeado para '%s' com sucesso.\n", argv[1], argv[2]);
         }
         return 1;
     }
 
-    /* COMANDO VFSTREE (Árvore do VFS Real) */
     if (strcmp(argv[0], "vfstree") == 0)
     {
         print_vfs_tree();
-        
         return 1;
     }
 
-    /* COMANDO LS / DIR */
     if (strcmp(argv[0], "ls") == 0 || strcmp(argv[0], "dir") == 0)
     {
-        
-        // 1. Abre a diretoria pretendida
         int fd = open("/mnt/hd0/", O_RDONLY);
         if (fd >= 0)
         {
-            // 2. Aloca um buffer generoso (ex: 1024 bytes) para ler várias entradas de uma só vez
             size_t buf_size = 1024;
             struct sys_dirent *dirp = (struct sys_dirent *)malloc(buf_size);
             if (dirp != NULL)
             {
-                // Limpa a memória alocada antes de usar
                 memset(dirp, 0, buf_size);
-
-                // 3. Invoca a chamada de sistema passando: fd, ponteiro do buffer e tamanho total
-                // Nota: Ajustei para syscall3 porque precisas de passar 3 argumentos (fd, buffer, tamanho)
-                int bytes = (int)syscall3(SYS_GETDENTS, (uint64_t)fd, (uint64_t)dirp, (uint64_t)buf_size);
                 
-                if (bytes > 0)
+                // Invoca a listagem do VFS (Substitua por getdents se implementado)
+                int nread = (int)syscall3(SYS_GETDENTS, (uint64_t)fd, (uint64_t)dirp, buf_size);
+                if (nread > 0) 
                 {
-                    int bpos = 0;
-                    uint8_t *buffer_ptr = (uint8_t *)dirp;
-
-                    // 4. Ciclo iterativo para ler as estruturas em memória
-                    while (bpos < bytes)
+                    struct sys_dirent *d = dirp;
+                    while ((uint64_t)d < (uint64_t)dirp + nread) 
                     {
-                        struct sys_dirent *d = (struct sys_dirent *)(buffer_ptr + bpos);
-                        
-                        // Imprime o nome do ficheiro ou pasta
-                        printf("%s", d->d_name);
-
-                        // Se for um diretório (DT_DIR = 4), adiciona uma barra decorativa '/'
-                        if (d->d_type == 4)
-                        {
-                            printf("/");
-                        }
-
-                        printf("  "); // Espaçamento entre os elementos listados
-                        
-                        // Avança o ponteiro exatamente o número de bytes que esta entrada ocupa (alinhado por 8-bytes)
-                        bpos += d->d_reclen;
+                        printf("%s  ", d->d_name);
+                        d = (struct sys_dirent *)((char *)d + d->d_reclen);
                     }
                     printf("\n");
                 }
-                else if (bytes == 0)
-                {
-                    printf("(Diretório vazio)\n");
-                }
-                else
-                {
-                    printf("Erro ao ler diretório (Código: %d)\n", bytes);
-                }
-
-                // Liberta sempre a memória alocada dinamicamente
                 free(dirp);
             }
-            else
-            {
-                printf("Erro: Memória insuficiente para executar o ls.\n");
-            }
-
             close(fd);
-            return 1;
         }
-
+        else {
+            printf("SiriusOS: ls: nao foi possivel abrir a diretoria\n");
+        }
         return 1;
     }
 
-    /* COMANDO EXIT */
     if (strcmp(argv[0], "exit") == 0)
     {
-        printf("[SHELL] A terminar sessao do utilizador. Adeus!\n");
-        exit(0); 
-        return 1;
+        printf("SiriusOS: A encerrar sessao da Shell. Adeus!\n");
+        _exit(0);
     }
 
-    return 0; // Comando desconhecido
+    return 0; // Não é um comando interno
 }
 
-/**
- * Ponto de entrada oficial da Shell em Ring 3.
- */
-int main(int argc, char* argv[]) 
+int main(int argc, char *argv[])
 {
     (void)argc;
     (void)argv;
 
-    char input_buffer[256];
-    char *cmd_args[MAX_ARGS];
+    char linha[MAX_LINE];
+    char *args[MAX_ARGS];
 
-    //printf("\033[2J\033[H"); 
-    printf("==================================================\n");
-    printf("        Bem-vindo ao Sirius_Education OS          \n");
-    printf("    Modo Ring 3 e Pseudo-Terminais Ativos         \n");
-    printf("==================================================\n\n");
+    printf("\033[2J\033[H"); // Limpa o ecrã no arranque
+    printf("========================================================\n");
+    printf("         SIRIUS OS - Interpretador Nativo REPL          \n");
+    printf("========================================================\n\n");
 
-    while (1) 
+    while (1)
     {
-        char cwd_buf[128] = "/";
-        printf("SiriusOS:%s> ", cwd_buf);
+        printf("sirius@user:~$ ");
+        fflush(stdout);
 
-        ssize_t bytes_lidos = read(STDIN_FILENO, input_buffer, sizeof(input_buffer) - 1);
-        
-        if (bytes_lidos <= 0) continue;
+        /* 1. Captura a linha digitada pelo utilizador */
+        if (fgets(linha, sizeof(linha), stdin) == NULL) {
+            break; 
+        }
 
-        input_buffer[bytes_lidos] = '\0';
-        trim_newline(input_buffer);
+        trim_newline(linha);
+        if (strlen(linha) == 0) continue;
 
-        if (strlen(input_buffer) == 0) continue;
-
-        /* TOKENIZADOR */
-        int arg_count = 0;
-        char *token = strtok(input_buffer, " ");
-        
-        while (token != NULL && arg_count < MAX_ARGS - 1)
+        /* 2. Tokenizador: Divide a string por espaços em argumentos */
+        int cmd_argc = 0;
+        char *token = strtok(linha, " ");
+        while (token != NULL && cmd_argc < (MAX_ARGS - 1))
         {
-            cmd_args[arg_count++] = token;
+            args[cmd_argc++] = token;
             token = strtok(NULL, " ");
         }
-        cmd_args[arg_count] = NULL; 
+        args[cmd_argc] = NULL; // O vetor de argumentos POSIX deve terminar em NULL
 
-        if (execute_builtin(arg_count, cmd_args)) continue;
+        if (cmd_argc == 0) continue;
 
-        printf("SiriusOS: Comando integrado desconhecido: '%s'\n", cmd_args[0]);
+        /* 3. Tenta processar como um comando Built-in interno */
+        if (execute_builtin(cmd_argc, args)) {
+            continue; 
+        }
+
+        /* 
+         * ============================================================================
+         * 4. MOTOR CONCORRENTE: MÁGICA DO FORK PARA COMANDOS EXTERNOS
+         * ============================================================================
+         * Se não for um comando interno, a Shell duplica o seu próprio processo
+         * para carregar o programa de forma isolada na RAM!
+         */
+        pid_t pid = fork();
+
+        if (pid < 0)
+        {
+            printf("SiriusOS: Shell: Falha critica ao disparar fork().\n");
+        }
+        else if (pid == 0)
+        {
+            /* CONTEXTO DO PROCESSO FILHO */
+            // Aqui, no futuro, invocará o seu execve(args[0], args, environ);
+            // Por agora, avisamos que o binário externo do VFS será carregado
+            printf("SiriusOS: a tentar executar programa externo '%s' via VFS...\n", args[0]);
+            
+            // Simula um retorno padrão de erro caso o binário ainda não exista no VFS
+            printf("SiriusOS: '%s': comando ou binario nao encontrado.\n", args[0]);
+            _exit(127); 
+        }
+        else
+        {
+            /* CONTEXTO DO PROCESSO PAI (A SHELL) */
+            int status = 0;
+
+            /*
+             * A Shell bloqueia e cede o processador atonicamente via sys_waitpid,
+             * aguardando que o comando externo conclua antes de libertar o prompt.
+             */
+            waitpid(pid, &status, 0);
+        }
     }
-    
-    return 0; 
+    return 0;
 }

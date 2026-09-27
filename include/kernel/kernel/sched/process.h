@@ -24,6 +24,7 @@
 #include "scheduler.h"
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/fs/dev/vfs_tty.h>
+#include <kernel/sys/types.h>
 
 #define MAX_SHARED_REGIONS 8
 #define MAX_SIGNALS        32
@@ -46,6 +47,10 @@ typedef struct process {
     pid_t pid;                      /* Identificador único do processo (PID) */
     pid_t ppid;                     /* ID do processo pai (Parent PID) */
     process_state_t state;          /* Estado de execução atual do processo */
+    
+    uid_t    uid;                   /* User ID do processo (Ex: 0 para Root/Kernel) */
+    gid_t    gid;                   /* Group ID do processo */
+    
     uint64_t cr3;                   /* Endereço físico do PML4 (Espaço de Memória) */
     
     /* Controlo e Limites do Espaço de Endereçamento do Aplicativo */
@@ -61,14 +66,12 @@ typedef struct process {
      /*
      * TABELA DE FDs (Para Sockets, Pipes e Ficheiros Virtuais) 
      * Mapeia os índices numéricos Ring 3 (0, 1, 2) para sessões ativas do VFS.
+     * Ex: fd = 0 (stdin), fd = 1 (stdout), fd = 2 (stderr), fd = 3 (Socket/Ficheiro)
      */
     vfs_file_t* file_descriptor_table[MAX_FILES_PER_PROCESS];
 
-    /*
-     * TABELA DE FDs (Para Sockets, Pipes e Ficheiros) 
-     * Ex: fd = 0 (stdin), fd = 1 (stdout), fd = 2 (stderr), fd = 3 (Socket/Ficheiro)
-     */
-    // struct file* file_descriptor_table[MAX_FILES_PER_PROCESS];
+
+    int exit_code;             // Guarda o status enviado pelo filho no sys_exit
 
     /* IPC: MEMÓRIA PARTILHADA */
     void* shm_virtual_addresses[MAX_SHARED_REGIONS];
@@ -78,7 +81,11 @@ typedef struct process {
     uint32_t pending_signals;
     void* signal_handlers[MAX_SIGNALS];
 
+    struct process* next;
+
 } process_t;
+
+extern process_t* g_process_list_head;
 
 /**
  * process_init_standard_io - Inicializa os canais padrão (0, 1, 2) de um processo.
@@ -110,5 +117,10 @@ void process_destroy(process_t* proc);
  *                       Garante isolamento atómico por hardware em ambiente SMP.
  */
 process_t* get_current_process(void);
+
+void process_list_spinlock_release(void);
+void process_list_spinlock_acquire(void);
+void process_list_insert(process_t* proc);
+void process_list_remove(process_t* proc);
 
 #endif /* PROCESS_H */

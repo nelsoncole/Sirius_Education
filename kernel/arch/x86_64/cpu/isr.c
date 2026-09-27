@@ -165,8 +165,7 @@ void* interrupt_handler_c(registers_t *regs)
         kprintf("========================================================================\n");
         kprintf("Kernel em estado de panico controlado. Sistema suspenso.\n");
 
-        // Verifica se o processo é do Ring3
-        if ((regs->cs & 3) == 3)
+        if (active_pid > 0)
         {
              kprintf("\n[Process Crash] PID %u causou %s fatal no RIP: %p (RSP: %p)\n", 
                     get_current_cpu()->current_thread->owner->pid, exception_messages[regs->int_no], (void*)regs->rip, (void*)regs->rsp);

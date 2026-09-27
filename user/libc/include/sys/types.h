@@ -15,14 +15,6 @@
 #ifndef _TYPES_H_
 #define _TYPES_H_
 
-#include <stdint.h>
-
-/* 
- * ============================================================================
- * ABSTRAÇÕES ESPECÍFICAS DO SUBSISTEMA POSIX (Processos e Arquivos)
- * ============================================================================
- */
-
 typedef int                pid_t;    /* Identificador de Processo (Process ID) */
 typedef int                id_t;     /* Identificador genérico de ID */
 

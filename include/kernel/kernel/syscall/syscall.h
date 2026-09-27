@@ -22,6 +22,7 @@
 #include <kernel/lib/stdint.h>
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/fs/vfs/sys_dirent.h>
+#include <kernel/sys/types.h>
 
 /*
  * CONFIGURAÇÃO DOS NÚMEROS DE CHAMADA DE SISTEMA (SYSCALL NUMBERS)
@@ -59,9 +60,16 @@ enum {
     SYS_GETPID,
     SYS_GETPPID,
 
+    /* Protótipos de Identidade e Privilégios (UID / GID) */
+    SYS_GETUID,
+    SYS_GETGID,
+    SYS_SETUID,
+    SYS_SETGID,
+
     /* Sincronização, Tempo e Sinais */
     SYS_WAITPID,
     SYS_SLEEP,
+    SYS_USLEEP,
     SYS_KILL,
     SYS_SIGACTION,
 
@@ -153,6 +161,7 @@ uint64_t sys_getpid(void);
 uint64_t sys_getppid(void);
 uint64_t sys_waitpid(int32_t pid, int *wstatus, int options);
 uint64_t sys_sleep(unsigned int seconds);
+uint64_t sys_usleep(unsigned int usec);
 uint64_t sys_kill(int32_t pid, int sig);
 uint64_t sys_sigaction(int signum, const void *act, void *oldact);
 uint64_t sys_socket(int domain, int type, int protocol);
@@ -167,6 +176,12 @@ uint64_t sys_recvfrom(int sockfd, void* buf, size_t len, int flags, void* src_ad
 uint64_t sys_shutdown(int sockfd, int how);
 uint64_t sys_setsockopt(int sockfd, int level, int optname, const void *optval, uint32_t optlen);
 uint64_t sys_getsockopt(int sockfd, int level, int optname, void *optval, uint32_t *optlen);
+
+/* Protótipos de Identificação de Privilégios (UID / GID) */
+uint64_t sys_getuid(void);
+uint64_t sys_getgid(void);
+uint64_t sys_setuid(uid_t uid);
+uint64_t sys_setgid(gid_t gid);
 
 /* Operações de Módulos */
 uint64_t sys_kmod_load(const uint8_t *user_buffer, size_t size);

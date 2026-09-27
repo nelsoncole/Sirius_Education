@@ -185,7 +185,7 @@ static inline char* inet_ntoa(uint32_t ip_addr)
 int net_driver_register(const uint8_t *mac_addr, void* ops_table);
 int net_driver_transmit(const void* buffer, uint32_t packet_size);
 int net_driver_receive(const void* buffer, uint32_t packet_size);
-void network_rx_thread(void);
+void network_rx_thread(void* arg);
 void net_init(void);
 int net_get_interface_mac(uint32_t interface_id, uint8_t* mac_out);
 int net_set_interface_ip(uint32_t ip);

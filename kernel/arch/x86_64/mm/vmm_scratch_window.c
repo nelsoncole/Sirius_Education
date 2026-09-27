@@ -49,13 +49,13 @@ void vmm_scratch_setup(void) {
     // O cast para (uintptr_t) garante a aritmética correta por bytes antes de converter para ponteiro
     g_window_pt = (PAGE_TABLE *)((uintptr_t)PT_KERNEL_ADDRESS + (pt_number * PAGE_SIZE));
 
-    // 4. Limpeza cirúrgica de segurança dos nossos 3 slots específicos para evitar lixo
+    // 4. Limpeza cirúrgica de segurança dos nossos 11 slots específicos para evitar lixo
     unsigned long base_pt_idx = GET_PT_INDEX(VMM_SCRATCH_WINDOW); // Índice 496
     unsigned long long *raw_pt = (unsigned long long *)g_window_pt;
     
-    raw_pt[base_pt_idx]     = 0; // Slot 496
-    raw_pt[base_pt_idx + 1] = 0; // Slot 497
-    raw_pt[base_pt_idx + 2] = 0; // Slot 498
+    for (int i = 0; i <= 10; i++) {
+        raw_pt[base_pt_idx + i] = 0ULL;
+    }
 }
 
 /*
@@ -78,15 +78,33 @@ void* vmm_scratch_map(unsigned long phys_addr) {
 }
 
 /*
+ * ============================================================================
  * OPERAÇÃO VOLÁTIL EXCLUSIVA INTERNA (SCRATCH MAP INTERNAL)
- * ------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
+ * Mapeia dinamicamente uma página física numa das 10 janelas temporárias do Kernel.
+ * 
+ * NOTA DE ARQUITETURA CRÍTICA:
+ * - As duas primeiras janelas (window 0 e window 1) estão ESTRICTAMENTE RESERVADAS
+ *   para as operações primitivas globais de paginação e clonagem profunda de CR3.
+ * - As restantes janelas (window 2 a 9) estão livres para expansão e varrimento 
+ *   concorrente de tabelas (PML4, PDPT, PD, PT) no subsistema VMM/VFS.
+ * ============================================================================
  */
 void* vmm_scratch_map_internal(unsigned long phys_addr, int window) {
+    /* Barreira defensiva para garantir integridade física da Page Table */
+    if (window < 0 || window > 9) {
+        return NULL;
+    }
+
     PAGE_TABLE* local_pt = g_window_pt;
     
     unsigned long base_pt_idx = GET_PT_INDEX(VMM_SCRATCH_WINDOW_0); // Resulta em Índice 497
-    unsigned long pt_idx      = base_pt_idx + (window ? 1 : 0);     // 497 (window 0) ou 498 (window 1)
-    unsigned long scratch_va  = window ? VMM_SCRATCH_WINDOW_1 : VMM_SCRATCH_WINDOW_0;
+    unsigned long pt_idx      = base_pt_idx + window;
+    
+    unsigned long scratch_va = VMM_SCRATCH_WINDOW_0 + ((unsigned long)window * PAGE_SIZE);
+
+    unsigned long *pt = (unsigned long*)&local_pt[pt_idx];
+    pt[pt_idx] = 0ULL;
 
     // Configuração local direta imune a overflows de tabelas
     local_pt[pt_idx].p      = 1;

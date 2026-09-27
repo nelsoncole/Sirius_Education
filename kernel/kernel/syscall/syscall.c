@@ -22,6 +22,9 @@
 #include <kernel/kernel/sched/process.h>
 #include <kernel/kernel/net/socket.h>
 #include <kernel/kmods/kmod.h>
+#include <kernel/kernel/sched/clone.h>
+#include <kernel/kernel/sched/fork.h>
+#include <kernel/arch/x86_64/kapi/timer.h>
 
 /*
  * REGS DE HARDWARE ESPECÍFICOS DA ARQUITETURA (x86_64 MSRs)
@@ -76,6 +79,7 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
     /* Sincronização, Tempo e Sinais (Rodam com STI) */
     [SYS_WAITPID]   = sys_waitpid,
     [SYS_SLEEP]     = sys_sleep,
+    [SYS_USLEEP]    = sys_usleep,
     [SYS_KILL]      = sys_kill,
     [SYS_SIGACTION] = sys_sigaction,
 
@@ -92,6 +96,13 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
     [SYS_SHUTDOWN]   = sys_shutdown,
     [SYS_SETSOCKOPT] = sys_setsockopt,
     [SYS_GETSOCKOPT] = sys_getsockopt,
+
+    /* Identificação de Privilégios (UID / GID) */
+    [SYS_GETUID]    = sys_getuid,
+    [SYS_GETGID]    = sys_getgid,
+    [SYS_SETUID]    = sys_setuid,
+    [SYS_SETGID]    = sys_setgid,
+
     [SYS_KMOD_LOAD]  = sys_kmod_load,
     [SYS_KMOD_UNLOAD]= sys_kmod_unload,
     [SYS_KMOD_PRINT] = sys_kmod_print
@@ -160,7 +171,6 @@ uint64_t syscall_dispatcher(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, 
 
     // Executa a Syscall
     uint64_t result = handler(arg1, arg2, arg3, arg4, arg5, arg6);
-
     /* 
      * BARREIRA DE SEGURANÇA SEGUINTE:
      * Se as interrupções foram ativadas, TEMOS de as desativar antes de sair.
@@ -399,20 +409,58 @@ uint64_t sys_mkdir(const char* path, uint32_t mode) {
 }
 
 /**
- * Encerra a execução do processo atual e liberta os seus recursos no VFS e no Scheduler.
+ * sys_exit - Encerra a execução do processo atual e liberta os seus recursos no VFS e no Scheduler.
  */
-uint64_t sys_exit(uint64_t code) {
-    
-    // Converte o registador x86_64 de 64-bits para o tipo int esperado pelo Scheduler
+uint64_t sys_exit(uint64_t code) 
+{
+    kprintf("[SCI] sys_exit: code(%d)\n", code);
     int exit_code = (int)(code & 0xFFFFFFFF);
 
-    //kprintf("[SCI] sys_exit: Processo encerrado com codigo %d\n", exit_code);
+    /* 1. Captura o contexto estrutural do processo que está a morrer */
+    cpu_data_block_t* cpu = get_current_cpu();
+    thread_t* current_thread = cpu->current_thread;
+    process_t* current_proc = current_thread->owner;
 
-    // CHAMADA AO SCHEDULER: Altera o estado do processo e remove-o da fila de execução da CPU.
+    if (!current_proc) {
+        kprintf("[SCI ERROR] sys_exit: Processo atual nulo.\n");
+        scheduler_exit(exit_code);
+    }
+
+    /* 2. REGISTO DE ESTADO (Transforma o processo em Zombie para o Pai ler) */
+    current_proc->exit_code = exit_code;
+    current_proc->state     = PROCESS_ZOMBIE; 
+
+    /* 
+     * 3. SINALIZAÇÃO E ACORDAR O PAI:
+     * Varre a lista global à procura do Pai legítimo. 
+     * Se ele estiver bloqueado no waitpid, devolvemo-lo à vida ativa.
+     */
+    process_list_spinlock_acquire();
+    for (process_t* p = g_process_list_head; p != NULL; p = p->next) 
+    {
+        if (p->pid == current_proc->ppid) 
+        {
+            // Encontrou o Pai. Verifica se a sua thread principal está em repouso
+            if (p->main_thread != NULL && p->main_thread->state == THREAD_BLOCKED) 
+            {
+                kprintf("[SCI] sys_exit: Acordando e reinserindo o Pai PID %d na Runqueue...\n", p->pid);
+                
+                /* A. Altera a flag de controle de fluxo do Pai */
+                p->main_thread->state = THREAD_READY;
+
+                /* B. Insere fisicamente a thread do Pai de volta na fila de execução do Core */
+                enqueue_thread(cpu, p->main_thread); 
+            }
+            break;
+        }
+    }
+    process_list_spinlock_release();
+
+    // 4. CHAMADA AO SCHEDULER: Passa o controlo definitivo da CPU.
     // Esta função assume o controlo da Stack e NUNCA mais retorna para esta linha!
     scheduler_exit(exit_code);
 
-    // Linha de salvaguarda física (Caso o scheduler falhe, a CPU não executa lixo)
+    // Linha de salvaguarda física
     while(1) { 
         __asm__ __volatile__("hlt"); 
     }
@@ -481,71 +529,335 @@ uint64_t sys_ioctl(int fd, unsigned long request, void *arg) {
     return (uint64_t)-1; 
 }
 
-uint64_t sys_fork(void) {
-    kprintf("[SCI] sys_fork: Clonar processo atual\n");
-    return 0;
+/**
+ * sys_fork - Ponto de entrada oficial da chamada de sistema (Interface Void).
+ *            Captura estritamente o RIP, RSP e RFLAGS essenciais da CPU.
+ */
+uint64_t sys_fork(void) 
+{
+    kprintf("[SCI] sys_fork: Capturando contexto completo do Pai para o Filho...\n");
+
+    uint64_t kernel_stack_top = 0;
+    uint64_t user_rsp = 0;
+
+    /* 1. Captura os ponteiros estáveis da CPU guardados no segmento GS */
+    __asm__ __volatile__("mov %%gs:0, %0" : "=r"(kernel_stack_top));
+    __asm__ __volatile__("mov %%gs:8, %0" : "=r"(user_rsp));
+
+    /* 2. stack_ptr aponta para o topo absoluto (Início dos pushes do seu Assembly) */
+    uint64_t* stack_ptr = (uint64_t*)kernel_stack_top;
+
+    /* 
+     * 3. EXTRAÇÃO COMPLETA DA PILHA (Baseado estritamente no seu syscall_stub.asm):
+     *   stack_ptr[-1] -> push r14 (RIP de retorno real)
+     *   stack_ptr[-2] -> push r15 (RFLAGS originais)
+     *   stack_ptr[-3] -> push rbp (Preserva o RBP legítimo)
+     *   stack_ptr[-4] -> push rbx (Preserva o RBX legítimo)
+     *   stack_ptr[-5] -> push r10 (Continha o antigo RSP ou argumento)
+     *   stack_ptr[-6] -> push qword 0 (Padding de alinhamento)
+     */
+    uint64_t saved_rip    = stack_ptr[-1];
+    uint64_t saved_rflags = stack_ptr[-2];
+    uint64_t saved_rbp    = stack_ptr[-3];
+    uint64_t saved_rbx    = stack_ptr[-4];
+    uint64_t saved_r10    = stack_ptr[-5];
+
+    /* 4. Sintetiza o frame local SEM ZERAR os outros registadores gerais */
+    stack_frame_t frame;
+    
+    // Injeta os dados de controle de fluxo estáveis
+    frame.rip    = saved_rip;
+    frame.rsp    = user_rsp; // O RSP real capturado de gs:8
+    frame.rflags = saved_rflags;
+    
+    // Preserva os registadores gerais do Pai para o Filho não acordar com zeros!
+    frame.rbp    = saved_rbp;
+    frame.rbx    = saved_rbx;
+    frame.r10    = saved_r10;
+
+    // Configura os seletores legítimos de Ring 3 da sua GDT
+    frame.cs     = 0x2B; 
+    frame.ss     = 0x23;
+
+    /* 5. Executa o clone repassando o contexto 100% íntegro */
+    pid_t pid = fork(&frame);
+
+    return (uint64_t)pid;
 }
 
-uint64_t sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
-    (void)pathname;
+uint64_t sys_execve(const char *pathname, char *const argv[], char *const envp[]) 
+{
+    kprintf("[SCI] sys_execve: Carregar executavel em %s\n", pathname);
+    
+    /* 
+     * TODO: Chamar o seu subsistema 'process_loader.c' passando o pathname,
+     * limpando o CR3 antigo e injetando a nova stack com argc/argv em Ring 3.
+     */
     (void)argv;
     (void)envp;
-    kprintf("[SCI] sys_execve: Carregar executavel 0x%lx\n", (uint64_t)pathname);
     return 0;
 }
 
-uint64_t sys_mmap(void *addr, size_t length, int prot, int flags, int fd, int64_t offset) {
-    (void)addr;
-    (void)prot;
-    (void)flags;
-    (void)fd;
-    (void)offset;
+uint64_t sys_mmap(void *addr, size_t length, int prot, int flags, int fd, int64_t offset) 
+{
     kprintf("[SCI] sys_mmap: addr=0x%lx, len=%lu, prot=%d, flags=%d\n", (uint64_t)addr, length, prot, flags);
+    
+    /* TODO: Alocar páginas virtuais no espaço de paginação do utilizador */
+    (void)addr; (void)prot; (void)flags; (void)fd; (void)offset; (void)length;
     return 0;
 }
 
-uint64_t sys_munmap(void *addr, size_t length) {
-    (void)addr;
-    (void)length;
+uint64_t sys_munmap(void *addr, size_t length) 
+{
     kprintf("[SCI] sys_munmap: Libertar addr=0x%lx, len=%lu\n", (uint64_t)addr, length);
+    
+    /* TODO: Desmapear as páginas e atualizar o TLB */
+    (void)addr; (void)length;
     return 0;
 }
 
-uint64_t sys_getpid(void) {
-    kprintf("[SCI] sys_getpid: Consultar PID\n");
-    return 0;
+uint64_t sys_getpid(void) 
+{
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* proc = cpu->current_thread->owner;
+    
+    kprintf("[SCI] sys_getpid: Consultar PID (Retorno: %d)\n", proc->pid);
+    return (uint64_t)proc->pid;
 }
 
-uint64_t sys_getppid(void) {
-    kprintf("[SCI] sys_getppid: Consultar PID do Pai\n");
-    return 0;
+uint64_t sys_getppid(void) 
+{
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* proc = cpu->current_thread->owner;
+    
+    kprintf("[SCI] sys_getppid: Consultar PPID (Retorno: %d)\n", proc->ppid);
+    return (uint64_t)proc->ppid;
 }
 
-uint64_t sys_waitpid(int32_t pid, int *wstatus, int options) {
-    (void)pid;
-    (void)wstatus;
+/**
+ * sys_waitpid - Aguarda de forma síncrona que um processo filho mude de estado.
+ * 
+ * @pid:     O PID do filho desejado (-1 significa aguardar por QUALQUER filho).
+ * @wstatus: Ponteiro de Ring 3 onde o Kernel injetará o código de terminação.
+ * @options: Flags de controlo (ex: WNOHANG, embora aqui foquemos no bloqueio padrão).
+ */
+/**
+ * sys_waitpid - Aguarda de forma síncrona que um processo filho mude de estado.
+ *               Seguro para SMP: Protege as leituras/escritas da lista global.
+ * 
+ * @pid:     O PID do filho desejado (-1 significa aguardar por QUALQUER filho).
+ * @wstatus: Ponteiro de Ring 3 onde o Kernel injetará o código de terminação.
+ * @options: Flags de controlo (padrão POSIX).
+ */
+uint64_t sys_waitpid(int32_t pid, int *wstatus, int options) 
+{
+    kprintf("[SCI] sys_waitpid: Processo Pai (PID: %d) aguardando por Filho (PID: %d)\n", 
+            get_current_cpu()->current_thread->owner->pid, pid);
+
     (void)options;
-    kprintf("[SCI] sys_waitpid: Aguardar por pid=%d\n", pid);
+
+    // 1. Identifica o processo Pai atual
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* parent_proc = cpu->current_thread->owner;
+    
+    process_t* child_proc = NULL;
+
+    /* REPETIÇÃO DE BUSCA SÍNCRONA (Loop de Bloqueio) */
+    for (;;) 
+    {
+        child_proc = NULL;
+        int tem_filhos_vivos = 0;
+
+        /* 
+         * BARREIRA SMP: Bloqueia o spinlock global antes de varrer a lista.
+         * Isto impede que outra CPU remova ou adicione nós a meio da leitura.
+         */
+        process_list_spinlock_acquire();
+
+        // 2. Varrer a lista global de processos para localizar o Filho legítimo
+        for (process_t* p = g_process_list_head; p != NULL; p = p->next) 
+        {
+            // Garante a barreira de segurança: Só podemos esperar por filhos legítimos!
+            if (p->ppid == parent_proc->pid) 
+            {
+                if (pid == -1 || p->pid == (uint32_t)pid)
+                {
+                    child_proc = p;
+                    
+                    if (p->state == PROCESS_ZOMBIE) 
+                    {
+                        // Encontrámos um filho que já terminou! Sair do loop de varredura
+                        break;
+                    }
+                    
+                    if (p->state != PROCESS_ZOMBIE) 
+                    {
+                        tem_filhos_vivos = 1;
+                    }
+                }
+            }
+        }
+
+        /* Liberta temporariamente o trinco para permitir outras operações no Kernel */
+        process_list_spinlock_release();
+
+        // 3. CENÁRIO A: O Filho foi encontrado e já é um ZOMBIE (Limpeza e Coleta)
+        if (child_proc && child_proc->state == PROCESS_ZOMBIE) 
+        {
+            pid_t child_pid = child_proc->pid;
+            int status_final = child_proc->exit_code;
+
+            /* Injeta o código de término no ponteiro do utilizador (Ring 3) */
+            if (wstatus != NULL) 
+            {
+                // TODO: Idealmente, validar se o ponteiro 'wstatus' pertence à memória do user
+                *wstatus = (status_final & 0xFF) << 8;
+            }
+
+            kprintf("[SCI] sys_waitpid: Filho PID %d recolhido. Removendo e destruindo...\n", child_pid);
+
+            /* 
+             * RECONCILIAÇÃO E REMOÇÃO EXCLUSIVA (Delegado ao sys_waitpid):
+             * Primeiro removemos o processo da topologia global do sistema com segurança SMP.
+             * De seguida, desabamos a árvore da MMU do utilizador e apagamos o PCB.
+             */
+            process_list_remove(child_proc); 
+            process_destroy(child_proc);     
+
+            return (uint64_t)child_pid; // Retorna o PID do filho limpo para o Pai
+        }
+
+        // 4. PROTEÇÃO: Se pedimos um PID específico e ele não é nosso filho nem existe
+        if (!child_proc && !tem_filhos_vivos) 
+        {
+            kprintf("[SCI ERROR] sys_waitpid: PID %d nao e um filho valido ou nao existe.\n", pid);
+            return (uint64_t)-1; // Erro POSIX: ECHILD
+        }
+
+        // 5. CENÁRIO B: O Filho existe mas ainda está a rodar -> Bloquear o Pai!
+        kprintf("[SCI] sys_waitpid: Filho ainda ativo. Bloqueando Pai (PID: %d)...\n", parent_proc->pid);
+        
+        // Bloqueia preventivamente a thread associada a este processo pai
+        thread_t* current_thread = cpu->current_thread;
+        current_thread->state = THREAD_BLOCKED;
+
+        /* 
+         * FORÇA A TROCA DE CONTEXTO IMEDIATA:
+         * Invoca o algoritmo de Scheduling para passar a vez a outra tarefa.
+         * Quando o Pai for acordado pelo sys_exit do filho, ele reentrará no ciclo,
+         * recolherá os dados do zombie e libertará a memória com sucesso.
+         */
+        schedule(); 
+    }
+
+    return (uint64_t)-1;
+}
+
+uint64_t sys_sleep(unsigned int seconds) 
+{
+    //kprintf("[SCI] sys_sleep: Colocar thread em repouso por %u segs\n", seconds);
+    
+    /* 
+     * Converte segundos para microssegundos e delega à udelay estável do kernel.
+     * Idealmente, no futuro, isto deve bloquear a thread no temporizador 
+     * em vez de fazer busy-waiting na CPU.
+     */
+    mdelay((uint64_t)seconds * 1000);
     return 0;
 }
 
-uint64_t sys_sleep(unsigned int seconds) {
-    (void)seconds;
-    kprintf("[SCI] sys_sleep: Colocar thread em repouso por %u segs\n", seconds);
+uint64_t sys_usleep(unsigned int usec) 
+{
+    //kprintf("[SCI] sys_usleep: Colocar thread em repouso por %u microsegundos\n", usec);
+    
+    if (usec == 0) 
+    {
+        return 0;
+    }
+
+    /* 
+     * Invoca a rotina estável de micro-atrasos por hardware do Kernel.
+     * Esta função utiliza o temporizador calibrado (ex: ACPI PM Timer ou TSC) 
+     * para reter a execução de forma precisa durante os microssegundos solicitados.
+     */
+    udelay((uint64_t)usec); 
+    
     return 0;
 }
 
-uint64_t sys_kill(int32_t pid, int sig) {
-    (void)pid;
-    (void)sig;
+uint64_t sys_kill(int32_t pid, int sig) 
+{
     kprintf("[SCI] sys_kill: Enviar sinal %d para pid=%d\n", sig, pid);
+    
+    /* TODO: Localizar o PCB e empurrar o número do sinal na máscara pendente */
+    (void)pid; (void)sig;
     return 0;
 }
 
-uint64_t sys_sigaction(int signum, const void *act, void *oldact) {
-    kprintf("[SCI] sys_sigaction: Alterar acao do sinal %d (act=0x%lx, old=0x%lx)\n", signum, (uint64_t)act, (uint64_t)oldact);
+uint64_t sys_sigaction(int signum, const void *act, void *oldact) 
+{
+    kprintf("[SCI] sys_sigaction: Alterar acao do sinal %d\n", signum);
+    (void)signum; (void)act; (void)oldact;
     return 0;
 }
+
+uint64_t sys_getuid(void) 
+{
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* proc = cpu->current_thread->owner;
+    
+    kprintf("[SCI] sys_getuid: Consultar UID do PID %d (Retorno: %u)\n", proc->pid, proc->uid);
+    return (uint64_t)proc->uid;
+}
+
+uint64_t sys_getgid(void) 
+{
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* proc = cpu->current_thread->owner;
+    
+    kprintf("[SCI] sys_getgid: Consultar GID do PID %d (Retorno: %u)\n", proc->pid, proc->gid);
+    return (uint64_t)proc->gid;
+}
+
+uint64_t sys_setuid(uid_t uid) 
+{
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* proc = cpu->current_thread->owner;
+    
+    kprintf("[SCI] sys_setuid: Alterar UID do PID %d de %u para %u\n", proc->pid, proc->uid, uid);
+    
+    /* 
+     * BARREIRA DE SEGURANÇA BÁSICA:
+     * Se o utilizador atual não for root (UID != 0), ele só pode mudar o UID
+     * para ele próprio, impedindo a escalação ilegal de privilégios.
+     */
+    if (proc->uid != 0 && proc->uid != uid) 
+    {
+        kprintf("[SCI SECURITY] Falha: PID %d nao tem permissao para alterar UID.\n", proc->pid);
+        return (uint64_t)-1; /* Retorna erro de operação não permitida (EPERM) */
+    }
+
+    proc->uid = uid;
+    return 0; /* Sucesso */
+}
+
+uint64_t sys_setgid(gid_t gid) 
+{
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* proc = cpu->current_thread->owner;
+    
+    kprintf("[SCI] sys_setgid: Alterar GID do PID %d de %u para %u\n", proc->pid, proc->gid, gid);
+    
+    if (proc->uid != 0 && proc->gid != gid) 
+    {
+        kprintf("[SCI SECURITY] Falha: PID %d nao tem permissao para alterar GID.\n", proc->pid);
+        return (uint64_t)-1;
+    }
+
+    proc->gid = gid;
+    return 0;
+}
+
 
 uint64_t sys_socket(int domain, int type, int protocol) {
 

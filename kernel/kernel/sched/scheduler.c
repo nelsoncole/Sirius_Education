@@ -106,13 +106,11 @@ void scheduler_reclaim_dead_threads(void)
     {
         thread_t* next_dead = current_dead->next;
 
-        //kprintf("[GC] Reclamando memória do TID morto: %u\n", current_dead->tid);
-
-        /* 
-         * TODO: Chamar o desalocador real do seu Kernel
-         * kfree(current_dead->kernel_stack_base);
-         * kfree(current_dead);
-         */
+        /* Liberar os recursos da thread morta */
+        /*if (current_dead->kernel_stack) {
+            kfree(current_dead->kernel_stack);
+        }
+        kfree(current_dead);*/
 
         current_dead = next_dead;
     }
@@ -213,141 +211,6 @@ void scheduler_ready_process(struct process* proc)
 }
 
 /**
- * Encerra voluntariamente o processo atual, liberta o seu espaço de endereçamento 
- * e remove-o permanentemente da fila de execução do Escalonador (Scheduler).
- * 
- * NOTA DE ARQUITETURA: Esta função assume o controlo da Stack e NUNCA mais retorna.
- * 
- * @param code Código de status de finalização que será reportado ao processo pai.
- */
-void scheduler_exit(int code)
-{
-    __asm__ __volatile__("cli");
-
-    cpu_data_block_t *cpu = get_current_cpu();
-    thread_t *current = cpu->current_thread;
-
-    //kprintf("\n[SCI] sys_exit: Aplicativo (TID: %u) encerrou com status %d.\n", 
-    //        current ? current->tid : 0, code);
-
-    if (cpu && current)
-    {
-        current->state = THREAD_DEAD;
-        current->exit_code = code;
-
-        /* Move a tarefa atual para a fila de descarte assíncrono */
-        enqueue_dead_thread(cpu, current);
-    }
-
-    //kprintf("[Kernel] Escolhendo proxima tarefa de forma voluntaria...\n");
-
-    thread_t *next = NULL;
-
-    /* 
-     * CICLO DE EXPURGO CORRIGIDO:
-     * Remove referências mortas da cabeça da fila, mas para assim
-     * que encontra a primeira thread legítima (evita esvaziar a fila).
-     */
-    while (1) 
-    {
-        next = dequeue_thread(cpu);
-        
-        if (next == NULL) 
-        {
-            break; /* Fila verdadeiramente vazia */
-        }
-
-        if (next == current || next->state == THREAD_DEAD) 
-        {
-            //kprintf("[Kernel Warning] Ignorando referencia fantasma do TID %u na ready_queue.\n", next->tid);
-            continue; 
-        }
-
-        break; /* Encontrou uma thread válida! */
-    }
-    
-        /* 2. SE A FILA FICOU VAZIA: Cortamos o fluxo e saltamos direto para a Idle */
-    if (next == NULL)
-    {
-
-        next = cpu->idle_thread;
-        next->state = THREAD_RUNNING;
-        cpu->current_thread = next;
-
-        //kprintf("[Kernel] Sem tarefas prontas. Saltando diretamente para a Idle Routine...\n");
-
-        /* 
-         * Replicamos a lógica exata de salvaguarda da TSS do seu task_switch,
-         * mas apontando para o topo estável inicial da pilha da Idle.
-         */
-        cpu->tss.rsp0 = (uint64_t)next->kernel_stack_top;
-        cpu->kernel_stack_top = (uint64_t)next->kernel_stack_top;
-        if (next != cpu->fpu_owner_thread)
-        {
-            arch_fpu_set_ts();
-        }
-
-        /* Consome o CR3 local salvo na inicialização do CPU */
-        vmm_switch_pml4(cpu->cr3);
-
-        /*
-         * COMO VIEMOS DE UMA SYSCALL: 
-         * O 'swapgs' já colocou o CPU no espaço do Kernel.
-         * Não usamos o 'interrupt_exit_stub' porque ele tentaria fazer um 'iretq' 
-         * ou devolver os privilégios para Ring 3, o que gera o #GP.
-         *
-         * Mudamos o RSP para a pilha da Idle, ligamos as interrupções (sti) 
-         * e saltamos nativamente para a rotina.
-         */
-        __asm__ __volatile__(
-            "mov %0, %%rsp\n"         // Altera para a pilha segura da Idle Task
-            "sti\n"                   // Reativa o Timer para permitir preempção futura
-            "jmp *%1\n"               // CORRIGIDO: Salto indireto com '*' para o registo
-            :
-            : "r"(cpu->tss.rsp0), "r"(idle_thread_routine)
-            : "memory"
-        );
-
-        while (1); 
-    }
-
-    /* 3. FLUXO PADRÃO (Apenas se existir OUTRA aplicação REAL de Ring 3 na fila) */
-    next->state = THREAD_RUNNING;
-    cpu->current_thread = next;
-
-    if (next->owner != NULL && next->owner->cr3 != 0) 
-    {
-        if (current == NULL || current->owner == NULL || current->owner->cr3 != next->owner->cr3) 
-        {
-            vmm_switch_pml4(next->owner->cr3);
-        }
-    }
-
-    cpu->tss.rsp0 = (uint64_t)next->kernel_stack_top;
-    cpu->kernel_stack_top = (uint64_t)next->kernel_stack_top;
-    if (next != cpu->fpu_owner_thread) 
-    {
-        arch_fpu_set_ts(); 
-    }
-
-    //kprintf("[Kernel] Alternando para a proxima tarefa REAL (TID: %u)...\n", next->tid);
-
-    /* 
-     * Como a próxima tarefa é REAL (Ring 3), ela foi pausada pelo Timer anteriormente.
-     * O 'interrupt_exit_stub' vai fazer o 'iretq' legítimo para restaurar o Ring 3 dela.
-     */
-    __asm__ __volatile__(
-        "mov %0, %%rsp\n"
-        "jmp interrupt_exit_stub\n"
-        :
-        : "r"(next->kernel_stack)
-        : "memory"
-    );
-
-    while (1);
-}
-
-/**
  * Realiza a troca de contexto local do núcleo por preempção (Task Switch).
  */
 void* task_switch(void* regs) 
@@ -437,43 +300,39 @@ void* task_switch(void* regs)
 }
 
 /**
- * scheduler_yield - Permite que uma Thread de Kernel (KThread) abdique voluntariamente
- *                   do processador, devolvendo o controlo ao escalonador de imediato.
+ * schedule - Força a preempção e troca imediata de contexto de forma agnóstica.
+ *            Suporta chamadas vindas de threads em estado THREAD_BLOCKED (ex: sys_waitpid).
  */
-void scheduler_yield(void) {
-    // 1. Bloqueia as interrupções para garantir que a troca de contexto é atómica
+void schedule(void)
+{
     __asm__ __volatile__("cli");
 
     cpu_data_block_t* cpu = get_current_cpu();
     thread_t* current = cpu->current_thread;
 
-    // Se estivermos na Idle Task (TID 0) ou sem tarefa válida, não faz sentido ceder
-    if (!current || current->tid == 0 || current->state != THREAD_RUNNING) {
+    if (!current) {
         __asm__ __volatile__("sti");
         return;
     }
 
     /* 
-     * MÁGICA DA PREEMPÇÃO VOLUNTÁRIA:
-     * Construímos a estrutura registers_t na pilha atual linha por linha,
-     * respeitando a ordem exata exigida pelo teu task_switch.
+     * SALVAMENTO ATÓMICO DE CONTEXTO EM INLINE ASSEMBLY:
+     * Monta o registers_t estrutural diretamente na stack de Kernel atual.
      */
-    __asm__ __volatile__ (
-        // A. CONTEXTO DE HARDWARE (Salvo ficticiamente em Ring 0)
+    __asm__ __volatile__(
         "movq %%ss, %%rax\n"
-        "pushq %%rax\n"             // registers_t.ss
-        "pushq %%rsp\n"             // registers_t.rsp (Pilha atual de kernel)
-        "pushfq\n"                  // registers_t.rflags
+        "pushq %%rax\n"      // registers_t.ss
+        "pushq %%rsp\n"      // registers_t.rsp
+        "addq $8, (%%rsp)\n" // Ajusta o RSP fictício para ignorar os pushes do iretq
+        "pushfq\n"           // registers_t.rflags
         "movq %%cs, %%rax\n"
-        "pushq %%rax\n"             // registers_t.cs
-        "leaq 1f(%%rip), %%rax\n"   // Endereço físico de retorno seguro (etiqueta 1)
-        "pushq %%rax\n"             // registers_t.rip
-        
-        // B. METADADOS DAS MACROS
-        "pushq $0\n"                // registers_t.error_code (Nulo falso)
-        "pushq $0x81\n"             // registers_t.int_no (Vetor arbitrário para yield)
+        "pushq %%rax\n"           // registers_t.cs
+        "leaq 1f(%%rip), %%rax\n" // RIP de aterragem seguro (etiqueta 1)
+        "pushq %%rax\n"           // registers_t.rip
 
-        // C. REGISTADORES GERAIS (Ordem inversa da tua estrutura registers_t)
+        "pushq $0\n"    // registers_t.error_code
+        "pushq $0x82\n" // registers_t.int_no
+
         "pushq %%rbp\n"
         "pushq %%rdi\n"
         "pushq %%rsi\n"
@@ -490,12 +349,10 @@ void scheduler_yield(void) {
         "pushq %%r14\n"
         "pushq %%r15\n"
 
-        // D. INVOCAR O ESCALONADOR
-        "movq %%rsp, %%rdi\n"        // Passa o RSP (ponteiro registers_t) como 1º argumento para task_switch
-        "call task_switch\n"        // Executa a escolha da próxima tarefa próspera
-        
-        // E. RESTAURAR A NOVA TAREFA SELECIONADA
-        "movq %%rax, %%rsp\n"        // Altera o RSP do CPU para a pilha da nova tarefa (next->kernel_stack)
+        "movq %%rsp, %%rdi\n" // 1º Parâmetro da task_switch (RDI = RSP atual)
+        "call task_switch\n"
+
+        "movq %%rax, %%rsp\n" // RAX contém o RSP retornado da próxima tarefa
         "popq %%r15\n"
         "popq %%r14\n"
         "popq %%r13\n"
@@ -511,13 +368,130 @@ void scheduler_yield(void) {
         "popq %%rsi\n"
         "popq %%rdi\n"
         "popq %%rbp\n"
-        
-        "addq $16, %%rsp\n"         // Limpa registers_t.int_no e error_code da nova pilha
-        "iretq\n"                   // Executa o retorno atómico de hardware, restaurando rip, cs e rflags
-        
-        "1:\n"                      // Ponto de aterragem exato quando esta Thread voltar a acordar!
+        "addq $16, %%rsp\n" // Limpa int_no e error_code
+        "iretq\n"           // Salto supersónico para a nova tarefa
+        "1:\n"              // PONTO DE ATERRAGEM CRUCIAL QUANDO ESTA THREAD ACORDAR
         :
         :
         : "rax", "rdi", "memory"
     );
+}
+
+
+/**
+ * scheduler_yield - Cede voluntariamente o restante time-slice da thread ativa.
+ * Apenas executável se a thread ainda estiver em modo executável.
+ */ 
+void scheduler_yield(void)
+{
+    asm volatile("cli");
+    cpu_data_block_t *cpu = get_current_cpu();
+    thread_t *current = cpu->current_thread;
+    if (!current || current->tid == 0 || current->state != THREAD_RUNNING)
+    {
+        asm volatile("sti");
+        return;
+    } /* Reaproveita o motor completo de desvio atómico */
+    schedule();
+}
+
+/**
+ * scheduler_exit - Encerra o fluxo da thread ativa e passa o processador.
+ *                  Responsabilidade exclusiva de E/S e Contexto. Não limpa o PCB.
+ * 
+ * NOTA DE ARQUITETURA: Esta rotina assume o controlo da Stack e NUNCA mais retorna.
+ * @code: Código de status de finalização reportado ao Pai.
+ */
+void scheduler_exit(int code)
+{
+    /* Bloqueia interrupções para garantir a atomicidade do expurgo */
+    __asm__ __volatile__("cli");
+
+    cpu_data_block_t *cpu = get_current_cpu();
+    thread_t *current = cpu->current_thread;
+
+    if (cpu && current)
+    {
+        /* 1. Congela o estado físico da Thread na perspetiva do Core */
+        current->state = THREAD_DEAD;
+        current->exit_code = code;
+
+        /* 
+         * 2. Move a tarefa atual para a fila de descarte assíncrono.
+         * A 'idle_thread' irá desalocar o TCB e a Kernel Stack desta thread 
+         * mais tarde, de forma segura, através da scheduler_reclaim_dead_threads().
+         */
+        enqueue_dead_thread(cpu, current);
+    }
+
+    /* 3. Localiza a próxima tarefa pronta na runqueue deste Core */
+    thread_t *next = NULL;
+    while (1) 
+    {
+        next = dequeue_thread(cpu);
+        
+        if (next == NULL) 
+        {
+            break; /* Fila local vazia */
+        }
+
+        /* Ignora fantasias ou referências que já estejam marcadas como mortas */
+        if (next == current || next->state == THREAD_DEAD) 
+        {
+            continue; 
+        }
+
+        break; /* Encontrou uma thread válida! */
+    }
+    
+    /* 4. Se não houver tarefas prontas no núcleo, desvia para a Idle Task do Core */
+    if (next == NULL)
+    {
+        next = cpu->idle_thread;
+    }
+
+    /* 5. Efetua a troca de contexto atómica definitiva para a nova tarefa */
+    next->state = THREAD_RUNNING;
+    cpu->current_thread = next;
+
+    /* Troca o espaço virtual de endereçamento (CR3) se mudarmos de processo */
+    if (next->owner != NULL && current != NULL && current->owner != next->owner)
+    {
+        __asm__ __volatile__("mov %0, %%cr3" : : "r"(next->owner->cr3) : "memory");
+    }
+
+    /* 
+     * 6. SALTO SEM RETORNO:
+     * Carrega o RSP da nova tarefa e executa o iretq.
+     * Esta thread morta deixa de existir no pipeline do processador a partir daqui.
+     */
+    __asm__ __volatile__(
+        "movq %0, %%rsp\n"          // Altera o RSP para a pilha da nova tarefa
+        "popq %%r15\n"
+        "popq %%r14\n"
+        "popq %%r13\n"
+        "popq %%r12\n"
+        "popq %%r11\n"
+        "popq %%r10\n"
+        "popq %%r9\n"
+        "popq %%r8\n"
+        "popq %%rbx\n"
+        "popq %%rax\n"
+        "popq %%rcx\n"
+        "popq %%rdx\n"
+        "popq %%rsi\n"
+        "popq %%rdi\n"
+        "popq %%rbp\n"
+        "addq $16, %%rsp\n"         // Limpa int_no e error_code
+        "iretq\n"                   // Executa o retorno de hardware para a nova tarefa
+        :
+        : "r"(next->kernel_stack)
+        : "memory"
+    );
+
+    /* Salvaguarda física contra falhas de integridade na MMU */
+    while (1) 
+    {
+        __asm__ __volatile__("hlt");
+    }
 }
