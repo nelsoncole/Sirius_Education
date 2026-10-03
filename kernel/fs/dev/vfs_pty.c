@@ -247,16 +247,6 @@ static int tfs_pty_replica_read(vfs_node_t* node, uint64_t offset, uint32_t size
     return tty_read(pair->replica_tty, (char*)buffer, size);
 }
 
-/*
-static int tfs_pty_replica_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
-    (void)offset;
-    if (!node || !buffer || size == 0) return 0;
-
-    pty_pair_t* pair = (pty_pair_t*)node->private_data;
-    if (!pair || !pair->replica_tty) return -1;
-
-    return tty_write(pair->replica_tty, (const char*)buffer, size);
-}*/
 /* A Replica ESCREVE (Ex: printf do Bash) direcionando síncronamente para a tty0 */
 extern void tty_putc_backbuffer_X(struct tty_device *tty, char c);
 static int tfs_pty_replica_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {

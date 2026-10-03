@@ -22,13 +22,14 @@ CFLAGS  := -Wall -Wextra -m64 -nostdinc -ffreestanding -I./include -O2
 ASMFLAGS:= -f elf64
 
 # 3. Nome da Biblioteca Alvo de Saída
+CRT0 	:= src/arch/x86_64/crt0.o
 TARGET  := libc.a
 
 # 4. Mapeamento Automático de Diretorias e Ficheiros de Origem
 SRC_DIRS := \
 			src/stdio src/string src/ctype src/stdlib \
-			src/errno src/assert src/math src/sys src/time \
-			src/signal src/setjmp
+			src/errno src/assert src/math src/sys src/sys/arpa src/time \
+			src/signal src/setjmp src/wchar
 
 # Coleta todos os ficheiros .c dentro das pastas especificadas
 C_SRCS   := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))
@@ -42,7 +43,10 @@ OBJS     := $(C_SRCS:.c=.o) $(ASM_SRCS:.asm=.o)
 # 6. REGRAS PRINCIPAIS DO MAKEFILE
 .PHONY: all clean fclean re
 
-all: $(TARGET)
+all: $(CRT0) $(TARGET)
+
+$(CRT0): src/arch/x86_64/crt0.asm
+	$(ASM) $(ASMFLAGS) $< -o $@
 
 # Regra de Ligação: Agrupa todos os objetos .o dentro do arquivo estático .a
 $(TARGET): $(OBJS)

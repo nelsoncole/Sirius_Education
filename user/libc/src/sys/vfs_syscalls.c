@@ -15,7 +15,10 @@
 
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/usyscall.h>  /* Cabeçalho com as macros inline syscall0-syscall6 */
+#include <sys/stat.h>
+#include <sys/usyscall.h>
+#include <string.h>
+#include <stdarg.h>
 
 /*
  * ============================================================================
@@ -25,11 +28,59 @@
 
 int open(const char *pathname, int flags, ...) 
 {
+    if (!pathname) return -1;
+
+    char absolute_path[PATH_MAX];
+    memset(absolute_path, 0, PATH_MAX);
+
+    // CASO 1: O caminho já é absoluto (Começa com '/')
+    if (pathname[0] == '/') 
+    {
+        // Copia diretamente para passar ao kernel
+        strncpy(absolute_path, pathname, PATH_MAX);
+    }
+    // CASO 2: O caminho é RELATIVO (Ex: "nelson" ou "docs/config.ini")
+    else 
+    {
+        // 1. Pergunta ao Kernel qual é o PWD atual deste processo via libc getcwd()
+        if (getcwd(absolute_path, PATH_MAX) == NULL) {
+            return -1; // Falha se não conseguir ler o PWD
+        }
+
+        size_t pwd_len = strlen(absolute_path);
+
+        // 2. Adiciona a barra '/' se o PWD não terminar com uma (ex: evita "//" se estiver em "/")
+        if (absolute_path[pwd_len - 1] != '/') {
+            strcat(absolute_path, "/");
+        }
+
+        // 3. Concatena o nome do ficheiro ou caminho relativo
+        strcat(absolute_path, pathname);
+    }
     /* 
      * Encapsula a chamada utilizando a macro de 2 argumentos do teu usyscall.h.
      * Passa o ponteiro da string do caminho e a máscara binária de flags.
      */
-    return (int)syscall2(SYS_OPEN, (uint64_t)pathname, (uint64_t)flags);
+    return (int)syscall2(SYS_OPEN, (uint64_t)absolute_path, (uint64_t)flags);
+}
+
+int creat(const char *pathname, mode_t mode) {
+    // No padrão POSIX adoptado no Sirius, creat é um atalho para open()
+    // com flags de criação, escrita exclusiva e truncagem.
+    return open(pathname, O_CREAT | O_WRONLY | O_TRUNC, mode);
+}
+
+int fcntl(int fd, int cmd, ...) {
+    va_list args;
+    va_start(args, cmd);
+
+    // Extrai o terceiro argumento como 'long' para cobrir tanto inteiros
+    // (como flags O_NONBLOCK) quanto ponteiros na arquitetura x86_64.
+    long arg = va_arg(args, long);
+    va_end(args);
+
+    // Invoca a stub física do assembly mapeada na unistd.h do Sirius
+    return (int)syscall3(SYS_FCNTL, (uint64_t)fd, (uint64_t)cmd, (uint64_t)arg);
 }
 
 ssize_t read(int fd, void *buf, size_t count) 
@@ -69,26 +120,14 @@ off_t lseek(int fd, off_t offset, int whence)
 
 int pipe(int pipefd[2]) 
 {
-    return (int)syscall1(SYS_IOCTL, (uint64_t)pipefd); /* Ajusta se tiveres SYS_PIPE dedicada */
+    return (int)syscall1(SYS_IOCTL, (uint64_t)pipefd);
 }
 
 /*
  * ============================================================================
- * GESTÃO DE SISTEMA DE FICHEIROS E DIRETÓRIOS
+ * GESTÃO DE SISTEMA DE FICHEIROS
  * ============================================================================
  */
-
-int chdir(const char *path) 
-{
-    /* Usa a operação polimórica do VFS Core mapeada no teu Kernel */
-    return (int)syscall1(SYS_IOCTL, (uint64_t)path); 
-}
-
-char *getcwd(char *buf, size_t size) 
-{
-    long ret = (long)syscall2(SYS_IOCTL, (uint64_t)buf, (uint64_t)size);
-    return (ret < 0) ? NULL : buf;
-}
 
 int unlink(const char *pathname) 
 {
@@ -114,4 +153,23 @@ int isatty(int fd)
      * terminal legítimo (como as tuas TTYs ou as tuas novas PTYs /dev/pts/X).
      */
     return (syscall2(SYS_IOCTL, (uint64_t)fd, 0) == 0) ? 1 : 0;
+}
+
+int stat(const char *pathname, struct stat *statbuf)
+{
+    if (!pathname || !statbuf) {
+        return -1; /* Retorna erro de argumento inválido (EINVAL / EFAULT) */
+    }
+
+    return (int)syscall2(SYS_STAT, (uint64_t)pathname, (uint64_t)statbuf);
+}
+
+
+int fstat(int fd, struct stat *statbuf)
+{
+    if (fd < 0 || !statbuf) {
+        return -1;
+    }
+
+    return (int)syscall2(SYS_FSTAT, (uint64_t)fd, (uint64_t)statbuf);
 }

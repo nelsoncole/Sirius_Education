@@ -34,11 +34,20 @@
 #define IPPROTO_TCP 6
 #define IPPROTO_UDP 17
 
-/* Definições de Estados Canónicos da Máquina de Estados TCP */
-#define TCP_STATE_CLOSED      0
-#define TCP_STATE_SYN_SENT    1
-#define TCP_STATE_SYN_RECV    2
-#define TCP_STATE_ESTABLISHED 3
+/* Definições dos Estados Clássicos da Máquina de Estados do TCP */
+typedef enum {
+    TCP_STATE_CLOSED      = 0,
+    TCP_STATE_SYN_SENT    = 1,
+    TCP_STATE_LISTEN      = 2,
+    TCP_STATE_SYN_RECV    = 3,
+    TCP_STATE_ESTABLISHED = 4,
+    TCP_STATE_FIN_WAIT_1  = 5,
+    TCP_STATE_FIN_WAIT_2  = 6,
+    TCP_STATE_CLOSE_WAIT  = 7,
+    TCP_STATE_CLOSING     = 8,
+    TCP_STATE_LAST_ACK    = 9,
+    TCP_STATE_TIME_WAIT   = 10
+} tcp_state_t;
 
 /**
  * @brief Estrutura clássica de endereço de socket da Internet (IPv4).

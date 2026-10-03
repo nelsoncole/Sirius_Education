@@ -34,7 +34,7 @@ pid_t g_next_pid = 1;
 /* Registo global estável para auditoria e gestão de parentesco */
 process_t* g_process_list_head = NULL;
 /* Spinlock central para proteção da lista em ambiente SMP */
-static spinlock_t g_process_list_lock = {0};
+spinlock_t g_process_list_lock = {0};
 
 void process_list_spinlock_acquire(void) {
     spinlock_acquire(&g_process_list_lock);
@@ -154,63 +154,47 @@ void process_init_standard_io(process_t* proc, const char* io_path) {
 }
 
 /**
- * Aloca um novo processo, isola o espaço de memória (CR3), faz o parse e
- * carregamento dinâmico das seções ELF64, injeta os argumentos na pilha e
- * instancia a thread principal em Ring 3.
+ * Faz o parsing estrutural do cabeçalho ELF, mapeia os segmentos PT_LOAD na tabela 
+ * de páginas do processo atual e reconstrói a stack do utilizador com os argumentos.
+ * 
+ * @param proc           Ponteiro para o processo atual (PCB).
+ * @param binary_buffer  Ponteiro para o buffer alinhado contendo o ficheiro ELF.
+ * @param binary_size    Tamanho total do binário em bytes.
+ * @param argc           Contagem de argumentos.
+ * @param argv           Array de strings dos argumentos.
+ * @return Retorna o Entry Point (e_entry) em caso de sucesso, ou 0 em caso de erro.
  */
-process_t* process_create(void* binary_buffer, unsigned long binary_size, int argc, char** argv, uint32_t cpu_id)
+uintptr_t elf_parse_and_map(process_t* proc, void* binary_buffer, unsigned long binary_size, int argc, char** argv)
 {
     /* Validação defensiva do binário e tamanho mínimo do cabeçalho */
-    if (!binary_buffer || binary_size < sizeof(Elf64_Ehdr))
+    if (!proc || !binary_buffer || binary_size < sizeof(Elf64_Ehdr))
     {
-        kprintf("[Process] Erro: Ponteiro ou tamanho do binario invalido.\n");
-        return NULL;
+        kprintf("[Process] Erro: Parâmetros ou tamanho de binário inválido para o parser ELF.\n");
+        return 0;
     }
 
     // Mapeia o cabeçalho principal ELF64 diretamente em cima do buffer da Pool
     Elf64_Ehdr* ehdr = (Elf64_Ehdr*)binary_buffer;
 
     /* VALIDAÇÃO DE INTEGRIDADE DA ASSINATURA ELF64 */
-    if (ehdr->e_ident[0] != ELF_MAGIC_0 || ehdr->e_ident[1] != 'E' ||
+    if (ehdr->e_ident[0] != 0x7F || ehdr->e_ident[1] != 'E' ||
         ehdr->e_ident[2] != 'L' || ehdr->e_ident[3] != 'F')
     {
-        kprintf("[Process] Erro Fatal: O buffer nao contem um executavel ELF64 valido.\n");
-        return NULL;
+        kprintf("[Process] Erro Fatal: O buffer não contém um executável ELF64 válido.\n");
+        return 0;
     }
 
     if (ehdr->e_machine != 0x3E) // Mapeia x86_64 Long Mode
     {
-        kprintf("[Process] Erro: Executavel nao e compativel com a arquitetura x86_64.\n");
-        return NULL;
-    }
-
-    /* 1. Alocação de Memória para o PCB */
-    process_t* proc = (process_t*)kmalloc(sizeof(process_t));
-    if (!proc) 
-    {
-        kprintf("[Process] Erro: Falha ao alocar memoria para o PCB.\n");
-        return NULL;
-    }
-
-    memset(proc, 0, sizeof(process_t));
-    proc->pid = g_next_pid++;
-    // Nasce como um embrião/protegido, impedindo o escalonador de o puxar antes do tempo
-    proc->state = PROCESS_EMBRYO;
-
-    /* 2. Configuração da Árvore de Páginas Isolada (PML4) */
-    proc->cr3 = vmm_create_address_space();
-    if (proc->cr3 == 0)
-    {
-        kprintf("[Process] Erro: Falha critica ao criar espaco de memoria.\n");
-        kfree(proc);
-        return NULL;
+        kprintf("[Process] Erro: Executável não é compatível com a arquitetura x86_64.\n");
+        return 0;
     }
 
     /* 
-     * 3. CONFIGURAÇÃO DA MEMÓRIA LÓGICA DO APLICATIVO
+     * 1. RECONFIGURAÇÃO DA MEMÓRIA LÓGICA DO APLICATIVO EXISTENTE
      * ------------------------------------------------------------------------
      */
-    proc->code_base   = ehdr->e_entry; // RIP dinâmico lido do Entry Point real do ELF!
+    proc->code_base   = ehdr->e_entry; // Novo RIP dinâmico lido do Entry Point real do ELF
     proc->heap_start  = USER_HEAP_VIRTUAL_BASE;
     proc->heap_end    = USER_HEAP_VIRTUAL_BASE; 
     proc->stack_top   = USER_STACK_VIRTUAL_TOP;
@@ -237,10 +221,8 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
                 unsigned long segment_phys = pmm_alloc_page();
                 if (!segment_phys) 
                 {
-                    kprintf("[Process] Erro: Falha ao alocar pagina fisica para o segmento ELF.\n");
-                    pmm_free_page(proc->cr3);
-                    kfree(proc);
-                    return NULL;
+                    kprintf("[Process] Erro: Falha ao alocar página física para o segmento ELF.\n");
+                    return 0;
                 }
 
                 void* scratch_ptr = vmm_scratch_map(segment_phys);
@@ -257,6 +239,7 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
                         copy_size -= page_offset;
                         // O início desalinhado da página precisa ser limpo
                         memset(scratch_ptr, 0, page_offset);
+                        file_offset += page_offset; // CORREÇÃO: Sincroniza o offset do ficheiro para a leitura parcial
                     } else {
                         file_offset += (v_addr - phdr->p_vaddr);
                     }
@@ -277,11 +260,10 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
                 // CASO 2: A página é PUREZA DE BSS (Variáveis globais não inicializadas)
                 else 
                 {
-                    // Aqui fazemos o memset porque a página inteira vai conter variáveis do programa
                     memset(scratch_ptr, 0, PAGE_SIZE);
                 }
 
-                // Obtém o endereço virtual estável da PML4 do novo processo
+                // Obtém o endereço virtual estável da PML4 do processo atual
                 PML4_TABLE* target_pml4 = (PML4_TABLE*)vmm_scratch_map(proc->cr3);
                 vmm_map_page(target_pml4, v_addr, segment_phys, PAGE_USER_FLAGS);
             }
@@ -293,7 +275,7 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
      * ALOCAÇÃO E MAPEAMENTO EM LOOP DA PILHA DE USUÁRIO COM INJEÇÃO DE ARGS
      * ============================================================================
      */
-    unsigned long num_stack_pages = USER_STACK_INITIAL_SIZE / PAGE_SIZE;
+    unsigned long num_stack_pages = (USER_STACK_INITIAL_SIZE / PAGE_SIZE);
     unsigned long last_stack_phys = 0;
 
     for (unsigned long i = 0; i < num_stack_pages; i++)
@@ -301,10 +283,8 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
         unsigned long user_stack_phys = pmm_alloc_page();
         if (!user_stack_phys)
         {
-            kprintf("[Process] Erro: Falha ao alocar pagina fisica para a sub-pagina %lu da pilha.\n", i);
-            pmm_free_page(proc->cr3);
-            kfree(proc);
-            return NULL;
+            kprintf("[Process] Erro: Falha ao alocar página física para a sub-página %lu da pilha.\n", i);
+            return 0;
         }
 
         // Guarda o frame físico da ÚLTIMA página (onde fica o topo da Stack)
@@ -312,31 +292,39 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
             last_stack_phys = user_stack_phys;
         }
 
-        // Obtém o endereço virtual estável da PML4 do novo processo
+        // Obtém o endereço virtual estável da PML4 do processo atual
         PML4_TABLE* target_pml4 = (PML4_TABLE*)vmm_scratch_map(proc->cr3);
-        vmm_map_page(target_pml4, proc->stack_limit + (i * PAGE_SIZE),user_stack_phys,PAGE_USER_FLAGS);
+        vmm_map_page(target_pml4, proc->stack_limit + (i * PAGE_SIZE), user_stack_phys, PAGE_USER_FLAGS);
     }
 
     /*
      * ============================================================================
-     * CONSTRUÇÃO ACADÉMICA DA ESTRUTURA ARGC/ARGV DIRETO NA STACK FÍSICA
+     * CONSTRUÇÃO DA ESTRUTURA ARGC/ARGV DIRETO NA STACK FÍSICA
      * ============================================================================
-     * Mapeia o topo físico na scratch window do kernel para injetar os dados.
      */
     if (last_stack_phys != 0) {
         uint8_t* stack_scratch = (uint8_t*)vmm_scratch_map(last_stack_phys);
-        
-        // Toda a pilha nasce zerada na última página para evitar lixo
         memset(stack_scratch, 0, PAGE_SIZE);
 
-        // O topo real de escrita em memória dentro do buffer de 4KB (anda para trás)
         uint64_t local_offset = PAGE_SIZE; 
         
-        // 1. Copia as strings dos argumentos para o fundo da página (ex: "shell\0", "param\0")
         uint64_t* argv_virt_table = (uint64_t*)kmalloc(sizeof(uint64_t) * argc);
+        if (!argv_virt_table) {
+            kprintf("[Process] Erro: Falha ao alocar tabela virtual de argumentos.\n");
+            return 0;
+        }
         
+        // 1. Copia as strings dos argumentos para o fundo da página
         for (int i = argc - 1; i >= 0; i--) {
             size_t len = strlen(argv[i]) + 1;
+            
+            // CORREÇÃO: Barreira defensiva contra estouro de stack na página única de boot
+            if (local_offset < len || (local_offset - len) < (sizeof(uint64_t) * (argc + 2))) {
+                kprintf("[Process] Erro Fatal: Argumentos excedem o espaço reservado na página de stack.\n");
+                kfree(argv_virt_table);
+                return 0;
+            }
+
             local_offset -= len;
             memcpy(stack_scratch + local_offset, argv[i], len);
             
@@ -347,23 +335,88 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
         // Alinhamento estrito a 8 bytes para a tabela de ponteiros
         local_offset &= ~7UL;
 
-        // 2. Escreve a tabela argv contendo os ponteiros virtuais calculados (terminada em NULL)
-        local_offset -= sizeof(uint64_t); // Espaço para o ponteiro NULL final
+        // 2. Escreve a tabela de ponteiros (argv[]) e argc na stack conforme o ABI x86_64
+        local_offset -= sizeof(uint64_t) * (argc + 1); // +1 para o terminador NULL
+        uint64_t* local_argv = (uint64_t*)(stack_scratch + local_offset);
         
-        for (int i = argc - 1; i >= 0; i--) {
-            local_offset -= sizeof(uint64_t);
-            *(uint64_t*)(stack_scratch + local_offset) = argv_virt_table[i];
+        for (int i = 0; i < argc; i++) {
+            local_argv[i] = argv_virt_table[i];
         }
+        local_argv[argc] = 0; // argv[argc] = NULL
 
-        // 3. Escreve o valor do ARGC (Número de argumentos)
+        kfree(argv_virt_table);
+
+        // Ajusta o offset para empurrar o valor de argc (System V ABI)
         local_offset -= sizeof(uint64_t);
         *(uint64_t*)(stack_scratch + local_offset) = (uint64_t)argc;
 
-        // 4. ATUALIZAÇÃO DO PONTEIRO DA PILHA DO PROCESSO
-        // O RSP inicial do processo recua para apontar exatamente para o valor do ARGC!
+        // Atualiza a stack_top lógica do processo para o ponto exato onde o RSP deve iniciar
         proc->stack_top = proc->stack_top - (PAGE_SIZE - local_offset);
 
-        kfree(argv_virt_table);
+    }
+
+    // Retorna o endereço de entrada mapeado com sucesso para atualizar os registos da thread
+    return (uintptr_t)ehdr->e_entry;
+}
+
+/**
+ * Aloca um novo processo, isola o espaço de memória (CR3), delega o parse e
+ * carregamento dinâmico das seções ELF64 e a injeção da pilha de utilizador.
+ */
+process_t* process_create(void* binary_buffer, unsigned long binary_size, int argc, char** argv, uint32_t cpu_id)
+{
+    /* 1. Validação defensiva inicial (antes de alocar recursos pesados) */
+    if (!binary_buffer || binary_size < sizeof(Elf64_Ehdr))
+    {
+        kprintf("[Process] Erro: Ponteiro ou tamanho do binario invalido.\n");
+        return NULL;
+    }
+
+    /* 2. Alocação de Memória para o PCB */
+    process_t* proc = (process_t*)kmalloc(sizeof(process_t));
+    if (!proc) 
+    {
+        kprintf("[Process] Erro: Falha ao alocar memoria para o PCB.\n");
+        return NULL;
+    }
+
+    memset(proc, 0, sizeof(process_t));
+    proc->pid = g_next_pid++;
+    
+    // Nasce como um embrião/protegido, impedindo o escalonador de o puxar antes do tempo
+    proc->state = PROCESS_EMBRYO;
+
+     /* 
+     * INICIALIZAÇÃO OBRIGATÓRIA DO DIRETÓRIO DE TRABALHO (PWD)
+     * Garante que o processo começa de forma limpa e segura no diretório raiz.
+     */
+    strncpy(proc->pwd, "/", MAX_PATH_LENGTH);
+
+    /* 3. Configuração da Árvore de Páginas Isolada (PML4) */
+    proc->cr3 = vmm_create_address_space();
+    if (proc->cr3 == 0)
+    {
+        kprintf("[Process] Erro: Falha critica ao criar espaco de memoria.\n");
+        kfree(proc);
+        return NULL;
+    }
+
+    /* 
+     * 4. DELEGAÇÃO DO PARSING E MAPEAMENTO ELF
+     * Reaproveita a nova função modular eliminando repetição de código (DRY)
+     */
+    uintptr_t entry_point = elf_parse_and_map(proc, binary_buffer, binary_size, argc, argv);
+    if (entry_point == 0)
+    {
+        kprintf("[Process] Erro: Falha ao processar e mapear a estrutura do binário ELF.\n");
+        
+        // Como o elf_parse_and_map pode ter alocado algumas páginas parciais antes de falhar,
+        // o ideal aqui é chamar a limpeza que criámos para purgar as tabelas.
+        process_flush_user_space(proc->cr3);
+        
+        pmm_free_page(proc->cr3);
+        kfree(proc);
+        return NULL;
     }
 
     /* 4. Criação e vinculação da Thread Principal em Ring 3 usando o RSP ajustado */
@@ -393,6 +446,89 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
 }
 
 /**
+ * Liberta as estruturas alocadas e desvincula os recursos do espaço do utilizador.
+ * Limpa recursivamente apenas a metade inferior (User Space) das tabelas físicas
+ * associadas ao CR3, preparando o processo atual para o fluxo de sobreposição.
+ */
+int process_flush_user_space(uint64_t pml4_phys)
+{
+    if (!pml4_phys) return -1;
+
+    kprintf("[Process] A limpar User Space do processo para sobreposição...\n");
+    
+    // Limpa apenas as primeiras 256 entradas (User Space)
+    for (int i = 0; i < 256; i++) 
+    {
+        /* GARANTIA JIT: Remapeia o PML4 na Janela 2 a cada ciclo para limpar resíduos de TLB */
+        PML4_TABLE* pml4 = (PML4_TABLE*)vmm_scratch_map_internal(pml4_phys, 2);
+
+        if (pml4[i].p) 
+        {
+            unsigned long pdpt_phys = (unsigned long)pml4[i].phy_addr_pdpt << 12;
+            
+            for (int j = 0; j < 512; j++) 
+            {
+                /* BLINDAGEM: Restaura a integridade da Janela 3 antes de ler pdpt[j] */
+                PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys, 3);
+
+                if (pdpt[j].p && !pdpt[j].rs1) 
+                {
+                    unsigned long pd_phys = (unsigned long)pdpt[j].phy_addr_pd << 12;
+                    
+                    for (int k = 0; k < 512; k++) 
+                    {
+                        /* Restaura a integridade da Janela 4 antes de ler pd[k] */
+                        PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys, 4);
+
+                        if (pd[k].p && !pd[k].ps) 
+                        {
+                            unsigned long pt_phys = (unsigned long)pd[k].phy_addr_pt << 12;
+                            
+                            /* Mapeia a PT na Janela 5 */
+                            PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys, 5);
+                            
+                            for (int l = 0; l < 512; l++) 
+                            {
+                                if (pt[l].p) 
+                                {
+                                    unsigned long page_phys = (unsigned long)pt[l].frames << 12;
+                                    pmm_free_page(page_phys);
+                                }
+                            }
+                            
+                            /* Liberta a PT física após expurgar as páginas */
+                            pmm_free_page(pt_phys);
+                        }
+                        else if (pd[k].p && pd[k].ps) 
+                        {
+                            unsigned long mega_page_phys = (unsigned long)pd[k].phy_addr_pt << 12;
+                            pmm_free_page(mega_page_phys);
+                        }
+                    }
+                    
+                    /* Liberta o PD físico */
+                    pmm_free_page(pd_phys);
+                }
+            }
+            
+            /* Liberta a PDPT física */
+            pmm_free_page(pdpt_phys);
+            
+            /* Desvincula a entrada no PML4 de User Space */
+            pml4[i].p = 0;
+            pml4[i].phy_addr_pdpt = 0;
+        }
+    }
+
+    /* Atualiza o TLB (Invalida as entradas antigas de User Space) */
+    __asm__ __volatile__("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");
+    
+    kprintf("[Process] User Space do processo expurgado com sucesso.\n");
+
+    return 0;
+}
+
+/**
  * Liberta as estruturas alocadas e desvincula os recursos do processo.
  * Limpa recursivamente apenas a metade inferior (User Space) das tabelas físicas.
  */
@@ -405,66 +541,8 @@ void process_destroy(process_t* proc)
     if (proc->cr3 != 0) 
     {
         unsigned long pml4_phys = proc->cr3;
-        
-        for (int i = 0; i < 256; i++) 
-        {
-            /* GARANTIA JIT: Remapeia o PML4 na Janela 2 a cada ciclo para limpar resíduos de TLB */
-            PML4_TABLE* pml4 = (PML4_TABLE*)vmm_scratch_map_internal(pml4_phys, 2);
+        process_flush_user_space(pml4_phys);
 
-            if (pml4[i].p) 
-            {
-                unsigned long pdpt_phys = (unsigned long)pml4[i].phy_addr_pdpt << 12;
-                
-                for (int j = 0; j < 512; j++) 
-                {
-                    /* BLINDAGEM: Restaura a integridade da Janela 3 antes de ler pdpt[j] */
-                    PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys, 3);
-
-                    if (pdpt[j].p && !pdpt[j].rs1) 
-                    {
-                        unsigned long pd_phys = (unsigned long)pdpt[j].phy_addr_pd << 12;
-                        
-                        for (int k = 0; k < 512; k++) 
-                        {
-                            /* Restaura a integridade da Janela 4 antes de ler pd[k] */
-                            PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys, 4);
-
-                            if (pd[k].p && !pd[k].ps) 
-                            {
-                                unsigned long pt_phys = (unsigned long)pd[k].phy_addr_pt << 12;
-                                
-                                /* Mapeia a PT na Janela 5 */
-                                PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys, 5);
-                                
-                                for (int l = 0; l < 512; l++) 
-                                {
-                                    if (pt[l].p) 
-                                    {
-                                        unsigned long page_phys = (unsigned long)pt[l].frames << 12;
-                                        pmm_free_page(page_phys);
-                                    }
-                                }
-                                
-                                /* Liberta a PT física após expurgar as páginas */
-                                pmm_free_page(pt_phys);
-                            }
-                            else if (pd[k].p && pd[k].ps) 
-                            {
-                                unsigned long mega_page_phys = (unsigned long)pd[k].phy_addr_pt << 12;
-                                pmm_free_page(mega_page_phys);
-                            }
-                        }
-                        
-                        /* Liberta o PD físico */
-                        pmm_free_page(pd_phys);
-                    }
-                }
-                
-                /* Liberta a PDPT física */
-                pmm_free_page(pdpt_phys);
-            }
-        }
-        
         /* Liberta a raíz PML4 */
         pmm_free_page(pml4_phys);
     }
@@ -472,9 +550,9 @@ void process_destroy(process_t* proc)
     /* 2. LIMPEZA DA ESTRUTURA E THREADS ASSOCIADAS */
     if (proc->main_thread != NULL) 
     {
-        if (proc->main_thread->kernel_stack) 
+        if (proc->main_thread->context_frame) 
         {
-            void* stack_raw = (void*)((uint64_t)proc->main_thread->kernel_stack & ~0xFFFUL);
+            void* stack_raw = (void*)proc->main_thread->context_frame_top;
             kfree(stack_raw);
         }
         
@@ -522,6 +600,9 @@ void process_destroy(process_t* proc)
     kprintf("[Process] Processo %d destruido com sucesso total.\n", proc->pid);
 }
 
+void process_exit(int code) {
+    scheduler_exit(code);
+}
 /**
  * get_current_process - Recupera o processo dono da thread ativa no core atual.
  *                       Garante isolamento atómico por hardware em ambiente SMP.

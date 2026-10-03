@@ -105,7 +105,7 @@ void* interrupt_handler_c(registers_t *regs)
             // TENTA O CRESCIMENTO DA PILHA PRIMEIRO
 
             // Verifica se os bits de privilégio do CS empilhado indicam que viemos de Ring 3 (User)
-            if ((regs->cs & 3) == 3)
+            if ((regs->cs & 3) == 3 || 1)
             {
                 if (handle_user_stack_growth(fault_address))
                 {

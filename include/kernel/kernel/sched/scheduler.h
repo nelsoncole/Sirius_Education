@@ -86,12 +86,17 @@ void schedule(void);
  */
 void scheduler_yield(void);
 /**
+ * scheduler_yield_execve - Cede o controlo sem salvar o contexto antigo.
+ * Prepara a thread para acordar diretamente com os novos registos de Ring 3.
+ */
+void scheduler_yield_execve(uint64_t new_rsp);
+/**
  * scheduler_exit - Encerra o fluxo da thread ativa e passa o processador.
  *                  Responsabilidade exclusiva de E/S e Contexto. Não limpa o PCB.
  * 
  * NOTA DE ARQUITETURA: Esta rotina assume o controlo da Stack e NUNCA mais retorna.
  * @code: Código de status de finalização reportado ao Pai.
  */
-void scheduler_exit(int code);
+void scheduler_exit(int exit_code);
 
 #endif /* _SCHEDULER_H_ */

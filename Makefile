@@ -17,17 +17,11 @@ DRIVERS_DIR := kernel/drivers
 FS_DIR      := kernel/fs
 KMODS_DIR   := kernel/kmods
 
-USER_DIR        := user
-USER_BUILD_DIR  := build/user
-LIBC_DIR 		:= $(USER_DIR)/libc
-LIBC_A   		:= $(LIBC_DIR)/libc.a
-
 BUILD_DIR       := build
 SYSROOT_DIR     := sysroot
 SYSROOT_SYSTEM  := $(SYSROOT_DIR)/System
 
 LINKER      := scripts/linker/x86_64.ld
-USER_LINKER := $(USER_DIR)/libc/user_x86_64.ld
 
 # ============================================================
 # Artefactos de BUILD
@@ -37,9 +31,8 @@ USER_LINKER := $(USER_DIR)/libc/user_x86_64.ld
 # O sysroot só será utilizado numa etapa posterior de instalação.
 # ============================================================
 
-KERNEL_TARGET     := $(BUILD_DIR)/kernel.elf
+KERNEL_TARGET      := $(BUILD_DIR)/kernel.elf
 TRAMPOLINE_TARGET  := $(BUILD_DIR)/trampoline.bin
-USER_TARGET        := $(USER_BUILD_DIR)/user.elf
 
 # ============================================================
 # Objetos Assembly
@@ -92,6 +85,7 @@ C_OBJ := \
 	$(BUILD_DIR)/clone.o \
 	$(BUILD_DIR)/fork.o \
 	$(BUILD_DIR)/process_loader.o \
+	$(BUILD_DIR)/execve_loader.o \
 	$(BUILD_DIR)/syscall.o \
 	$(BUILD_DIR)/pci.o \
 	$(BUILD_DIR)/keyboard.o \
@@ -128,13 +122,6 @@ C_OBJ := \
 	$(BUILD_DIR)/test.o
 
 # ============================================================
-# Objetos do User Space
-# ============================================================
-
-USER_CRT0_OBJ := $(USER_BUILD_DIR)/crt0.o
-USER_APP_OBJ  := $(USER_BUILD_DIR)/user.o
-
-# ============================================================
 # Compiler Flags - Kernel
 # ============================================================
 
@@ -152,23 +139,6 @@ CFLAGS := -m64 \
           -I./include
 
 # ============================================================
-# Compiler Flags - User Space / Ring 3
-# ============================================================
-
-USER_CFLAGS := -m64 \
-               -ffreestanding \
-               -fno-pie \
-               -fno-stack-protector \
-               -fno-omit-frame-pointer \
-               -mno-red-zone \
-               -nostdlib \
-               -nostdinc \
-               -Wall \
-               -Wextra \
-               -I./include \
-			   -Iuser/libc/include
-
-# ============================================================
 # Assembly / Linker Flags
 # ============================================================
 
@@ -178,20 +148,15 @@ LDFLAGS := -m elf_x86_64 \
            -Map $(BUILD_DIR)/kernel.map \
            -T $(LINKER)
 
-USER_LDFLAGS := -m elf_x86_64 \
-                -T $(USER_LINKER)
-
 # ============================================================
 # Targets principais
 # ============================================================
 
-.PHONY: all kernel user_space trampoline clean install
+.PHONY: all kernel trampoline clean install
 
-all: kernel user_space trampoline
+all: kernel trampoline
 
 kernel: $(KERNEL_TARGET)
-
-user_space: $(USER_TARGET)
 
 trampoline: $(TRAMPOLINE_TARGET)
 
@@ -201,22 +166,6 @@ trampoline: $(TRAMPOLINE_TARGET)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
-
-$(USER_BUILD_DIR): | $(BUILD_DIR)
-	mkdir -p $(USER_BUILD_DIR)
-
-# ============================================================
-# User Space
-# ============================================================
-
-$(USER_TARGET): $(USER_CRT0_OBJ) $(USER_APP_OBJ) $(USER_LINKER) $(LIBC_A) | $(USER_BUILD_DIR)
-	$(LD) $(USER_LDFLAGS) $(USER_CRT0_OBJ) $(USER_APP_OBJ) $(LIBC_A) -o $@
-
-$(USER_BUILD_DIR)/crt0.o: $(LIBC_DIR)/src/arch/x86_64/crt0.asm | $(USER_BUILD_DIR)
-	$(AS) $(ASFLAGS) $< -o $@
-
-$(USER_BUILD_DIR)/user.o: $(USER_DIR)/user.c | $(USER_BUILD_DIR)
-	$(CC) $(USER_CFLAGS) -c $< -o $@
 	
 # ============================================================
 # Trampoline
@@ -397,6 +346,9 @@ $(BUILD_DIR)/fork.o: $(KERNEL_DIR)/sched/fork.c | $(BUILD_DIR)
 $(BUILD_DIR)/process_loader.o: $(KERNEL_DIR)/sched/process_loader.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/execve_loader.o: $(KERNEL_DIR)/sched/execve_loader.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -490,7 +442,6 @@ install: all
 	mkdir -p $(SYSROOT_SYSTEM)
 	cp $(KERNEL_TARGET)    $(SYSROOT_SYSTEM)/kernel.elf
 	cp $(TRAMPOLINE_TARGET) $(SYSROOT_SYSTEM)/trampoline.bin
-	cp $(USER_TARGET)      $(SYSROOT_SYSTEM)/user.elf
 
 # ============================================================
 # Limpeza

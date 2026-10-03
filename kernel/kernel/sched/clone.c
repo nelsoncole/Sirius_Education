@@ -80,6 +80,8 @@ pid_t clone(stack_frame_t* frame)
         child_proc->stack_top   = parent_proc->stack_top;
         child_proc->stack_limit = parent_proc->stack_limit;
 
+        strncpy(child_proc->pwd,  parent_proc->pwd, MAX_PATH_LENGTH);
+
         child_proc->cr3 = vmm_clone_address_space(parent_proc->cr3);
         if (child_proc->cr3 == 0) 
         {
@@ -119,7 +121,7 @@ pid_t clone(stack_frame_t* frame)
     child_thread->state = THREAD_BLOCKED;
 
     /* 5. Duplica o Stack Frame (Registadores) */
-    stack_frame_t* child_frame = (stack_frame_t*)child_thread->kernel_stack;
+    stack_frame_t* child_frame = (stack_frame_t*)child_thread->context_frame;
     memcpy(child_frame, frame, sizeof(stack_frame_t));
 
     /* 6. Vinculação Estrutural */

@@ -18,8 +18,11 @@
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/klib.h>
 #include <kernel/drivers/storage/partitions.h>
+#include <kernel/kernel/sched/process.h>
 
 #define FS_MAX_REG_DRIVERS 16
+
+#define O_CREAT     0x0040
 
 /* Tabelas Globais de Controlo do Subsistema */
 static vfs_filesystem_t* g_registered_filesystems[FS_MAX_REG_DRIVERS];
@@ -96,8 +99,26 @@ vfs_node_t* vfs_path_to_node(const char* path) {
     }
 
     char path_copy[512];
-    strncpy(path_copy, path, sizeof(path_copy) - 1);
-    path_copy[sizeof(path_copy) - 1] = '\0';
+    size_t path_len = strlen(path);
+    if (path_len >= sizeof(path_copy)) {
+        /* 
+         * DEBUG DE NÍVEL DE SISTEMA:
+         * Exibe o PID atual do processo, o tamanho da string rejeitada 
+         * e o limite máximo físico que a stack de Ring 0 suporta neste buffer.
+         */
+        process_t* proc = get_current_process();
+        kprintf("[VFS ERROR] [PID %d] open: Caminho demasiado longo (ENAMETOOLONG). "
+                "Tamanho: %lu bytes | Teto maximo: %lu bytes.\n", 
+                proc ? proc->pid : 0, path_len, sizeof(path_copy) - 1);
+        return NULL;
+    }
+     /* 
+     * 3. COPIA CIRÚRGICA: 
+     * Copiamos apenas os bytes REAIS da string (path_len + 1 para o '\0').
+     * Isto impede que o Kernel leia além do limite e toque no proibido 0x00007FFFFFFFF000!
+     */
+    memcpy(path_copy, path, path_len);
+    path_copy[path_len] = '\0'; 
 
     char* token = path_copy;
     if (*token == '/') token++; 
@@ -558,7 +579,6 @@ int vfs_umount(const char* mount_path) {
  * vfs_open - Abre ou cria de forma dinâmica um nó no VFS do Kernel.
  *            Garante isolamento de drivers polimórficos e proteção contra memory leaks.
  */
-#define O_CREAT     0x0200
 vfs_node_t* vfs_open(const char* path, uint32_t flags) {
     if (!path || path[0] == '\0') return NULL;
 

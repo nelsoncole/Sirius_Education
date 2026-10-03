@@ -39,6 +39,11 @@
 #define _IOEOF          0x0010  // Indicador de Fim de Ficheiro (End-of-File)
 #define _IOERR          0x0020  // Indicador de Erro de E/S
 
+/* Constantes de controlo de Buffering de E/S */
+#define _IOFBF  0   /* Buffering Completo (Full Buffering) */
+#define _IOLBF  1   /* Buffering por Linha (Line Buffering) */
+#define _IONBF  2   /* Sem Buffering (No Buffering) -> Usado na criptografia */
+
 /* ISO C: Estrutura que encapsula o File Descriptor */
 typedef struct _IO_FILE {
     int fd;
@@ -96,10 +101,11 @@ char *tmpnam(char *s);
 int rename(const char *old, const char *new);
 void perror(const char *s);
 
-extern FILE *freopen(const char *filename, const char *mode, FILE *fp);
-extern int ferror (FILE *fp );
-extern int setvbuf(FILE * stream, char * buf, int mode, size_t size);
-extern void clearerr(FILE *stream);
-extern FILE *tmpfile(void);
+FILE *freopen(const char *filename, const char *mode, FILE *fp);
+int ferror (FILE *fp );
+int setvbuf(FILE * stream, char * buf, int mode, size_t size); // Ainda nao foi implentada a 100%
+void clearerr(FILE *stream);
+FILE *tmpfile(void);
+
 
 #endif /* _STDIO_H */

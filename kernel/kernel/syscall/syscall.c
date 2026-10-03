@@ -55,6 +55,7 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
     [SYS_SEEK]      = sys_seek,
     [SYS_FLUSH]     = sys_flush,
     [SYS_STAT]      = sys_stat,
+    [SYS_FSTAT]     = sys_fstat,
     [SYS_CHMOD]     = sys_chmod,
     [SYS_UNLINK]    = sys_unlink,
     [SYS_RMDIR]     = sys_rmdir,
@@ -62,6 +63,7 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
     [SYS_MKDIR]     = sys_mkdir,
     [SYS_GETDENTS]  = sys_getdents,
     [SYS_DUP2]      = sys_dup2,
+    [SYS_FCNTL]     = sys_fcntl,
     [SYS_IOCTL]     = sys_ioctl,
 
     /* Gestão de Memória Estrita (Rodam com CLI) */
@@ -105,7 +107,10 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
 
     [SYS_KMOD_LOAD]  = sys_kmod_load,
     [SYS_KMOD_UNLOAD]= sys_kmod_unload,
-    [SYS_KMOD_PRINT] = sys_kmod_print
+    [SYS_KMOD_PRINT] = sys_kmod_print,
+
+    [SYS_CHDIR]     = sys_chdir,
+    [SYS_GETCWD]    = sys_getcwd
 };
 
 static inline void wrmsr(uint32_t msr, uint64_t val) {
@@ -162,6 +167,22 @@ uint64_t syscall_dispatcher(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, 
         return (uint64_t)-1;
     }
 
+    
+    /* 
+     * ============================================================================
+     * SALVAMENTO NA PILHA DE KERNEL LOCAL (VARIÁVEIS LOCAIS AUTOMÁTICAS)
+     * ============================================================================
+     * Estas variáveis residem na Stack de Kernel de 8KB da thread atual.
+     * Mesmo que a thread mude de CPU ou sofra preempção, estes valores são 
+     * imutáveis e isolados do resto do sistema.
+     * ============================================================================
+     */
+    cpu_data_block_t* cpu_entry = get_current_cpu();
+    uint64_t local_stack  = cpu_entry->user_stack;
+    uint64_t local_rip    = cpu_entry->rip;
+    uint64_t local_rflags = cpu_entry->rflag;
+
+
     // Verifica se esta syscall específica precisa de interrupções ativas
     int is_blocking = syscall_is_blocking(syscall_num);
 
@@ -177,6 +198,21 @@ uint64_t syscall_dispatcher(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, 
      * Se já estavam desativadas, isto garante que o estado se mantém seguro.
      */
     interrupts_disable(); // Desativa interrupções (cli)
+    
+     /* 
+     * Buscamos o bloco Per-CPU do núcleo ATUAL, pois a thread pode ter acordado
+     * num core físico diferente daquele em que iniciou a chamada (Migração SMP).
+     */
+    cpu_data_block_t* cpu_exit = get_current_cpu();
+    
+    /*
+     * Injeta de volta no bloco GS os valores puros que guardámos na stack de kernel 
+     * no início da função. Qualquer alteração que o Filho ou a Idle Task tenham 
+     * feito na estrutura 'cpu->user_stack' global do hardware é agora limpa.
+     */
+    cpu_exit->user_stack = local_stack;
+    cpu_exit->rip        = local_rip;
+    cpu_exit->rflag      = local_rflags;
 
     return result;
 }
@@ -268,6 +304,7 @@ uint64_t sys_write(int fd, const void* buffer, uint32_t size) {
     process_t* proc = get_current_process();
     if (!proc || !proc->file_descriptor_table[fd]) return (uint64_t)-1;
 
+
     vfs_file_t* file = proc->file_descriptor_table[fd];
 
     int bytes_escritos = vfs_write(file->node, file->offset, size, (void*)buffer);
@@ -310,6 +347,30 @@ uint64_t sys_stat(const char* path, vfs_stat_t* buf) {
     vfs_close(node);
     return (uint64_t)res;
 }
+
+uint64_t sys_fstat(int fd, vfs_stat_t* buf) {
+    // 1. Validação defensiva do descritor de ficheiro e do ponteiro do utilizador
+    if (fd < 0 || fd >= MAX_FILES_PER_PROCESS || !buf) {
+        return (uint64_t)-1;
+    }
+
+    // 2. Resgata o processo dono da thread ativa na CPU
+    process_t* proc = get_current_process();
+    if (!proc || !proc->file_descriptor_table[fd]) {
+        return (uint64_t)-1;
+    }
+
+    // 3. Extrai o objeto de ficheiro do processo
+    vfs_file_t* file = proc->file_descriptor_table[fd];
+    if (!file || !file->node) {
+        return (uint64_t)-1;
+    }
+
+    int res = vfs_stat(file->node, buf);
+
+    return (uint64_t)res;
+}
+
 
 uint64_t sys_chmod(const char* path, uint16_t mode) {
     if (!path) return (uint64_t)-1;
@@ -416,46 +477,6 @@ uint64_t sys_exit(uint64_t code)
     kprintf("[SCI] sys_exit: code(%d)\n", code);
     int exit_code = (int)(code & 0xFFFFFFFF);
 
-    /* 1. Captura o contexto estrutural do processo que está a morrer */
-    cpu_data_block_t* cpu = get_current_cpu();
-    thread_t* current_thread = cpu->current_thread;
-    process_t* current_proc = current_thread->owner;
-
-    if (!current_proc) {
-        kprintf("[SCI ERROR] sys_exit: Processo atual nulo.\n");
-        scheduler_exit(exit_code);
-    }
-
-    /* 2. REGISTO DE ESTADO (Transforma o processo em Zombie para o Pai ler) */
-    current_proc->exit_code = exit_code;
-    current_proc->state     = PROCESS_ZOMBIE; 
-
-    /* 
-     * 3. SINALIZAÇÃO E ACORDAR O PAI:
-     * Varre a lista global à procura do Pai legítimo. 
-     * Se ele estiver bloqueado no waitpid, devolvemo-lo à vida ativa.
-     */
-    process_list_spinlock_acquire();
-    for (process_t* p = g_process_list_head; p != NULL; p = p->next) 
-    {
-        if (p->pid == current_proc->ppid) 
-        {
-            // Encontrou o Pai. Verifica se a sua thread principal está em repouso
-            if (p->main_thread != NULL && p->main_thread->state == THREAD_BLOCKED) 
-            {
-                kprintf("[SCI] sys_exit: Acordando e reinserindo o Pai PID %d na Runqueue...\n", p->pid);
-                
-                /* A. Altera a flag de controle de fluxo do Pai */
-                p->main_thread->state = THREAD_READY;
-
-                /* B. Insere fisicamente a thread do Pai de volta na fila de execução do Core */
-                enqueue_thread(cpu, p->main_thread); 
-            }
-            break;
-        }
-    }
-    process_list_spinlock_release();
-
     // 4. CHAMADA AO SCHEDULER: Passa o controlo definitivo da CPU.
     // Esta função assume o controlo da Stack e NUNCA mais retorna para esta linha!
     scheduler_exit(exit_code);
@@ -541,8 +562,8 @@ uint64_t sys_fork(void)
     uint64_t user_rsp = 0;
 
     /* 1. Captura os ponteiros estáveis da CPU guardados no segmento GS */
-    __asm__ __volatile__("mov %%gs:0, %0" : "=r"(kernel_stack_top));
-    __asm__ __volatile__("mov %%gs:8, %0" : "=r"(user_rsp));
+    __asm__ __volatile__("movq %%gs:0, %0" : "=r"(kernel_stack_top));
+    __asm__ __volatile__("movq %%gs:8, %0" : "=r"(user_rsp));
 
     /* 2. stack_ptr aponta para o topo absoluto (Início dos pushes do seu Assembly) */
     uint64_t* stack_ptr = (uint64_t*)kernel_stack_top;
@@ -556,11 +577,15 @@ uint64_t sys_fork(void)
      *   stack_ptr[-5] -> push r10 (Continha o antigo RSP ou argumento)
      *   stack_ptr[-6] -> push qword 0 (Padding de alinhamento)
      */
-    uint64_t saved_rip    = stack_ptr[-1];
-    uint64_t saved_rflags = stack_ptr[-2];
-    uint64_t saved_rbp    = stack_ptr[-3];
-    uint64_t saved_rbx    = stack_ptr[-4];
-    uint64_t saved_r10    = stack_ptr[-5];
+    uint64_t saved_rip    = 0;
+    uint64_t saved_rflags = 0;
+
+    __asm__ __volatile__("movq %%gs:16, %0" : "=r"(saved_rip));
+    __asm__ __volatile__("movq %%gs:24, %0" : "=r"(saved_rflags));
+
+    uint64_t saved_rbp    = stack_ptr[-1];
+    uint64_t saved_rbx    = stack_ptr[-2];
+    uint64_t saved_r10    = stack_ptr[-3];
 
     /* 4. Sintetiza o frame local SEM ZERAR os outros registadores gerais */
     stack_frame_t frame;
@@ -585,18 +610,84 @@ uint64_t sys_fork(void)
     return (uint64_t)pid;
 }
 
+extern int elf_load_and_execve(const char* path, int argc, char** argv, process_t* proc);
 uint64_t sys_execve(const char *pathname, char *const argv[], char *const envp[]) 
 {
+    if (!pathname) return -1;
+
     kprintf("[SCI] sys_execve: Carregar executavel em %s\n", pathname);
-    
+
+    // 1. Contar argumentos (argv) e variáveis (envp)
+    char *const *argv_p = argv;
+    char *init_argv[] = {
+        ".",
+        NULL
+    };
+
+    int argc = 0; 
+    if (argv) { while (argv[argc] != NULL) argc++; }
+    else {argc = 1; argv_p = init_argv;}
+
+    int envc = 0; 
+    if (envp) { while (envp[envc] != NULL) envc++; }
+
+    // 2. Resgate direto do processo dono da thread atual na CPU
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* proc = cpu->current_thread->owner;
+    if (!proc){
+        return -1;
+    }
+
+    // 3. Passa o caminho, argc, argv e a estrutura do processo para o carregador
+    int status = elf_load_and_execve(pathname, argc, (char**)argv_p, proc);
+    if (status != 0) return -1;
+
     /* 
-     * TODO: Chamar o seu subsistema 'process_loader.c' passando o pathname,
-     * limpando o CR3 antigo e injetando a nova stack com argc/argv em Ring 3.
+     * 4. CONSTRUÇÃO E LIMPEZA DO CONTEXTO DE RETORNO (RING 3)
+     * Intercepta a stack de kernel da thread principal. O iretq do scheduler_yield_execve()
+     * vai descarregar este frame e enviar o CPU diretamente para o Ring 3.
      */
-    (void)argv;
-    (void)envp;
-    return 0;
+    thread_t* thread = proc->main_thread;
+    thread->context_frame = (void*)((uint64_t)thread->context_frame_top - sizeof(stack_frame_t));
+    thread->kernel_stack_top = (void*)thread->context_frame_top;
+
+    // Mapeia o topo da stack diretamente na tua estrutura oficial de registos
+    stack_frame_t* frame = (stack_frame_t*)thread->context_frame;
+    
+    // Configuração estrita dos registos de controlo e segmentação x86_64
+    frame->rip        = proc->code_base;   // Entry point determinado pelo parser ELF
+    frame->cs         = 0x2B;              // User Code Selector (RPL 3)
+    frame->rsp        = proc->stack_top;   // Nova stack Ring 3 montada com os argumentos
+    frame->ss         = 0x23;              // User Data Selector (RPL 3)
+    frame->rflags     = 0x202;             // IF=1 (Interrupções ativas ao retornar para o utilizador)
+    frame->int_no     = 32;
+    frame->error_code = 0;
+
+    // BLINDAGEM: Zera todos os registos gerais para o novo programa iniciar limpo
+    frame->rax = 0; frame->rbx = 0; frame->rcx = 0; frame->rdx = 0;
+    frame->rsi = 0; frame->rdi = 0; frame->rbp = 0;
+    frame->r8  = 0; frame->r9  = 0; frame->r10 = 0; frame->r11 = 0;
+    frame->r12 = 0; frame->r13 = 0; frame->r14 = 0; frame->r15 = 0;
+
+    __asm__ __volatile__ (
+        "movq %0, %%rsp\n\t"
+        "movq %1, %%rcx\n\t"
+        "movq %2, %%r11\n\t"
+        "swapgs\n\t"         
+        "sysretq"         
+        :
+        : "r" (frame->rsp),
+          "r" (frame->rip),
+          "r" (frame->rflags)
+        : "rcx", "r11", "memory"
+    );
+
+    // 5. Chuta de forma supersónica para o escalonador sem olhar para trás
+    //scheduler_yield_execve((uint64_t)frame);
+
+    return 0; // Inalcançável
 }
+
 
 uint64_t sys_mmap(void *addr, size_t length, int prot, int flags, int fd, int64_t offset) 
 {
@@ -651,103 +742,86 @@ uint64_t sys_getppid(void)
  */
 uint64_t sys_waitpid(int32_t pid, int *wstatus, int options) 
 {
-    kprintf("[SCI] sys_waitpid: Processo Pai (PID: %d) aguardando por Filho (PID: %d)\n", 
-            get_current_cpu()->current_thread->owner->pid, pid);
-
     (void)options;
 
-    // 1. Identifica o processo Pai atual
     cpu_data_block_t* cpu = get_current_cpu();
     process_t* parent_proc = cpu->current_thread->owner;
+    if (!parent_proc) return (uint64_t)-1;
     
     process_t* child_proc = NULL;
 
-    /* REPETIÇÃO DE BUSCA SÍNCRONA (Loop de Bloqueio) */
+    kprintf("[SCI] sys_waitpid: Processo Pai (PID: %d) aguardando por Filho (PID: %d)\n", 
+            parent_proc->pid, pid);
+
     for (;;) 
     {
         child_proc = NULL;
         int tem_filhos_vivos = 0;
+        process_t* zombie_encontrado = NULL;
 
-        /* 
-         * BARREIRA SMP: Bloqueia o spinlock global antes de varrer a lista.
-         * Isto impede que outra CPU remova ou adicione nós a meio da leitura.
-         */
         process_list_spinlock_acquire();
 
-        // 2. Varrer a lista global de processos para localizar o Filho legítimo
+        // 2. VARREDURA COMPLETA: Registamos o estado real de toda a descendência
         for (process_t* p = g_process_list_head; p != NULL; p = p->next) 
         {
-            // Garante a barreira de segurança: Só podemos esperar por filhos legítimos!
             if (p->ppid == parent_proc->pid) 
             {
                 if (pid == -1 || p->pid == (uint32_t)pid)
                 {
-                    child_proc = p;
-                    
                     if (p->state == PROCESS_ZOMBIE) 
                     {
-                        // Encontrámos um filho que já terminou! Sair do loop de varredura
-                        break;
+                        zombie_encontrado = p; // Regista o ponteiro do zombie candidato
                     }
-                    
-                    if (p->state != PROCESS_ZOMBIE) 
+                    else 
                     {
-                        tem_filhos_vivos = 1;
+                        tem_filhos_vivos = 1;  // Existem outros irmãos ainda ativos em Ring 3
                     }
                 }
             }
         }
 
-        /* Liberta temporariamente o trinco para permitir outras operações no Kernel */
         process_list_spinlock_release();
 
-        // 3. CENÁRIO A: O Filho foi encontrado e já é um ZOMBIE (Limpeza e Coleta)
+        // Se encontrámos um zombie estável, elegemo-lo para destruição e coleta
+        if (zombie_encontrado != NULL) {
+            child_proc = zombie_encontrado;
+        }
+
+        // 3. CENÁRIO A: Limpeza e Coleta do Zombie
         if (child_proc && child_proc->state == PROCESS_ZOMBIE) 
         {
             pid_t child_pid = child_proc->pid;
             int status_final = child_proc->exit_code;
 
-            /* Injeta o código de término no ponteiro do utilizador (Ring 3) */
             if (wstatus != NULL) 
             {
-                // TODO: Idealmente, validar se o ponteiro 'wstatus' pertence à memória do user
-                *wstatus = (status_final & 0xFF) << 8;
+                if ((uintptr_t)wstatus < 0x00007FFFFFFFF000UL) {
+                    *wstatus = (status_final & 0xFF) << 8;
+                }
             }
 
-            kprintf("[SCI] sys_waitpid: Filho PID %d recolhido. Removendo e destruindo...\n", child_pid);
+            kprintf("[SCI] sys_waitpid: Filho PID %d recolhido. Removendo...\n", child_pid);
 
-            /* 
-             * RECONCILIAÇÃO E REMOÇÃO EXCLUSIVA (Delegado ao sys_waitpid):
-             * Primeiro removemos o processo da topologia global do sistema com segurança SMP.
-             * De seguida, desabamos a árvore da MMU do utilizador e apagamos o PCB.
-             */
             process_list_remove(child_proc); 
-            process_destroy(child_proc);     
-
-            return (uint64_t)child_pid; // Retorna o PID do filho limpo para o Pai
+            process_destroy(child_proc);    
+            return (uint64_t)child_pid; 
         }
 
-        // 4. PROTEÇÃO: Se pedimos um PID específico e ele não é nosso filho nem existe
+        // 4. PROTEÇÃO DEFENSIVA: Evita loops infinitos se o PID pedido não existir
         if (!child_proc && !tem_filhos_vivos) 
         {
-            kprintf("[SCI ERROR] sys_waitpid: PID %d nao e um filho valido ou nao existe.\n", pid);
-            return (uint64_t)-1; // Erro POSIX: ECHILD
+            kprintf("[SCI ERROR] sys_waitpid: PID %d nao e um filho valido ou nao possui descendentes ativos.\n", pid);
+            return (uint64_t)-1; 
         }
 
-        // 5. CENÁRIO B: O Filho existe mas ainda está a rodar -> Bloquear o Pai!
-        kprintf("[SCI] sys_waitpid: Filho ainda ativo. Bloqueando Pai (PID: %d)...\n", parent_proc->pid);
+        // 5. CENÁRIO B: Bloqueio estruturado e atómico da Thread do Pai
+        kprintf("[SCI] sys_waitpid: Filho ativo. Bloqueando Pai (PID: %d)...\n", parent_proc->pid);
         
-        // Bloqueia preventivamente a thread associada a este processo pai
         thread_t* current_thread = cpu->current_thread;
         current_thread->state = THREAD_BLOCKED;
 
-        /* 
-         * FORÇA A TROCA DE CONTEXTO IMEDIATA:
-         * Invoca o algoritmo de Scheduling para passar a vez a outra tarefa.
-         * Quando o Pai for acordado pelo sys_exit do filho, ele reentrará no ciclo,
-         * recolherá os dados do zombie e libertará a memória com sucesso.
-         */
-        schedule(); 
+        schedule(); // O Pai adormece e cede os ciclos de CPU de forma limpa.
+        
     }
 
     return (uint64_t)-1;
@@ -948,6 +1022,154 @@ uint64_t sys_dup2(int oldfd, int newfd) {
 
     // Delega a execução para a função core
     return k_dup2(proc, oldfd, newfd);
+}
+
+uint64_t sys_fcntl(int fd, uint32_t cmd, uint64_t arg) {
+#define O_APPEND    0x0400
+#define O_NONBLOCK  0x0800
+#define F_DUPFD     0
+#define F_GETFD     1
+#define F_SETFD     2
+#define F_GETFL     3
+#define F_SETFL     4
+    // 1. Validação de sanidade do descritor de ficheiro (idêntica ao sys_read)
+    if (fd < 0 || fd >= MAX_FILES_PER_PROCESS) {
+        return (uint64_t)-1;
+    }
+
+    // 2. Obtém o processo atual em execução no núcleo
+    process_t* proc = get_current_process();
+    if (!proc || !proc->file_descriptor_table[fd]) {
+        return (uint64_t)-1;
+    }
+
+    // 3. Extrai o ficheiro aberto guardado na tabela do processo
+    vfs_file_t* file = proc->file_descriptor_table[fd];
+    if (!file) {
+        return (uint64_t)-1;
+    }
+
+    // 4. Processamento dos comandos enviados pelo Ring 3
+    switch (cmd) {
+        case F_GETFL:
+            // Retorna as flags atuais do ficheiro (ex: O_RDWR, O_APPEND)
+            return (uint64_t)file->flags;
+
+        case F_SETFL:
+            // Define novas flags de estado (restringindo a flags modificáveis como O_NONBLOCK e O_APPEND)
+            // Essencial para o funcionamento correto do socket não-bloqueante no daemon TLSe
+            file->flags = (file->flags & ~O_NONBLOCK) | (arg & O_NONBLOCK);
+            file->flags = (file->flags & ~O_APPEND)   | (arg & O_APPEND);
+            return 0;
+
+        case F_GETFD:
+            // Retorna as flags do descritor (ex: FD_CLOEXEC)
+            return (uint64_t)file->fd_flags;
+
+        case F_SETFD:
+            // Define as flags do descritor
+            file->fd_flags = (uint32_t)arg;
+            return 0;
+
+        default:
+            // Comando desconhecido ou não implementado no VFS
+            return (uint64_t)-1;
+    }
+}
+
+#define ENOENT 2        /* No such file or directory */
+#define ENOTDIR 20      /* Not a directory */
+#define ERANGE 34       /* Result too large (Buffer do utilizador é demasiado pequeno) */
+#define ENAMETOOLONG 36 /* File name too long */
+/**
+ * Interface da Chamada de Sistema chdir (sys_chdir).
+ * Altera o diretório de trabalho atual (PWD) do processo ativo.
+ * 
+ * @param path Caminho absoluto ou relativo do diretório alvo.
+ * @return Retorna 0 em caso de sucesso, ou um código de erro negativo.
+ */
+uint64_t sys_chdir(const char *path)
+{
+    if (!path) return -ENOENT;
+
+    // 1. Resgata o processo atual dono da thread na CPU
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* proc = cpu->current_thread->owner;
+    if (!proc) return -1;
+
+    // 2. Proteção defensiva: verifica se o tamanho do caminho cabe no nosso limite de 256 bytes
+    size_t path_len = strlen(path);
+    if (path_len >= MAX_PATH_LENGTH) {
+        return -ENAMETOOLONG;
+    }
+
+    /* 
+     * 3. VALIDAÇÃO NO VFS
+     * Tentamos abrir o caminho em modo de leitura para validar a sua existência.
+     * Nota: Se o teu VFS exigir caminhos absolutos, assume-se que 'path' começa com '/'.
+     */
+    vfs_node_t* dir_node = vfs_open(path, VFS_MODE_READ);
+    if (!dir_node) {
+        kprintf("[Process] Erro: sys_chdir falhou. Caminho '%s' nao existe.\n", path);
+        return -ENOENT;
+    }
+
+    // 4. Verifica se o nó do VFS é realmente um diretório
+    if ((dir_node->flags & VFS_DIRECTORY) == 0) {
+        kprintf("[Process] Erro: sys_chdir falhou. '%s' nao e um diretorio.\n", path);
+        vfs_close(dir_node);
+        return -ENOTDIR;
+    }
+
+    // Fecha o nó imediatamente, pois só precisávamos de validar a sua existência física
+    vfs_close(dir_node);
+
+    /* 
+     * 5. ATUALIZAÇÃO SEGURA DO PWD
+     * Copia o novo caminho validado para o buffer de 256 bytes do PCB.
+     * O uso de kstrncpy garante que nunca estouraremos os limites da estrutura.
+     */
+    memset(proc->pwd, 0, MAX_PATH_LENGTH);
+    strncpy(proc->pwd, path, path_len);
+
+    kprintf("[Process] Processo %d mudou o PWD para: '%s'\n", proc->pid, proc->pwd);
+
+    return 0; // Sucesso
+}
+
+/**
+ * Interface da Chamada de Sistema getcwd (sys_getcwd).
+ * Copia o diretório de trabalho atual (PWD) do processo ativo para o buffer do utilizador.
+ * 
+ * @param buf  Ponteiro para o buffer no User Space.
+ * @param size Tamanho máximo do buffer alocado pelo utilizador.
+ * @return Retorna 0 em caso de sucesso, ou um código de erro negativo.
+ */
+uint64_t sys_getcwd(char *buf, size_t size)
+{
+    // 1. Validação defensiva inicial do buffer e tamanho fornecido
+    if (!buf || size == 0) return -EINVAL;
+
+    // 2. Resgata o processo atual dono da thread na CPU
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* proc = cpu->current_thread->owner;
+    if (!proc) return -1;
+
+    // 3. Verifica o comprimento real do caminho guardado no PCB
+    size_t pwd_len = strlen(proc->pwd) + 1; // +1 para incluir o terminador '\0'
+
+    // Se o buffer do utilizador for menor do que o caminho real, falha com ERANGE
+    if (size < pwd_len) {
+        kprintf("[Process] Erro: sys_getcwd falhou. Buffer do utilizador (%lu bytes) e pequeno para '%s' (%lu bytes).\n", 
+                size, proc->pwd, pwd_len);
+        return -ERANGE;
+    }
+
+    memcpy(buf, proc->pwd, pwd_len);
+
+    kprintf("[Process] sys_getcwd: Caminho '%s' copiado com sucesso para o processo %d.\n", proc->pwd, proc->pid);
+
+    return 0; // Sucesso (A libc receberá 0 e retornará o ponteiro do buffer ao utilizador)
 }
 
 /*

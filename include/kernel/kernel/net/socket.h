@@ -22,6 +22,7 @@
 
 #include <kernel/lib/stdint.h>
 #include <kernel/kernel/core/spinlock.h>
+#include <kernel/kernel/net/net.h>
 
 /* Famílias de Protocolos Fundamentais */
 #define AF_UNSPEC   0
@@ -71,8 +72,9 @@ typedef struct protocol_operations {
 typedef struct socket {
     int family;                     // AF_LOCAL, AF_INET, etc.
     int type;                       // SOCK_STREAM ou SOCK_DGRAM
-    int state;                      // Estado interno do socket (0=Desconectado, 1=Conectado, 2=Listen)
-    
+    int protocol;                   // IPPROTO_TCP, IPPROTO_UDP
+    tcp_state_t   state;            // Estado atual do socket na FSM TCP
+
     spinlock_t lock;
 
     uint8_t local_addr[256];        // Buffer genérico para guardar o endereço (IP ou caminho da string)
@@ -80,6 +82,10 @@ typedef struct socket {
 
     uint8_t remote_addr[256];       // Buffer genérico para o endereço da máquina remota
     unsigned long remote_addr_len;  // Tamanho real do endereço remoto guardado
+
+    /* CONTADORES CRÍTICOS: Isolamento de fluxo por ligação (Substitui g_tcp_*) */
+    uint32_t      local_seq;          /* O nosso próximo número de sequência a enviar (SND.NXT) */
+    uint32_t      remote_ack;         /* O próximo número de sequência que esperamos do cliente (RCV.NXT) */
 
     // PONTE POLIMÓRFICA DO PROTOCOLO (O Segredo da Modularidade!)
     protocol_operations_t* proto_ops;
@@ -98,8 +104,12 @@ typedef struct socket {
     struct socket* peer;            // Aponta para o socket parceiro conectado (Zero-Copy)
     struct socket* listen_queue;    // Cabeça da fila de conexões pendentes para o accept()
     struct socket* next;            // Próximo socket na fila de conexões pendentes
+    struct socket* global_next;     // Gerencia o encadeamento na lista global g_bound_sockets_head
 } socket_t;
 
+
+extern socket_t* g_bound_sockets_head;
+extern spinlock_t g_socket_list_lock;
 
 /**
  * @brief Inicializa as estruturas globais e o subsistema de sockets do Kernel.
@@ -109,6 +119,7 @@ void init_socket(void);
 int socket_bind_address(socket_t* sock, const void* addr, unsigned long addrlen);
 socket_t* socket_find_by_address(const void* addr, unsigned long addrlen, int family);
 socket_t* socket_find_by_port(uint16_t port, int protocol_type);
+socket_t* tcp_input_lookup(uint32_t src_ip, tcp_header_t* tcp);
 int socket_add_listen_queue(socket_t* server, socket_t* client);
 socket_t* socket_create(int domain, int type, int protocol);
 int socket_close(socket_t* sock);

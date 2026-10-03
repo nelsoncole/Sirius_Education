@@ -35,7 +35,7 @@ int system(const char *string)
 
     if (pid < 0) {
         // Falha crítica ao criar a nova thread/processo no Kernel
-        printf("SiriusOS: system: erro ao duplicar o processo (fork falhou).\n");
+        printf("system: erro ao duplicar o processo (fork falhou).\n");
         return -1;
     }
 
@@ -54,7 +54,7 @@ int system(const char *string)
         execve("/bin/sh", argv, environ);
 
         // Se o execve retornar, significa que o binário "/bin/sh" não foi encontrado no teu VFS!
-        printf("SiriusOS: system: interpretador /bin/sh nao encontrado.\n");
+        printf("system: interpretador /bin/sh nao encontrado.\n");
         
         // Encerra de forma imediata e atómica o processo filho falhado
         _exit(127); // Código padrão POSIX para comando/shell não encontrada

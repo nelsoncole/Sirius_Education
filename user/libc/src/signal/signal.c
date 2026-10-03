@@ -9,12 +9,16 @@
  *        Author:  Nelson Cole
  *   Created Date: 25/09/2026
  * 
+ *    Modified By: Nelson Cole
+ *  Modified Date: 01/10/2026
+ * 
  *        License: MIT
  * ============================================================================
  */
 
 #include <signal.h>
 #include <stdio.h>
+#include <unistd.h>
 
 /**
  * signal - Estabelece uma rotina de tratamento para um sinal específico.
@@ -24,13 +28,10 @@
  */
 sighandler_t signal(int signum, sighandler_t handler)
 {
-    // CORREÇÃO: Especificadores adequados (%d para int, %p para ponteiro de função)
+    // Especificadores adequados (%d para int, %p para ponteiro de função)
     printf("panic: libc_signal( signum: %d, handler: %p ) disparado!\n", signum, (void *)handler);
     
-    // Bloqueia a execução da thread em Ring 3 para depuração do estado dos registos
-    for (;;) {
-        __asm__ __volatile__("pause");
-    }
+    _exit(signum);
 
     return SIG_ERR; 
 }
@@ -50,10 +51,23 @@ int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact)
     printf("panic: libc_sigaction( signum: %d, act: %p, oldact: %p ) disparado!\n", 
            signum, (const void *)act, (void *)oldact);
 
-    for (;;) {
-        __asm__ __volatile__("pause");
-    }
+    _exit(signum);
 
     return -1;
 }
 
+/**
+ * raise - Envia um sinal atómico direcionado ao próprio processo atual.
+ *         Adicionado para capturar falhas de sanidade interna (como o SIGABRT)
+ *         geradas pela amálgama da LibTomCrypt no Ring 3.
+ * @sig:   O identificador numérico do sinal a ser disparado.
+ * @return: 0 em caso de sucesso, ou valor não-zero em erro.
+ */
+int raise(int sig)
+{
+    printf("libc: raise( sig: %d ) disparado. Encerrando processo Ring 3...\n", sig);
+
+    _exit(sig); 
+
+    return -1; // Nunca será alcançado
+}

@@ -101,6 +101,8 @@ process_t* elf_load_and_create_process(const char* path, int argc, char** argv, 
 
             // Injeta os canais de E/S adequados ao contexto (ex: a tua nova PTY)
             process_init_standard_io(proc, pts_path);
+
+            ksprintf(proc->pwd, "/mnt/hd0");
         }
 
         // ATIVAÇÃO: Esta função muda o estado para PROCESS_READY e insere-o na RunQueue

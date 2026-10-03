@@ -25,11 +25,14 @@
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/fs/dev/vfs_tty.h>
 #include <kernel/sys/types.h>
+#include <kernel/kernel/core/spinlock.h>
 
 #define MAX_SHARED_REGIONS 8
 #define MAX_SIGNALS        32
 #define MAX_SIGNALS            32
 #define MAX_FILES_PER_PROCESS  32
+
+#define MAX_PATH_LENGTH 256
 
 // Estrutura abstrata do VFS (Virtual File System) definida em fs/vfs/
 // struct file; 
@@ -83,9 +86,12 @@ typedef struct process {
 
     struct process* next;
 
+    char pwd[MAX_PATH_LENGTH]; // Ex: "/System/Bin"
+
 } process_t;
 
 extern process_t* g_process_list_head;
+extern spinlock_t g_process_list_lock;
 
 /**
  * process_init_standard_io - Inicializa os canais padrão (0, 1, 2) de um processo.
@@ -94,6 +100,19 @@ extern process_t* g_process_list_head;
  *           Se NULL, faz fallback para a consola física "/dev/tty0".
  */
 void process_init_standard_io(process_t* proc, const char* io_path);
+
+/**
+ * Faz o parsing estrutural do cabeçalho ELF, mapeia os segmentos PT_LOAD na tabela 
+ * de páginas do processo atual e reconstrói a stack do utilizador com os argumentos.
+ * 
+ * @param proc           Ponteiro para o processo atual (PCB).
+ * @param binary_buffer  Ponteiro para o buffer alinhado contendo o ficheiro ELF.
+ * @param binary_size    Tamanho total do binário em bytes.
+ * @param argc           Contagem de argumentos.
+ * @param argv           Array de strings dos argumentos.
+ * @return Retorna o Entry Point (e_entry) em caso de sucesso, ou 0 em caso de erro.
+ */
+uintptr_t elf_parse_and_map(process_t* proc, void* binary_buffer, unsigned long binary_size, int argc, char** argv);
 
 /**
  * Cria um novo processo com o seu próprio espaço de endereçamento.
@@ -106,11 +125,20 @@ void process_init_standard_io(process_t* proc, const char* io_path);
 process_t* process_create(void* binary_buffer, unsigned long binary_size, int argc, char** argv, uint32_t cpu_id);
 
 /**
+ * Liberta as estruturas alocadas e desvincula os recursos do espaço do utilizador.
+ * Limpa recursivamente apenas a metade inferior (User Space) das tabelas físicas
+ * associadas ao CR3, preparando o processo atual para o fluxo de sobreposição.
+ */
+int process_flush_user_space(uint64_t pml4_phys);
+
+/**
  * Destrói e liberta as estruturas e recursos associados a um processo.
  * 
  * @param proc Ponteiro para o Bloco de Controlo do Processo (PCB) a eliminar.
  */
 void process_destroy(process_t* proc);
+
+void process_exit(int code);
 
 /**
  * get_current_process - Recupera o processo dono da thread ativa no core atual.

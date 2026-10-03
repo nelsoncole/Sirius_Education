@@ -377,7 +377,7 @@ void kernel_main(BOOT_INFO *boot_info)
     }
 
     // MONTAGEM DINÂMICA DOS ARGUMENTOS:
-    int init_argc = 5;
+    /*int init_argc = 5;
     char *init_argv[] = {
         "/system/user.elf",    // argv[0]: Caminho do executável
         g_boot_partition_name, // argv[1]: Ex: "ahci0.1" (Origem de persistência)
@@ -387,9 +387,18 @@ void kernel_main(BOOT_INFO *boot_info)
     };
 
     kprintf("[BOOT] Lancando o processo mestre de User Space '/system/user.elf'...\n");
-    elf_load_and_create_process("/mnt/hd0/system/user.elf", init_argc, init_argv, 0);
+    elf_load_and_create_process("/mnt/hd0/system/user.elf", init_argc, init_argv, 0);*/
 
-    vfs_print_tree("/");
+    char *argv_sshd[] = {"/mnt/hd0/apps/sshd.elf",};
+    kprintf("[BOOT] Lancando o processo do user space '%s'...\n", argv_sshd[0]);
+    elf_load_and_create_process(argv_sshd[0], 1, argv_sshd, 0);
+
+    char *argv[] = {"/mnt/hd0/apps/bin/sh",};
+    //kprintf("[BOOT] Lancando o processo do user space '%s'...\n", argv[0]);
+    //elf_load_and_create_process(argv[0], 1, argv, 0);
+    
+
+    //vfs_print_tree("/");
 
     // Liga o barramento local de interrupções com segurança
     __asm__ __volatile__("sti");

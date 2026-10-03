@@ -27,7 +27,7 @@
 
 // Ponteiros estáticos de controlo do Heap local do Processo
 static UHEAP_HEADER* g_uheap_start = null;
-static uint64_t g_uheap_current_end = 0;
+uint64_t g_uheap_current_end = 0;
 
 /* Funções auxiliares */
 static inline void* u_memset(void* dest, int val, size_t len) {

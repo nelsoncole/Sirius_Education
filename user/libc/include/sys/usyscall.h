@@ -37,6 +37,7 @@ enum {
     SYS_SEEK,
     SYS_FLUSH,
     SYS_STAT,
+    SYS_FSTAT,
     SYS_CHMOD,
     SYS_UNLINK,
     SYS_RMDIR,
@@ -44,6 +45,7 @@ enum {
     SYS_MKDIR,
     SYS_GETDENTS,
     SYS_DUP2,
+    SYS_FCNTL,
     SYS_IOCTL,
 
     /* Gestão de Processos e Memória Avançada */
@@ -85,6 +87,9 @@ enum {
     SYS_KMOD_LOAD,
     SYS_KMOD_UNLOAD,
     SYS_KMOD_PRINT,
+
+    SYS_CHDIR,
+    SYS_GETCWD,
 
     /* O compilador define automaticamente MAX_SYSCALLS com o valor total correto (43) */
     MAX_SYSCALLS

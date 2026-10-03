@@ -120,7 +120,6 @@ socket_t* socket_find_by_port(uint16_t port, int protocol_type)
         {
             /* Faz o cast seguro do buffer genérico local_addr para a estrutura da internet */
             struct sockaddr_in* local_sin = (struct sockaddr_in*)curr->local_addr;
-            
             /* Compara a porta binária bruta de rede (Big-Endian) sem conversões redundantes */
             if (local_sin->sin_port == port) 
             {
@@ -133,6 +132,53 @@ socket_t* socket_find_by_port(uint16_t port, int protocol_type)
 
     spin_unlock(&g_socket_list_lock);
     return NULL; /* Porta fechada */
+}
+/**
+ * @brief Localiza o socket ideal para o tráfego TCP de entrada (4-tuple lookup com fallback).
+ */
+socket_t* tcp_input_lookup(uint32_t src_ip, tcp_header_t* tcp)
+{
+    socket_t* listen_fallback = NULL;
+    
+    spin_lock(&g_socket_list_lock); 
+    socket_t* curr = g_bound_sockets_head;
+
+    while (curr != NULL)
+    {
+        /* Apenas sockets IPv4 e do tipo STREAM (TCP) nos interessam aqui */
+        if (curr->family == AF_INET && curr->type == SOCK_STREAM)
+        {
+            struct sockaddr_in* local_sin = (struct sockaddr_in*)curr->local_addr;
+
+            /* 1. VERIFICAÇÃO DA PORTA LOCAL */
+            if (local_sin->sin_port == tcp->dest_port)
+            {
+                struct sockaddr_in* remote_sin = (struct sockaddr_in*)curr->remote_addr;
+
+                /* PASSO A: PROCURA EXATA (SOCKET DE SESSÃO) */
+                if (curr->state == TCP_STATE_ESTABLISHED || curr->state == TCP_STATE_SYN_RECV)
+                {
+                    if (remote_sin->sin_port == tcp->src_port && remote_sin->sin_addr.s_addr == src_ip)
+                    {
+                        /* Encontrámos o socket de sessão exato! Devolve imediatamente. */
+                        spin_unlock(&g_socket_list_lock);
+                        return curr;
+                    }
+                }
+                
+                /* PASSO B: GUARDAR O FALLBACK (SOCKET PASSIVO) */
+                if (curr->state == TCP_STATE_LISTEN)
+                {
+                    listen_fallback = curr;
+                }
+            }
+        }
+        curr = curr->next;
+    }
+    spin_unlock(&g_socket_list_lock);
+
+    /* Se não encontrámos nenhuma sessão ativa (como no pacote SYN inicial), devolvemos o LISTEN */
+    return listen_fallback;
 }
 
 /**
@@ -160,8 +206,9 @@ static int socket_vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, vo
     (void)offset;
 
     if (!node || !node->private_data || !buffer || size == 0) return -1;
-
+    
     socket_t* sock = (socket_t*)node->private_data;
+    if(!sock) return -1;
 
     /* AUTO-BIND AUTOMÁTICO PARA IPV4 */
     if (sock->family == AF_INET && sock->local_addr_len == 0) 
@@ -176,7 +223,7 @@ static int socket_vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, vo
      * POLIMORFISMO ABSOLUTO:
      * O VFS delega 100% da transmissão para o driver do protocolo ativo.
      */
-    if (sock->proto_ops && sock->proto_ops->sendto) 
+    if (sock && sock->proto_ops && sock->proto_ops->sendto) 
     {
         return (int)sock->proto_ops->sendto(sock, buffer, size, 0, NULL, 0);
     }
@@ -192,12 +239,8 @@ static int socket_vfs_read(vfs_node_t* node, uint64_t offset, uint32_t size, voi
     if (!node || !node->private_data || !buffer || size == 0) return -1;
 
     socket_t* sock = (socket_t*)node->private_data;
-
-    /* 
-     * POLIMORFISMO ABSOLUTO:
-     * O VFS delega 100% da leitura para o driver do protocolo ativo.
-     */
-    if (sock->proto_ops && sock->proto_ops->recvfrom) 
+    
+    if (sock && sock->proto_ops && sock->proto_ops->recvfrom) 
     {
         return (int)sock->proto_ops->recvfrom(sock, buffer, size, 0, NULL, NULL);
     }
@@ -519,12 +562,48 @@ int accept(int fd, void* addr, unsigned long* addrlen)
     if (sock && sock->proto_ops && sock->proto_ops->accept) {
         socket_t* client = sock->proto_ops->accept(sock);
         if (!client) return -1;
+
+        int client_fd = -1;
+        for (int i = 0; i < MAX_FILES_PER_PROCESS; i++)
+        {
+            if (proc->file_descriptor_table[i] == NULL) 
+            {
+                client_fd = i;
+                break;
+            }
+        }
+
+        if (client_fd == -1) 
+        {
+            kprintf("[SYS_ACCEPT] Erro: Tabela de File Descriptors cheia.\n");
+            return -3; /* EMFILE */
+        }
+
+        vfs_file_t* client_file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
+        if (!client_file) return -4;
+        memset(client_file, 0, sizeof(vfs_file_t));
+
+        vfs_node_t* client_node = (vfs_node_t*)kmalloc(sizeof(vfs_node_t));
+        if (!client_node) 
+        {
+            kfree(client_file);
+            return -4;
+        }
+        memset(client_node, 0, sizeof(vfs_node_t));
+
+        /* Liga a estrutura polimórfica (VFS Node -> Private Data -> Socket) */
+        client_node->private_data = client;
+        //client_node->type         = VFS_TYPE_SOCKET; // Se tiver este enum no VFS
         
-        /* 
-         * No futuro, clone o nó VFS e coloque o novo 'client' atrelado 
-         * a um novo FD para retornar para a aplicação Ring 3!
-         */
-        return 0; 
+        /* Copia os ganchos de operação (read/write) do socket original do VFS */
+        client_node->ops = file->node->ops; 
+
+        client_file->node = client_node;
+        client_file->flags = file->flags;
+
+        proc->file_descriptor_table[client_fd] = client_file;
+        
+        return client_fd; 
     }
     return -1;
 }

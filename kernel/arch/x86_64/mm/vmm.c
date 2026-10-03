@@ -67,7 +67,12 @@ void vmm_init(void) {
  * Força a MMU a transitar imediatamente para o novo espaço virtual.
  */
 void vmm_switch_pml4(unsigned long pml4_phys) {
-    __asm__ __volatile__("mov %0, %%cr3" :: "r"(pml4_phys) : "memory");
+    __asm__ __volatile__(
+        "mov %0, %%cr3"
+        :
+        : "r"(pml4_phys)
+        : "memory"
+    );
 }
 
 /*
@@ -368,112 +373,149 @@ unsigned long vmm_clone_address_space(unsigned long parent_pml4_phys)
     unsigned long child_pml4_phys = vmm_create_address_space(); 
     if (!child_pml4_phys) return 0;
 
-    /* Variáveis puras de endereços físicos para proteção absoluta do Stack de 4KB */
+    /* Endereços físicos reais (alinhados a 4KB) reconstruídos a partir das tabelas */
     unsigned long parent_pdpt_phys, child_pdpt_phys;
     unsigned long parent_pd_phys,   child_pd_phys;
     unsigned long parent_pt_phys,   child_pt_phys;
     unsigned long parent_page_phys, child_page_phys;
 
-    /* Ponteiros de tabelas fixos por nível para evitar remapeamentos redundantes */
-    unsigned long long* pml4_parent = (unsigned long long*)vmm_scratch_map_internal(parent_pml4_phys, 0);
-    unsigned long long* pml4_child  = (unsigned long long*)vmm_scratch_map_internal(child_pml4_phys, 1);
-    unsigned long long* pdpt_parent = NULL;
-    unsigned long long* pdpt_child  = NULL;
-    unsigned long long* pd_parent   = NULL;
-    unsigned long long* pd_child    = NULL;
-    unsigned long long* pt_parent   = NULL;
-    unsigned long long* pt_child    = NULL;
-
-    unsigned long long flags_backup = 0;
+    /* Ponteiros tipados baseados nas tuas estruturas exatas de paging.h */
+    PML4_TABLE* pml4_parent = (PML4_TABLE*)vmm_scratch_map_internal(parent_pml4_phys, 0);
+    PML4_TABLE* pml4_child  = (PML4_TABLE*)vmm_scratch_map_internal(child_pml4_phys, 1);
+    PAGE_DIRECTORY_POINTER_TABLE* pdpt_parent = NULL;
+    PAGE_DIRECTORY_POINTER_TABLE* pdpt_child  = NULL;
+    PAGE_DIRECTORY* pd_parent = NULL;
+    PAGE_DIRECTORY* pd_child  = NULL;
+    PAGE_TABLE* pt_parent     = NULL;
+    PAGE_TABLE* pt_child      = NULL;
 
     /* 2. Clona estritamente as seções alocadas na Metade do Utilizador (Índices 0 a 255) */
     for (int i = 0; i < 256; i++) 
     {
-        /* Inspeciona a entrada 'i' do PML4 do Pai (Janela 0 está intacta) */
-        if (!(pml4_parent[i] & 0x1)) continue;
+        /* Inspeciona a entrada usando o campo de bit '.p' (Presente) */
+        if (!pml4_parent[i].p) continue;
 
-        /* Salva o endereço e as flags originais do Pai deste nível */
-        parent_pdpt_phys = pml4_parent[i] & ~0xFFFUL;
-        flags_backup     = pml4_parent[i] & 0xFFF;
+        /* CORREÇÃO CRÍTICA: Desloca 12 bits para a esquerda para obter o endereço físico real */
+        parent_pdpt_phys = (unsigned long)pml4_parent[i].phy_addr_pdpt << 12;
         
         child_pdpt_phys  = pmm_alloc_page();
         if (!child_pdpt_phys) return 0;
 
-        /* Mapeia e limpa a nova PDPT física do Filho na Janela 3 para remover lixo */
-        pdpt_child = (unsigned long long*)vmm_scratch_map_internal(child_pdpt_phys, 3);
+        /* Mapeia e limpa a nova PDPT física do Filho na Janela 3 para remover resíduos */
+        pdpt_child = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(child_pdpt_phys, 3);
         memset(pdpt_child, 0, 4096);
 
-        /* Regista a nova PDPT limpa no PML4 do Filho (Janela 1 está intacta) */
-        pml4_child[i] = child_pdpt_phys | flags_backup;
+        /* Regista a nova PDPT no PML4 do Filho, copiando as flags de controlo */
+        pml4_child[i].p                 = 1;
+        pml4_child[i].rw                = pml4_parent[i].rw;
+        pml4_child[i].us                = pml4_parent[i].us;
+        pml4_child[i].pwt               = pml4_parent[i].pwt;
+        pml4_child[i].pcd               = pml4_parent[i].pcd;
+        pml4_child[i].rs1               = pml4_parent[i].rs1;
+        pml4_child[i].ign               = pml4_parent[i].ign;
+        pml4_child[i].phy_addr_pdpt     = (child_pdpt_phys >> 12);
+        pml4_child[i].rs2               = pml4_parent[i].rs2;
 
-        /* Mapeia a PDPT do Pai na Janela 2 (Apenas uma vez por iteração do nível i) */
-        pdpt_parent = (unsigned long long*)vmm_scratch_map_internal(parent_pdpt_phys, 2);
+        /* Mapeia a PDPT do Pai na Janela 2 */
+        pdpt_parent = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(parent_pdpt_phys, 2);
 
         for (int j = 0; j < 512; j++)
         {
-            /* Inspeciona a entrada 'j' da PDPT do Pai (Janela 2 está intacta) */
-            if (!(pdpt_parent[j] & 0x1)) continue;
+            if (!pdpt_parent[j].p) continue;
 
-            parent_pd_phys = pdpt_parent[j] & ~0xFFFUL;
-            flags_backup   = pdpt_parent[j] & 0xFFF;
+            /* CORREÇÃO CRÍTICA: Desloca 12 bits para a esquerda */
+            parent_pd_phys = (unsigned long)pdpt_parent[j].phy_addr_pd << 12;
             
             child_pd_phys  = pmm_alloc_page();
             if (!child_pd_phys) return 0;
 
             /* Mapeia e limpa o novo PD físico do Filho na Janela 5 */
-            pd_child = (unsigned long long*)vmm_scratch_map_internal(child_pd_phys, 5);
+            pd_child = (PAGE_DIRECTORY*)vmm_scratch_map_internal(child_pd_phys, 5);
             memset(pd_child, 0, 4096);
 
-            /* Regista o PD limpo na PDPT do Filho (Janela 3 está intacta) */
-            pdpt_child[j] = child_pd_phys | flags_backup; 
+            /* Regista o PD limpo na PDPT do Filho */
+            pdpt_child[j].p               = 1;
+            pdpt_child[j].rw              = pdpt_parent[j].rw;
+            pdpt_child[j].us              = pdpt_parent[j].us;
+            pdpt_child[j].pwt             = pdpt_parent[j].pwt;
+            pdpt_child[j].pcd             = pdpt_parent[j].pcd;
+            pdpt_child[j].rs1             = pdpt_parent[j].rs1;
+            pdpt_child[j].ign             = pdpt_parent[j].ign;
+            pdpt_child[j].phy_addr_pd     = (child_pd_phys >> 12);
+            pdpt_child[j].rs2             = pdpt_parent[j].rs2;
 
-            /* Mapeia o PD do Pai na Janela 4 (Apenas uma vez por iteração do nível j) */
-            pd_parent = (unsigned long long*)vmm_scratch_map_internal(parent_pd_phys, 4);
+            /* Mapeia o PD do Pai na Janela 4 */
+            pd_parent = (PAGE_DIRECTORY*)vmm_scratch_map_internal(parent_pd_phys, 4);
 
             for (int k = 0; k < 512; k++)
             {
-                /* Inspeciona a entrada 'k' do PD do Pai (Janela 4 está intacta) */
-                if (!(pd_parent[k] & 0x1)) continue;
+                if (!pd_parent[k].p) continue;
 
-                parent_pt_phys = pd_parent[k] & ~0xFFFUL;
-                flags_backup   = pd_parent[k] & 0xFFF;
+                /* CORREÇÃO CRÍTICA: Desloca 12 bits para a esquerda */
+                parent_pt_phys = (unsigned long)pd_parent[k].phy_addr_pt << 12;
                 
                 child_pt_phys  = pmm_alloc_page();
                 if (!child_pt_phys) return 0;
 
                 /* Mapeia e limpa a nova PT física do Filho na Janela 7 */
-                pt_child = (unsigned long long*)vmm_scratch_map_internal(child_pt_phys, 7);
+                pt_child = (PAGE_TABLE*)vmm_scratch_map_internal(child_pt_phys, 7);
                 memset(pt_child, 0, 4096);
 
-                /* Regista a PT limpa no PD do Filho (Janela 5 está intacta) */
-                pd_child[k] = child_pt_phys | flags_backup;
+                /* Regista a PT limpa no PD do Filho */
+                pd_child[k].p               = 1;
+                pd_child[k].rw              = pd_parent[k].rw;
+                pd_child[k].us              = pd_parent[k].us;
+                pd_child[k].pwt             = pd_parent[k].pwt;
+                pd_child[k].pcd             = pd_parent[k].pcd;
+                pd_child[k].a               = pd_parent[k].a;
+                pd_child[k].d               = pd_parent[k].d;
+                pd_child[k].ps              = pd_parent[k].ps; // Mantém 0 para tabelas de 4KB
+                pd_child[k].g               = pd_parent[k].g;
+                pd_child[k].ign2            = pd_parent[k].ign2;
+                pd_child[k].phy_addr_pt     = (child_pt_phys >> 12);
+                pd_child[k].rs2             = pd_parent[k].rs2;
 
-                /* Mapeia a PT do Pai na Janela 6 (Apenas uma vez por iteração do nível k) */
-                pt_parent = (unsigned long long*)vmm_scratch_map_internal(parent_pt_phys, 6);
+                /* Mapeia a PT do Pai na Janela 6 */
+                pt_parent = (PAGE_TABLE*)vmm_scratch_map_internal(parent_pt_phys, 6);
 
                 for (int m = 0; m < 512; m++)
                 {
-                    /* Inspeciona a entrada 'm' da PT do Pai (Janela 6 está intacta) */
-                    if (!(pt_parent[m] & 0x1)) continue;
+                    if (!pt_parent[m].p) continue;
 
-                    parent_page_phys = pt_parent[m] & ~0xFFFUL;
-                    flags_backup     = pt_parent[m] & 0xFFF;
+                    /* CORREÇÃO CRÍTICA: Desloca 12 bits para a esquerda */
+                    parent_page_phys = (unsigned long)pt_parent[m].frames << 12;
                     
                     child_page_phys  = pmm_alloc_page();
                     if (!child_page_phys) return 0;
 
-                    /* Grava o mapeamento final na PT do Filho (Janela 7 está intacta) */
-                    pt_child[m] = child_page_phys | flags_backup;
+                    /* Grava o mapeamento final na PT do Filho, preservando as flags do Pai */
+                    pt_child[m].p       = 1;
+                    pt_child[m].rw      = pt_parent[m].rw;
+                    pt_child[m].us      = pt_parent[m].us;
+                    pt_child[m].pwt     = pt_parent[m].pwt;
+                    pt_child[m].pcd     = pt_parent[m].pcd;
+                    pt_child[m].a       = pt_parent[m].a;
+                    pt_child[m].d       = pt_parent[m].d;
+                    pt_child[m].pat     = pt_parent[m].pat;
+                    pt_child[m].g       = pt_parent[m].g;
+                    pt_child[m].ign     = pt_parent[m].ign;
+                    pt_child[m].frames  = (child_page_phys >> 12);
+                    pt_child[m].rs2     = pt_parent[m].rs2;
+                    pt_child[m].nx      = pt_parent[m].nx;
 
                     /* Janelas 8 e 9: CÓPIA REAL DE DADOS (Isolamento total e atómico) */
                     void* src_data  = (void*)vmm_scratch_map_internal(parent_page_phys, 8);
                     void* dest_data = (void*)vmm_scratch_map_internal(child_page_phys, 9);
                     
                     memcpy(dest_data, src_data, 4096); 
+
                 }
             }
         }
     }
+
+    /* Atualiza o CR3 global para validar e estabilizar todas as tabelas clonadas na MMU */
+    __asm__ __volatile__("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");
 
     return child_pml4_phys;
 }

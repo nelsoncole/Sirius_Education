@@ -17,16 +17,28 @@
 
 #include <sys/types.h>
 
-/* Modos de Acesso Fundamentais (Mapeados nos bits inferiores de flags) */
-#define O_RDONLY    0x0000    /* Abre exclusivamente para leitura */
-#define O_WRONLY    0x0001    /* Abre exclusivamente para escrita */
-#define O_RDWR      0x0002    /* Abre para leitura e escrita binária */
+/* Flags de Acesso ao Ficheiro (Máscaras básicas para o VFS) */
+#define O_RDONLY    0x0000    /* Apenas Leitura */
+#define O_WRONLY    0x0001    /* Apenas Escrita */
+#define O_RDWR      0x0002    /* Leitura e Escrita */
+#define O_ACCMODE   0x0003    /* Máscara para modo de acesso */
 
-/* Flags de Criação e Estado de Ficheiros (POSIX Bitmasks) */
-#define O_CREAT     0x0200    /* Força a criação do ficheiro se não existir */
-#define O_APPEND    0x0008    /* Posiciona o ponteiro no fim antes de cada escrita */
-#define O_TRUNC     0x0400    /* Trunca o tamanho do ficheiro para 0 se já existir */
-#define O_NONBLOCK  0x4000    /* Ativa o modo de E/S não-bloqueante */
+/* Flags de Estado e Criação (Usadas pelo sh.c e sshd.c) */
+#define O_CREAT     0x0040    /* Cria o ficheiro se não existir */
+#define O_EXCL      0x0080    /* Erro se O_CREAT e o ficheiro já existir */
+#define O_TRUNC     0x0200    /* Trunca o ficheiro para 0 bytes se existir */
+#define O_APPEND    0x0400    /* Posiciona o ponteiro de escrita no fim */
+#define O_NONBLOCK  0x0800    /* E/S não-bloqueante (Essencial para Sockets TLS) */
+
+/* Comandos da Chamada de Sistema fcntl() */
+#define F_DUPFD     0         /* Duplica o descritor de ficheiro */
+#define F_GETFD     1         /* Obtém as flags do descritor */
+#define F_SETFD     2         /* Define as flags do descritor */
+#define F_GETFL     3         /* Obtém as flags de estado do ficheiro */
+#define F_SETFL     4         /* Define as flags de estado do ficheiro (ex: O_NONBLOCK) */
+
+/* Flag para o comando F_DUPFD (Fechar ao executar execve) */
+#define FD_CLOEXEC  1
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,6 +46,8 @@ extern "C" {
 
 /* Assinatura da chamada de sistema regulamentar POSIX */
 int open(const char *pathname, int flags, ...);
+int creat(const char *pathname, mode_t mode);
+int fcntl(int fd, int cmd, ...);
 
 #ifdef __cplusplus
 }

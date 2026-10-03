@@ -72,12 +72,15 @@ int strncpy(char *dest, const char *src,size_t count)
 
 size_t strlen(const char *s)
 {
-	char *tmp = (char*)s;
-	
-	while(*tmp != '\0')tmp++;
+    const char *tmp = s;
 
-	return (size_t)(tmp - s);
+    while (*tmp != '\0') {
+        tmp++;
+    }
+
+    return (size_t)(tmp - s);
 }
+
 
 int strcmp (const char* s1, const char* s2)
 {

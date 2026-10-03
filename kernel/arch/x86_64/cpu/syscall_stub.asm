@@ -28,32 +28,37 @@ syscall_entry_stub:
     mov [gs:8], rsp             ; Guarda temporariamente o RSP do utilizador
     mov rsp, [gs:0]             ; Carrega o kernel_stack_top estável
 
-    ; ============================================================================
-    ; PRESERVAÇÃO E ISOLAMENTO FÍSICO (6 Pushes = 48 bytes - Alinhado a 16)
-    ; ============================================================================
-    mov r14, rcx                ; R14 = RIP real de retorno
-    mov r15, r11                ; R15 = RFLAGS originais
+    mov [gs:16], rcx            ; Salva de forma imutável o RIP de utilizador contra o schedule()
+    mov [gs:24], r11            ; Salva de forma imutável as RFLAGS de utilizador contra o schedule()
 
-    push r14                    ; 1. [rsp + 40] Salva o RIP real de retorno
-    push r15                    ; 2. [rsp + 32] Salva as RFLAGS originais
-    push rbp                    ; 3. [rsp + 24] Preserva o RBP
-    push rbx                    ; 4. [rsp + 16] Preserva o RBX
-    push r10                    ; 5. [rsp + 8]  Salva o R10 (Antigo RSP ou argumento)
-    push qword 0                ; 6. [rsp + 0]  PADDING final de alinhamento de 16 bytes
+    ; ============================================================================
+    ; PRESERVAÇÃO E ISOLAMENTO FÍSICO DO CONTEXTO DE RING 3
+    ; ============================================================================
+    push rbp                    ; 1. Preserva o RBP (Obrigatório para syscall bloqueante)
+    push rbx                    ; 2. Preserva o RBX (Obrigatório para syscall bloqueante)
+    push r10                    ; 3. Salva o R10 (Antigo RSP do utilizador ou argumento)
+    push r12                    ; 4. Preserva registadores não-voláteis adicionais para o bloco C
+    push r13
+    push r14
+    push r15
 
     ; ====================================================================================================
-    ; 2. CONVERSÃO DE ARGUMENTOS DE 64-BITS (6 ARGUMENTOS REAIS)
+    ; 2. CONVERSÃO DE ARGUMENTOS DE 64-BITS (CONVENÇÃO SYSTEM V ABI)
     ;
     ; O utilizador envia em:    RAX (Nº), RDI (A1), RSI (A2), RDX (A3), R10 (A4), R8 (A5), R9 (A6)
     ; O seu Kernel C espera:    RDI (Nº), RSI (A1), RDX (A2), RCX (A3), R8 (A4), R9 (A5), [Stack](A6)
     ; ====================================================================================================
+    
+    ; Alinhamento dinâmico seguro da Stack do Kernel para a chamada da função C
+    mov rbp, rsp
+    and rsp, ~0xF               ; Alinha a stack a 16 bytes
 
-    push r9                     ; 6º argumento: Empurra o 6º argumento (Passado em R9 pelo user)
-    push qword 0                ; Alinhamento extra de 16 bytes para a Stack de chamada do Call
-
-    ; Ajuste dos restantes registos para a chamada em C
+    ; Passagem do 6º argumento (A6) através do topo da stack conforme a ABI exige
+    push r9                     ; O 6º argumento fica agora na posição exata [rsp] para o call ler
+    
+    ; Ajuste imediato dos registadores nos parâmetros de entrada da função C
     mov r9, r8                  ; 5º argumento: R8 (User)  -> R9  (5º Parâmetro do C)
-    mov r8, r10                 ; 4º argumento: R10 (User) -> R8  (4º Parâmetro do C) [RCX foi destruído]
+    mov r8, r10                 ; 4º argumento: R10 (User) -> R8  (4º Parâmetro do C)
     mov rcx, rdx                ; 3º argumento: RDX (User) -> RCX (3º Parâmetro do C)
     mov rdx, rsi                ; 2º argumento: RSI (User) -> RDX (2º Parâmetro do C)
     mov rsi, rdi                ; 1º argumento: RDI (User) -> RSI (1º Parâmetro do C)
@@ -61,21 +66,24 @@ syscall_entry_stub:
 
     call syscall_dispatcher     ; Chamada ao dispatcher C (O retorno entra em RAX)
     
-    ; Limpa os dois argumentos temporários da Stack de chamada (R9 e padding)
-    add rsp, 16
-    
+    ; Restaura a stack para o estado anterior ao alinhamento da chamada C
+    mov rsp, rbp
+
     ; ============================================================================
-    ; 3. RESTAURO DO CONTEXTO DE RING 3 (Ordem Inversa Estrita e Perfeita)
+    ; 3. RESTAURO DO CONTEXTO DE RING 3 (Ordem Inversa Estrita)
     ; ============================================================================
-    add rsp, 8                  ; 6. Remove o padding de alinhamento
-    pop r10                     ; 5. Restaura R10
-    pop rbx                     ; 4. Restaura RBX
-    pop rbp                     ; 3. Restaura RBP
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r10                     ; Restaura R10 original
+    pop rbx                     ; Restaura RBX original
+    pop rbp                     ; Restaura RBP original
     
-    pop r11                     ; 2. Restaura as RFLAGS originais direto para R11 (Exigido pelo sysret)
-    pop rcx                     ; 1. Restaura o RIP real de retorno direto para RCX (Exigido pelo sysret)
+    ; A Stack de Kernel está agora 100% limpa e idêntica ao estado de entrada!
     
-    ; A Stack do Kernel está agora completamente vazia e limpa!
+    mov r11, [gs:24]            ; Restaura as RFLAGS originais limpas a partir do gs
+    mov rcx, [gs:16]            ; Restaura o RIP real de retorno limpo a partir do gs
     
     mov rsp, [gs:8]             ; Restaura o RSP legítimo do utilizador
     swapgs                      ; Devolve o GS_BASE original do utilizador

@@ -34,4 +34,12 @@ extern size_t strftime(char *s, size_t maxsize,const char *format, const struct 
 extern double difftime(time_t time1, time_t time0);
 extern time_t mktime(struct tm *timeptr);
 
+/* Definição de tempo padrão de precisão POSIX */
+struct timespec {
+    long tv_sec;        /* Segundos */
+    long tv_nsec;       /* Nanosegundos (0 a 999,999,999) */
+};
+
+int nanosleep(const struct timespec *req, struct timespec *rem);
+
 #endif

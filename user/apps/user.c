@@ -126,11 +126,17 @@ static int execute_builtin(int argc, char *argv[])
             return 1;
         }
 
+        char pwd[256];
         char caminho_completo[256];
         if (argv[1][0] == '/') {
             sprintf(caminho_completo, "%s", argv[1]);
         } else {
-            sprintf(caminho_completo, "/mnt/hd0/%s", argv[1]);
+
+            if (getcwd(pwd, PATH_MAX) == NULL)
+            {
+                return -1; // Falha se não conseguir ler o PWD
+            }
+            sprintf(caminho_completo, "%s/%s", pwd, argv[1]);
         }
 
         int ret = (int)syscall2(SYS_MKDIR, (uint64_t)caminho_completo, 0755); 
@@ -149,18 +155,12 @@ static int execute_builtin(int argc, char *argv[])
             return 1;
         }
 
-        char caminho_completo[256];
-        if (argv[1][0] == '/') {
-            sprintf(caminho_completo, "%s", argv[1]);
-        } else {
-            sprintf(caminho_completo, "/mnt/hd0/%s", argv[1]);
-        }
 
-        int fd = open(caminho_completo, O_CREAT | O_RDWR);
+        int fd = open(argv[1], O_CREAT | O_RDWR);
         if (fd >= 0) {
             close(fd); 
         } else {
-            printf("SiriusOS: touch: falha ao criar o ficheiro '%s'\n", caminho_completo);
+            printf("SiriusOS: touch: falha ao criar o ficheiro '%s'\n", argv[1]);
         }
         return 1;
     }
@@ -175,12 +175,25 @@ static int execute_builtin(int argc, char *argv[])
 
         char caminho_antigo[256];
         char caminho_novo[256];
+        char pwd[256];
 
         if (argv[1][0] == '/') sprintf(caminho_antigo, "%s", argv[1]);
-        else sprintf(caminho_antigo, "/mnt/hd0/%s", argv[1]);
+        else{
+            if (getcwd(pwd, PATH_MAX) == NULL)
+            {
+                return -1; // Falha se não conseguir ler o PWD
+            }
+            sprintf(caminho_antigo, "%s/%s", pwd, argv[1]);
+        }
 
         if (argv[2][0] == '/') sprintf(caminho_novo, "%s", argv[2]);
-        else sprintf(caminho_novo, "/mnt/hd0/%s", argv[2]);
+        else {
+            if (getcwd(pwd, PATH_MAX) == NULL)
+            {
+                return -1; // Falha se não conseguir ler o PWD
+            }
+            sprintf(caminho_novo, "%s/%s", pwd, argv[2]);
+        }
 
         int ret = (int)syscall2(SYS_RENAME, (uint64_t)caminho_antigo, (uint64_t)caminho_novo);
         if (ret < 0) {
@@ -199,7 +212,7 @@ static int execute_builtin(int argc, char *argv[])
 
     if (strcmp(argv[0], "ls") == 0 || strcmp(argv[0], "dir") == 0)
     {
-        int fd = open("/mnt/hd0/", O_RDONLY);
+        int fd = open(".", O_RDONLY);
         if (fd >= 0)
         {
             size_t buf_size = 1024;
@@ -255,7 +268,6 @@ int main(int argc, char *argv[])
     while (1)
     {
         printf("sirius@user:~$ ");
-        fflush(stdout);
 
         /* 1. Captura a linha digitada pelo utilizador */
         if (fgets(linha, sizeof(linha), stdin) == NULL) {
@@ -297,12 +309,8 @@ int main(int argc, char *argv[])
         }
         else if (pid == 0)
         {
-            /* CONTEXTO DO PROCESSO FILHO */
-            // Aqui, no futuro, invocará o seu execve(args[0], args, environ);
-            // Por agora, avisamos que o binário externo do VFS será carregado
-            printf("SiriusOS: a tentar executar programa externo '%s' via VFS...\n", args[0]);
-            
-            // Simula um retorno padrão de erro caso o binário ainda não exista no VFS
+            execve(args[0], args, NULL);
+
             printf("SiriusOS: '%s': comando ou binario nao encontrado.\n", args[0]);
             _exit(127); 
         }
@@ -316,6 +324,7 @@ int main(int argc, char *argv[])
              * aguardando que o comando externo conclua antes de libertar o prompt.
              */
             waitpid(pid, &status, 0);
+            
         }
     }
     return 0;

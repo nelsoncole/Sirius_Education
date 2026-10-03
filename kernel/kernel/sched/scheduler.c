@@ -167,7 +167,7 @@ void scheduler_init(void)
     // 3. Define os limites da pilha dedicada da Idle Task
     uint64_t absolute_top = (uint64_t)idle_stack_raw + 4096;
     cpu->idle_thread->kernel_stack_top = (void*)absolute_top;
-    cpu->idle_thread->kernel_stack     = (void*)absolute_top; // Inicia vazia no topo
+    cpu->idle_thread->context_frame     = (void*)absolute_top; // Inicia vazia no topo
 
     // 4. Configura as propriedades do TCB
     cpu->idle_thread->tid     = 0;
@@ -221,7 +221,7 @@ void* task_switch(void* regs)
     // A Idle Task (TID 0) NUNCA entra na ready_queue
     if (current != NULL) 
     {
-        current->kernel_stack = regs;
+        current->context_frame = regs;
         
         // Apenas threads legítimas de utilizador/kernel (TID > 0) voltam para a fila
         if (current->state == THREAD_RUNNING && current->tid != 0) 
@@ -280,7 +280,7 @@ void* task_switch(void* regs)
     // Chaveamento de espaço de endereçamento (CR3)
     if (next->owner != NULL && next->owner->cr3 != 0) 
     {
-        if (current == NULL || current->owner == NULL || current->owner->cr3 != next->owner->cr3) 
+        if (current == NULL || current->tid == 0 || current->owner == NULL || current->owner->cr3 != next->owner->cr3) 
         {
             vmm_switch_pml4(next->owner->cr3);
         }
@@ -296,7 +296,7 @@ void* task_switch(void* regs)
         arch_fpu_set_ts(); 
     }
 
-    return next->kernel_stack;
+    return next->context_frame;
 }
 
 /**
@@ -396,35 +396,107 @@ void scheduler_yield(void)
 }
 
 /**
+ * scheduler_yield_execve - Cede o controlo sem salvar o contexto antigo.
+ * Prepara a thread para acordar diretamente com os novos registos de Ring 3,
+ * saltando para o ponto comum de saída do micronúcleo.
+ * 
+ * @param new_frame Endereço do frame (stack_frame_t) construído na stack de kernel.
+ */
+void scheduler_yield_execve(uint64_t new_frame)
+{
+    __asm__ __volatile__("cli");
+
+    /* 
+     * BATOTA ARQUITETURAL CONSCIENTE (Sirius_Education):
+     * Ignoramos o passado da thread. Atualizamos o contexto da CPU para o 
+     * novo frame Ring 3 e saltamos para o stub que já trata o swapgs e iretq!
+     */
+    __asm__ __volatile__(
+        "movq %0, %%rdi\n"             // RDI = Novo frame estruturado
+        "call task_switch\n"           // Seleciona a próxima tarefa (Retorna o RSP em RAX)
+
+        "movq %%rax, %%rsp\n"         // Carrega o RSP dinâmico devolvido da tarefa escolhida
+        "jmp interrupt_exit_stub\n"   // Desvia para o teu stub oficial de interrupções
+        :
+        : "r"(new_frame)
+        : "rax", "rdi", "memory"
+    );
+}
+
+
+/**
  * scheduler_exit - Encerra o fluxo da thread ativa e passa o processador.
  *                  Responsabilidade exclusiva de E/S e Contexto. Não limpa o PCB.
  * 
  * NOTA DE ARQUITETURA: Esta rotina assume o controlo da Stack e NUNCA mais retorna.
  * @code: Código de status de finalização reportado ao Pai.
  */
-void scheduler_exit(int code)
+void scheduler_exit(int exit_code)
 {
     /* Bloqueia interrupções para garantir a atomicidade do expurgo */
     __asm__ __volatile__("cli");
 
     cpu_data_block_t *cpu = get_current_cpu();
     thread_t *current = cpu->current_thread;
+    process_t* current_proc = (current != NULL) ? current->owner : NULL;
 
-    if (cpu && current)
+    /*
+     * CORREÇÃO CRÍTICA: Eliminação da recursão infinita.
+     * Se não há processo associado (e.g. Thread de Kernel), ignoramos a lógica 
+     * de Zombies do VFS e saltamos direto para o encerramento da Thread física.
+     */
+    if (current_proc != NULL) 
     {
-        /* 1. Congela o estado físico da Thread na perspetiva do Core */
-        current->state = THREAD_DEAD;
-        current->exit_code = code;
+        /* 2. REGISTO DE ESTADO (Transforma o processo em Zombie para o Pai ler) */
+        current_proc->exit_code = exit_code;
+        current_proc->state     = PROCESS_ZOMBIE; 
 
         /* 
-         * 2. Move a tarefa atual para a fila de descarte assíncrono.
-         * A 'idle_thread' irá desalocar o TCB e a Kernel Stack desta thread 
-         * mais tarde, de forma segura, através da scheduler_reclaim_dead_threads().
+         * 3. SINALIZAÇÃO E ACORDAR O PAI:
+         * Varre a lista global à procura do Pai legítimo. 
+         * Se ele estiver bloqueado no waitpid, devolvemo-lo à vida ativa.
+         */
+        process_list_spinlock_acquire();
+        for (process_t* p = g_process_list_head; p != NULL; p = p->next) 
+        {
+            if (p->pid == current_proc->ppid) 
+            {
+                // Encontrou o Pai. Verifica se a sua thread principal está em repouso
+                if (p->main_thread != NULL && p->main_thread->state == THREAD_BLOCKED) 
+                {
+                    kprintf("[SCI] sys_exit: Acordando e reinserindo o Pai PID %d na Runqueue...\n", p->pid);
+                    
+                    /* A. Altera a flag de controle de fluxo do Pai */
+                    p->main_thread->state = THREAD_READY;
+
+                    /* B. Insere fisicamente a thread do Pai de volta na fila de execução do Core */
+                    enqueue_thread(cpu, p->main_thread); 
+                }
+                break;
+            }
+        }
+        process_list_spinlock_release();
+    }
+    else 
+    {
+        kprintf("[SCHED] scheduler_exit: Encerrando fluxo puro de Kernel (TID: %d).\n", (current != NULL) ? current->tid : 0);
+    }
+
+    // 4. LIMPEZA DA THREAD FÍSICA
+    if (cpu && current)
+    {
+        /* Congela o estado físico da Thread na perspetiva do Core */
+        current->state = THREAD_DEAD;
+        current->exit_code = exit_code;
+
+        /* 
+         * Move a tarefa atual para a fila de descarte assíncrono.
+         * A 'idle_thread' irá desalocar o TCB e a Kernel Stack desta thread mais tarde.
          */
         enqueue_dead_thread(cpu, current);
     }
 
-    /* 3. Localiza a próxima tarefa pronta na runqueue deste Core */
+    /* 5. Localiza a próxima tarefa pronta na runqueue deste Core */
     thread_t *next = NULL;
     while (1) 
     {
@@ -435,7 +507,7 @@ void scheduler_exit(int code)
             break; /* Fila local vazia */
         }
 
-        /* Ignora fantasias ou referências que já estejam marcadas como mortas */
+        /* Ignora referências que já estejam marcadas como mortas */
         if (next == current || next->state == THREAD_DEAD) 
         {
             continue; 
@@ -444,13 +516,13 @@ void scheduler_exit(int code)
         break; /* Encontrou uma thread válida! */
     }
     
-    /* 4. Se não houver tarefas prontas no núcleo, desvia para a Idle Task do Core */
+    /* 6. Se não houver tarefas prontas no núcleo, desvia para a Idle Task do Core */
     if (next == NULL)
     {
         next = cpu->idle_thread;
     }
 
-    /* 5. Efetua a troca de contexto atómica definitiva para a nova tarefa */
+    /* 7. Efetua a troca de contexto atómica definitiva para a nova tarefa */
     next->state = THREAD_RUNNING;
     cpu->current_thread = next;
 
@@ -461,9 +533,7 @@ void scheduler_exit(int code)
     }
 
     /* 
-     * 6. SALTO SEM RETORNO:
-     * Carrega o RSP da nova tarefa e executa o iretq.
-     * Esta thread morta deixa de existir no pipeline do processador a partir daqui.
+     * 8. SALTO SEM RETORNO DEFINITIVO
      */
     __asm__ __volatile__(
         "movq %0, %%rsp\n"          // Altera o RSP para a pilha da nova tarefa
@@ -485,7 +555,7 @@ void scheduler_exit(int code)
         "addq $16, %%rsp\n"         // Limpa int_no e error_code
         "iretq\n"                   // Executa o retorno de hardware para a nova tarefa
         :
-        : "r"(next->kernel_stack)
+        : "r"(next->context_frame)
         : "memory"
     );
 

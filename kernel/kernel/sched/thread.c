@@ -66,7 +66,8 @@ static thread_t* thread_create_common(void (*entry_point)(void*), void* arg, voi
     thread->cpu_id       = cpu_id;
    
     // O scheduler continua a ler daqui para restaurar o contexto nas trocas de contexto
-    thread->kernel_stack     = (void*)stack_top; 
+    thread->context_frame     = (void*)stack_top;
+    thread->context_frame_top = (void*)absolute_top; 
 
     // Guarda o topo limpo para o Syscall/TSS redefinirem a pilha do Core
     thread->kernel_stack_top = (void*)absolute_top; 

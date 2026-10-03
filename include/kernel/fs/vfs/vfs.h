@@ -113,7 +113,8 @@ typedef struct vfs_node {
 typedef struct vfs_file {
     vfs_node_t* node;           // Ponteiro para o nó do VFS correspondente
     uint64_t    offset;         // Posição atual de leitura/escrita em bytes
-    uint32_t    flags;          // O_RDONLY, O_WRONLY, O_RDWR
+    uint32_t    flags;          // O_RDONLY, O_WRONLY, O_RDWR, O_NONBLOCK, O_APPEND
+    uint32_t    fd_flags;       // Flags do descritor (FD_CLOEXEC) - ADICIONE ESTA LINHA
     uint32_t    ref_count;      // Contador de referências para partilha entre processos
 } vfs_file_t;
 

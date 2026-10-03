@@ -129,62 +129,57 @@ static socket_t* af_inet_accept(socket_t* sock)
 {
     if (!sock) return NULL;
 
-    /* Verificação inicial de estado segura */
     spinlock_acquire(&sock->lock);
-    if (sock->state != 2) /* 2 = SOCKET_LISTENING */
+    if (sock->state != TCP_STATE_LISTEN)
     {
         spinlock_release(&sock->lock);
         return NULL;
     }
     spinlock_release(&sock->lock);
 
-    /* Aguarda de forma síncrona a chegada de conexões na fila (preenchida pela pilha TCP) */
-    while (sock->listen_queue == NULL) 
+    socket_t* ready_socket = NULL;
+
+    /* Aguarda até que o tcp_input insira um socket ESTABLISHED na fila */
+    while (1) 
     {
-        __asm__ __volatile__("pause");
+        spinlock_acquire(&sock->lock);
+        
+        socket_t* prev = NULL;
+        socket_t* curr = sock->listen_queue;
+        
+        while (curr != NULL) 
+        {
+            /* Se o estado for ESTABLISHED, significa que o tcp_input já processou o ACK e criou o socket real */
+            if (curr->state == TCP_STATE_ESTABLISHED) 
+            {
+                ready_socket = curr;
+                
+                /* Remove da fila de escuta */
+                if (prev == NULL) {
+                    sock->listen_queue = curr->next;
+                } else {
+                    prev->next = curr->next;
+                }
+                ready_socket->next = NULL; // Destaca da fila local do pai
+                break;
+            }
+            prev = curr;
+            curr = curr->next;
+        }
+        
+        spinlock_release(&sock->lock);
+
+        if (ready_socket != NULL) {
+            break;
+        }
+
+        /* Bloqueia/Cede tempo até o handshake terminar na pilha de rede */
+        __asm__ __volatile__("pause"); 
+        // sys_yield(); 
     }
 
-    /* Protege a extração da fila local usando o lock do próprio socket */
-    spinlock_acquire(&sock->lock);
-    socket_t* pending_client = sock->listen_queue;
-    if (pending_client) 
-    {
-        sock->listen_queue = pending_client->next;
-        pending_client->next = NULL;
-    }
-    spinlock_release(&sock->lock);
-
-    if (!pending_client) return NULL;
-
-    /* 
-     * Cria um novo socket de sessão para o par conectado.
-     * O socket original 'sock' DEVE continuar em modo LISTEN (estado 2).
-     */
-    socket_t* session_sock = socket_create(AF_INET, sock->type, 0);
-    if (!session_sock) 
-    {
-        /* Se faltar memória no kernel, aborta a conexão pendente de forma segura */
-        spinlock_acquire(&pending_client->lock);
-        pending_client->state = 0; /* Desconectado */
-        spinlock_release(&pending_client->lock);
-        return NULL; 
-    }
-
-    /* Clona as propriedades necessárias do endereço local do servidor para o socket de sessão */
-    memcpy(session_sock->local_addr, sock->local_addr, sock->local_addr_len);
-    session_sock->local_addr_len = sock->local_addr_len;
-
-    /* Copia os dados do cliente remoto vindos da pilha TCP para o novo socket de sessão */
-    memcpy(session_sock->remote_addr, pending_client->remote_addr, pending_client->remote_addr_len);
-    session_sock->remote_addr_len = pending_client->remote_addr_len;
-
-    /* Acopla os estados */
-    session_sock->state = 1; /* SOCKET_CONNECTED */
-    
-    /* LIBERAÇÃO DO NÓ DUMMY: Evita vazamento de memória no Heap do Kernel */
-    kfree(pending_client); 
-
-    return session_sock; /* O VFS receberá este novo socket e vai gerar um novo File Descriptor */
+    kprintf("[ACCEPT] Retornando o socket de sessão já instanciado e alimentado!\n");
+    return ready_socket; 
 }
 
 /**
@@ -197,7 +192,7 @@ static int af_inet_listen(socket_t* sock, int backlog)
     if (sock->type != SOCK_STREAM) return -2; /* UDP não suporta modo listen */
 
     spinlock_acquire(&sock->lock);
-    sock->state = 2; 
+    sock->state = TCP_STATE_LISTEN; 
     spinlock_release(&sock->lock);
     
     return 0;

@@ -40,6 +40,10 @@ typedef struct cpu_data_block {
     uint64_t kernel_stack_top;
     // Reservado para guardar a pilha do usuario do durante o syscal/sysret
     uint64_t user_stack;
+    // Reservado para guardar a rip do usuario do durante o syscal/sysret
+    uint64_t rip;
+    // Reservado para guardar a rflag do usuario do durante o syscal/sysret
+    uint64_t rflag;
 
     uint64_t cr3;
 

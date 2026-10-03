@@ -15,6 +15,8 @@
 #ifndef _TYPES_H_
 #define _TYPES_H_
 
+#include <stdint.h>
+
 typedef int                pid_t;    /* Identificador de Processo (Process ID) */
 typedef int                id_t;     /* Identificador genérico de ID */
 

@@ -70,13 +70,18 @@ Sirius_Education/
 │   ├── lib/                 # Biblioteca padrão das aplicações (ulib / libc elementar)
 │   │   ├── crt0.asm         # Ponto de entrada asm que prepara os argumentos e chama main()
 │   │   ├── uheap.h          # umalloc, ufree, ucolloc e urealloc do user space (chama sys_brk)
-│   │   └── usyscall.h       # Stubs em Assembly que executam a instrução física 'syscall'
-│   │
+│   │   ├── usyscall.h       # Stubs em Assembly que executam a instrução física 'syscall'
+│   │   └── mbedtls/         # Código-fonte da biblioteca SSL/TLS (Ring 3)
+|   |
 │   └── apps/                # Seus programas binários isolados Ring 3
 │       ├── shell/           # Código-fonte da sua linha de comandos
 │       │   └── shell.c
-│       └── init/            # O primeiríssimo processo inicial do user space
-│           └── init.c
+|       |
+│       ├── init/            # O primeiríssimo processo inicial do user space
+│       |   └── init.c
+│       │
+│       └── sshd/           # O "Daemon" de acesso remoto seguro
+│           └── sshd.c      # Este programa faz o Handshake S
 │  
 ├── build/                   # Ficheiros de objetos temporários (.o, .d) - [Esvaziado no clean]
 ├── sysroot/                 # Árvore do sistema de ficheiros final (Gera a imagem ISO)

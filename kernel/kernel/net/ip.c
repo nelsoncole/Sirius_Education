@@ -253,14 +253,14 @@ int ip_input(const void* packet_data, uint32_t packet_len)
      *   2. O destino for Broadcast Geral (255.255.255.255).
      *   3. O nosso IP ainda for 0.0.0.0 (estamos em fase de obtenção de IP via DHCP).
      */
-    uint32_t my_ip = 0x10101010;
+    uint32_t my_ip = 0;
     net_get_interface_ip(0, &my_ip);
     if (ip->dest_ip != my_ip && 
         ip->dest_ip != broadcast_ip && 
         my_ip != 0x00000000) 
     {
         /* O pacote pertence a outro nó da rede local. Descarta silenciosamente */
-        kprintf("Pacote descartado ip->dest_ip %s\n", inet_ntoa(ip->dest_ip));
+        //kprintf("Pacote descartado ip->dest_ip %s\n", inet_ntoa(ip->dest_ip));
         return 0; 
     }
 

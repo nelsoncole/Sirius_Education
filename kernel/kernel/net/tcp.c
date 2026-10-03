@@ -31,10 +31,6 @@ extern int ip_output(uint32_t dest_ip, uint8_t protocol, const void* data, uint3
 #define TCP_FLAG_PSH  0x0008
 #define TCP_FLAG_ACK  0x0010
 
-/* Variáveis de controle de fluxo temporárias (Progressão de Handshake/Sequence) */
-static uint32_t g_tcp_local_seq  = 1234567;
-static uint32_t g_tcp_remote_ack = 0;
-
 /* Estrutura do Pseudo-Cabeçalho IPv4 necessário para o cálculo do Checksum TCP */
 typedef struct {
     uint32_t src_ip;
@@ -105,12 +101,16 @@ int tcp_connect_handshake(socket_t* sock, struct sockaddr_in* dest)
         return -4; /* EINVAL - Socket não associado a uma porta local */
     }
     struct sockaddr_in* local = (struct sockaddr_in*)sock->local_addr;
-    uint16_t src_port = local->sin_port; 
+    uint16_t src_port = local->sin_port;
+    
+    sock->local_seq  = 1000; /* Define o Initial Sequence Number (ISN) desta sessão */
+    sock->remote_ack = 0;    /* Ainda não recebemos o SYN deles, logo o ACK é zero */
+
 
     tcp_header_t* tcp = (tcp_header_t*)tcp_buffer;
     tcp->src_port   = src_port;
     tcp->dest_port  = dest->sin_port;
-    tcp->seq_num    = htonl(g_tcp_local_seq); 
+    tcp->seq_num    = htonl(sock->local_seq); 
     tcp->ack_num    = htonl(0);       
     
     /* Configura o Data Offset = 5 (20 bytes) e ativa estritamente a flag SYN (0x0002) */
@@ -133,7 +133,7 @@ int tcp_connect_handshake(socket_t* sock, struct sockaddr_in* dest)
     tcp->checksum = tcp_calculate_checksum(&pseudo, tcp, NULL, 0);
 
     kprintf("[TCP] Enviando pacote SYN (Seq: %u) para Porta %d.\n", 
-            g_tcp_local_seq, ntohs(tcp->dest_port));
+            sock->local_seq, ntohs(tcp->dest_port));
 
     /* 
      * MODIFICAÇÃO ATÓMICA CRÍTICA PARA SMP:
@@ -144,7 +144,7 @@ int tcp_connect_handshake(socket_t* sock, struct sockaddr_in* dest)
     
     memcpy(sock->remote_addr, dest, sizeof(struct sockaddr_in));
     sock->remote_addr_len = sizeof(struct sockaddr_in);
-    sock->state = 4; /* TCP_STATE_SYN_SENT */
+    sock->state = TCP_STATE_SYN_SENT;
     
     spinlock_release(&sock->lock);
 
@@ -208,8 +208,8 @@ long tcp_send_stream(socket_t* sock, const void* buf, unsigned long len)
     tcp_header_t* tcp = (tcp_header_t*)tcp_buffer;
     tcp->src_port   = src_port;
     tcp->dest_port  = dest->sin_port;
-    tcp->seq_num    = htonl(g_tcp_local_seq);
-    tcp->ack_num    = htonl(g_tcp_remote_ack);
+    tcp->seq_num    = htonl(sock->local_seq);
+    tcp->ack_num    = htonl(sock->remote_ack);
     
     tcp->data_offset_flags = htons((5 << 12) | TCP_FLAG_ACK | TCP_FLAG_PSH);
     tcp->window_size       = htons(2048); 
@@ -233,10 +233,10 @@ long tcp_send_stream(socket_t* sock, const void* buf, unsigned long len)
     tcp->checksum = tcp_calculate_checksum(&pseudo, tcp, tcp_data_space, len);
 
     kprintf("[TCP] Despachando Segmento DATA: %d bytes (Seq: %u, Ack: %u)\n", 
-            len, g_tcp_local_seq, g_tcp_remote_ack);
+            len, sock->local_seq, sock->remote_ack);
 
     /* Avança o número de sequência local antes de libertar o trinco e transmitir */
-    g_tcp_local_seq += len;
+    sock->local_seq += len;
     spin_unlock(&sock->lock);
 
     int res = ip_output(dest->sin_addr.s_addr, IPPROTO_TCP, tcp_buffer, tcp_packet_size);
@@ -265,7 +265,7 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
     uint16_t flags = ntohs(tcp->data_offset_flags) & 0x0FFF;
 
     /* 2. Demultiplexação de Porta: Localiza o socket TCP alvo no Kernel */
-    socket_t* sock = socket_find_by_port(tcp->dest_port, SOCK_STREAM);
+    socket_t* sock = tcp_input_lookup(src_ip, tcp);
     if (!sock) return 0; /* Descarte silencioso (Porta fechada / Port Unreachable) */
 
     /* Garante exclusão mútua do Ring Buffer em ambiente SMP */
@@ -283,8 +283,8 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
             kprintf("[TCP Input] SYN-ACK recebido de volta! A sincronizar contadores...\n");
             
             /* Sincroniza os contadores de sequência locais com base nos dados do hardware remoto */
-            g_tcp_remote_ack = ntohl(tcp->seq_num) + 1; /* O nosso próximo ACK confirma o SYN deles */
-            g_tcp_local_seq  = ntohl(tcp->ack_num);
+            sock->remote_ack = ntohl(tcp->seq_num) + 1; /* O nosso próximo ACK confirma o SYN deles */
+            sock->local_seq  = ntohl(tcp->ack_num);
 
             /* Transitamos o estado físico do socket para a conectividade total */
             sock->state = TCP_STATE_ESTABLISHED;
@@ -302,8 +302,8 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                 
                 reply_tcp->src_port   = tcp->dest_port;
                 reply_tcp->dest_port  = tcp->src_port;
-                reply_tcp->seq_num    = htonl(g_tcp_local_seq);
-                reply_tcp->ack_num    = htonl(g_tcp_remote_ack);
+                reply_tcp->seq_num    = htonl(sock->local_seq);
+                reply_tcp->ack_num    = htonl(sock->remote_ack);
                 reply_tcp->data_offset_flags = htons((5 << 12) | TCP_FLAG_ACK); /* Apenas flag ACK ativa */
                 reply_tcp->window_size       = htons(2048);
                 
@@ -320,7 +320,7 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                 reply_tcp->checksum = tcp_calculate_checksum(&pseudo, reply_tcp, NULL, 0);
                 
                 kprintf("[TCP] A enviar ACK final (Seq: %u, Ack: %u) para estabelecer ligacao.\n", 
-                        g_tcp_local_seq, g_tcp_remote_ack);
+                        sock->local_seq, sock->remote_ack);
                 
                 /* Dispara o pacote final para descer a pilha de rede */
                 spin_unlock(&sock->lock); /* Solta temporariamente o lock antes de invocar o IP */
@@ -331,7 +331,7 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
             }
         }
     }
-    else if (sock->state == 2)
+    else if (sock->state == TCP_STATE_LISTEN)
     {
         /* CASO B: O Servidor passivo interceciona o pacote inicial SYN do cliente externo */
         if (flags & TCP_FLAG_SYN) 
@@ -355,7 +355,8 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
             memcpy(pending_client->remote_addr, &client_addr, sizeof(struct sockaddr_in));
             pending_client->remote_addr_len = sizeof(struct sockaddr_in);
             
-            pending_client->state = 3; /* TCP_STATE_SYN_RECV */
+            pending_client->state = TCP_STATE_SYN_RECV;
+            pending_client->local_seq = sock->local_seq;
 
             /* 2. Constrói a resposta síncrona SYN-ACK */
             uint32_t synack_size = sizeof(tcp_header_t);
@@ -367,7 +368,7 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
 
                 reply_tcp->src_port   = tcp->dest_port;
                 reply_tcp->dest_port  = tcp->src_port;
-                reply_tcp->seq_num    = htonl(g_tcp_local_seq);
+                reply_tcp->seq_num    = htonl(sock->local_seq);
                 reply_tcp->ack_num    = htonl(ntohl(tcp->seq_num) + 1); /* Confirma o SYN recebido */
                 reply_tcp->data_offset_flags = htons((5 << 12) | TCP_FLAG_SYN | TCP_FLAG_ACK);
                 reply_tcp->window_size       = htons(2048);
@@ -390,11 +391,77 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                 kprintf("[TCP] SYN-ACK enviado de volta. Adicionado a listen_queue.\n");
 
                 spin_unlock(&sock->lock);
+
                 ip_output(src_ip, IPPROTO_TCP, synack_buf, synack_size);
                 kfree(synack_buf);
                 return 0;
             }
+
             kfree(pending_client);
+        }
+        else if (flags & TCP_FLAG_ACK)
+        {
+            socket_t *prev = NULL;
+            socket_t *curr = sock->listen_queue;
+
+            while (curr != NULL)
+            {
+                struct sockaddr_in *remote = (struct sockaddr_in *)curr->remote_addr;
+                if (remote->sin_addr.s_addr == src_ip && remote->sin_port == tcp->src_port && curr->state == TCP_STATE_SYN_RECV)
+                {
+                    kprintf("[TCP] ACK/Confirmação recebida do cliente! Criando sessão síncrona...\n");
+
+                    /* 1. Criar o socket de sessão REAL e definitivo aqui na pilha de rede */
+                    socket_t *session_sock = socket_create(AF_INET, sock->type, 0);
+                    if (!session_sock)
+                    {
+                        spin_unlock(&sock->lock);
+                        return -1; // Sem memória no kernel
+                    }
+
+                    /* 2. Clonar metadados do nó temporário (curr) para o socket real */
+                    memcpy(session_sock->local_addr, sock->local_addr, sock->local_addr_len);
+                    session_sock->local_addr_len = sock->local_addr_len;
+                    memcpy(session_sock->remote_addr, curr->remote_addr, curr->remote_addr_len);
+                    session_sock->remote_addr_len = curr->remote_addr_len;
+
+                    /* 3. Definir estados corretos */
+                    session_sock->state = TCP_STATE_ESTABLISHED; // Estado TCP definitivo (4)
+                    session_sock->local_seq = curr->local_seq + 1;
+                    session_sock->remote_ack = ntohl(tcp->seq_num); 
+
+                    /* 5. Substituir o nó temporário (curr) pelo socket real (session_sock) na fila */
+                    session_sock->next = curr->next;
+                    if (prev == NULL)
+                    {
+                        sock->listen_queue = session_sock;
+                    }
+                    else
+                    {
+                        prev->next = session_sock;
+                    }
+
+                    /* 6. Registar o novo socket na tabela global do sistema (Para as futuras leituras/escritas) */
+                    // Se usar a função tcp_input_lookup que definimos antes:
+                    spin_lock(&g_socket_list_lock);
+                    session_sock->global_next = g_bound_sockets_head; // Garanta que não quebra o ->next da fila local
+                    g_bound_sockets_head = session_sock;
+                    spin_unlock(&g_socket_list_lock);
+
+                    /* 7. Eliminar o nó temporário dummy (curr) com segurança */
+                    kfree(curr);
+
+                    /* 8. SINALIZAR/ACORDAR O ACCEPT */
+                    kprintf("[TCP] Sessão estável criada com sucesso. Acordando accept().\n");
+                    // wakeup(&sock->wait_queue);
+
+                    spin_unlock(&sock->lock);
+                    return 0;
+                }
+                prev = curr;
+                curr = curr->next;
+            }
+            spin_unlock(&sock->lock);
         }
     }
     else if (sock->state == TCP_STATE_ESTABLISHED)
@@ -412,12 +479,15 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
         /* Verifica se há bytes reais de dados acoplados e se o pacote carrega uma flag ACK legítima */
         if (payload_len > 0 && (flags & TCP_FLAG_ACK))
         {
-            /* 1. Cálculo de Espaço Livre no Ring Buffer nativo */
-            uint32_t free_space = (sock->rx_tail - sock->rx_head - 1 + SOCKET_BUFFER_SIZE) % SOCKET_BUFFER_SIZE;
+            /* 1. Cálculo Correto de Espaço Usado e Espaço Livre no Ring Buffer */
+            uint32_t usado = (sock->rx_head >= sock->rx_tail) ? 
+                             (sock->rx_head - sock->rx_tail) : 
+                             (SOCKET_BUFFER_SIZE - (sock->rx_tail - sock->rx_head));
+            uint32_t free_space = SOCKET_BUFFER_SIZE - usado - 1;
 
             if (free_space < payload_len)
             {
-                kprintf("[TCP Input] Buffer saturado! A publicitar Janela Zero...\n");
+                kprintf("[TCP Input] Buffer realmente saturado! A publicitar Janela Zero...\n");
 
                 uint32_t ack_size = sizeof(tcp_header_t);
                 uint8_t *ack_buf = (uint8_t *)kmalloc(ack_size);
@@ -428,13 +498,14 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
 
                     reply_tcp->src_port = tcp->dest_port;
                     reply_tcp->dest_port = tcp->src_port;
-                    reply_tcp->seq_num = htonl(g_tcp_local_seq);
-                    reply_tcp->ack_num = htonl(ntohl(tcp->seq_num));
+                    // Sincroniza os contadores locais usando os membros internos do socket
+                    reply_tcp->seq_num = htonl(sock->local_seq);
+                    reply_tcp->ack_num = htonl(ntohl(tcp->seq_num) + payload_len);
                     reply_tcp->data_offset_flags = htons((5 << 12) | TCP_FLAG_ACK);
-                    reply_tcp->window_size = htons(free_space);
+                    reply_tcp->window_size = htons(0); // Força Janela Zero real
 
                     tcp_pseudo_header_t pseudo;
-                    uint32_t my_ip = 0x10101010;
+                    uint32_t my_ip = 0;
                     net_get_interface_ip(0, &my_ip);
                     pseudo.src_ip = my_ip;
                     pseudo.dest_ip = src_ip;
@@ -448,25 +519,25 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                     kfree(ack_buf);
                     return 0;
                 }
-
                 spin_unlock(&sock->lock);
                 return -3;
             }
 
-            kprintf("[TCP Input] Recebidos %d bytes de stream de dados. A gravar no rx_buffer...\n", payload_len);
+           kprintf("[TCP Input] Recebidos %d bytes de stream de dados. A gravar no rx_buffer...\n", payload_len);
 
             /* 2. Extrai o ponteiro do payload puro */
             const uint8_t *tcp_payload = ((const uint8_t *)data) + h_len;
 
-            /* 3. INJEÇÃO CIRCULAR DE BYTES */
+            /* 3. INJEÇÃO CIRCULAR DE BYTES SAFADA */
             for (uint32_t i = 0; i < payload_len; i++)
             {
                 sock->rx_buffer[sock->rx_head] = tcp_payload[i];
                 sock->rx_head = (sock->rx_head + 1) % SOCKET_BUFFER_SIZE;
             }
 
-            /* 4. Atualiza o número de confirmação (Ack) local */
-            g_tcp_remote_ack = ntohl(tcp->seq_num) + payload_len;
+            /* 4. ATUALIZAÇÃO ATÓMICA DOS CONTADORES DO SOCKET (Substituindo g_tcp_) */
+            sock->remote_ack = ntohl(tcp->seq_num) + payload_len; /* Avança o ACK com o tamanho do payload */
+            sock->local_seq  = ntohl(tcp->ack_num);              /* Avança a nossa sequência com o ACK recebido */
 
             /* 5. ENVIO DO ACK DE CONFIRMAÇÃO DE DADOS */
             uint32_t ack_reply_size = sizeof(tcp_header_t);
@@ -478,15 +549,19 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                 tcp_header_t *reply_tcp = (tcp_header_t *)ack_reply_buf;
                 reply_tcp->src_port = tcp->dest_port;
                 reply_tcp->dest_port = tcp->src_port;
-                reply_tcp->seq_num = htonl(g_tcp_local_seq);
-                reply_tcp->ack_num = htonl(g_tcp_remote_ack);
+                reply_tcp->seq_num = htonl(sock->local_seq);
+                reply_tcp->ack_num = htonl(sock->remote_ack);
                 reply_tcp->data_offset_flags = htons((5 << 12) | TCP_FLAG_ACK);
-                uint32_t current_free_space = (sock->rx_tail - sock->rx_head - 1 + SOCKET_BUFFER_SIZE) % SOCKET_BUFFER_SIZE;
-                if (current_free_space > 0xFFFF)
-                    current_free_space = 0xFFFF;
+                
+                // Recalcula o espaço livre atualizado pós-inserção
+                usado = (sock->rx_head >= sock->rx_tail) ? (sock->rx_head - sock->rx_tail) : (SOCKET_BUFFER_SIZE - (sock->rx_tail - sock->rx_head));
+                uint32_t current_free_space = SOCKET_BUFFER_SIZE - usado - 1;
+                if (current_free_space > 0xFFFF) current_free_space = 0xFFFF;
+                
                 reply_tcp->window_size = htons((uint16_t)current_free_space);
+                
                 tcp_pseudo_header_t pseudo;
-                uint32_t my_ip = 0x10101010;
+                uint32_t my_ip = 0;
                 net_get_interface_ip(0, &my_ip);
                 pseudo.src_ip = my_ip;
                 pseudo.dest_ip = src_ip;
@@ -494,7 +569,9 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                 pseudo.protocol = IPPROTO_TCP;
                 pseudo.tcp_len = htons(ack_reply_size);
                 reply_tcp->checksum = tcp_calculate_checksum(&pseudo, reply_tcp, NULL, 0);
-                kprintf("[TCP] A enviar ACK de confirmacao de dados (Seq: %u, Ack/Próximo: %u).\n", g_tcp_local_seq, g_tcp_remote_ack);
+                
+                kprintf("[TCP] A enviar ACK de confirmacao de dados (Seq: %u, Ack/Próximo: %u).\n", sock->local_seq, sock->remote_ack);
+                
                 spin_unlock(&sock->lock);
                 ip_output(src_ip, IPPROTO_TCP, ack_reply_buf, ack_reply_size);
                 kfree(ack_reply_buf);
@@ -502,6 +579,7 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
             }
         }
     }
+
     spin_unlock(&sock->lock);
     return 0;
 }

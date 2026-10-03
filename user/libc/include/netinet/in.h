@@ -51,28 +51,6 @@ struct sockaddr_in {
 #define INADDR_ANY       ((in_addr_t) 0x00000000) /* Escuta em todas as interfaces (0.0.0.0) */
 #define INADDR_LOOPBACK  ((in_addr_t) 0x7f000001) /* Interface local (127.0.0.1) */
 #define INADDR_BROADCAST ((in_addr_t) 0xffffffff) /* Difusão global (255.255.255.255) */
-
-/*
- * ============================================================================
- * MACROS DE CONVERSÃO DE ENDIANNESS (Host to Network / Network to Host)
- * No x86_64 (Little-Endian) para Rede (Big-Endian).
- * ============================================================================
- */
-
-/* Host to Network Short (16 bits) */
-#define htons(v) ((((uint16_t)(v) & 0xFF00) >> 8) | \
-                  (((uint16_t)(v) & 0x00FF) << 8))
-
-/* Host to Network Long (32 bits) */
-#define htonl(v) ((((uint32_t)(v) & 0xFF000000) >> 24) | \
-                  (((uint32_t)(v) & 0x00FF0000) >> 8)  | \
-                  (((uint32_t)(v) & 0x0000FF00) << 8)  | \
-                  (((uint32_t)(v) & 0x000000FF) << 24))
-
-/* Network to Host Short (16 bits) */
-#define ntohs(v) htons(v)
-
-/* Network to Host Long (32 bits) */
-#define ntohl(v) htonl(v)
+#define INADDR_NONE      ((in_addr_t) 0xffffffff) /* 255.255.255.255 (Endereço Inválido / Erro) */
 
 #endif /* _IN_H_ */

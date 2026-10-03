@@ -43,6 +43,7 @@ enum {
     SYS_SEEK,
     SYS_FLUSH,
     SYS_STAT,
+    SYS_FSTAT,
     SYS_CHMOD,
     SYS_UNLINK,
     SYS_RMDIR,
@@ -50,6 +51,7 @@ enum {
     SYS_MKDIR,
     SYS_GETDENTS,
     SYS_DUP2,
+    SYS_FCNTL,
     SYS_IOCTL,
 
     /* Gestão de Processos e Memória Avançada */
@@ -91,6 +93,9 @@ enum {
     SYS_KMOD_LOAD,
     SYS_KMOD_UNLOAD,
     SYS_KMOD_PRINT,
+
+    SYS_CHDIR,
+    SYS_GETCWD,
 
     /* O compilador define automaticamente MAX_SYSCALLS com o valor total correto (43) */
     MAX_SYSCALLS
@@ -140,6 +145,7 @@ uint64_t sys_flush(int fd);
 
 /* Operações Avançadas de Metadados e Remoção por Caminho */
 uint64_t sys_stat(const char* path, vfs_stat_t* buf);
+uint64_t sys_fstat(int fd, vfs_stat_t* buf);
 uint64_t sys_chmod(const char* path, uint16_t mode);
 uint64_t sys_unlink(const char* path);
 uint64_t sys_rmdir(const char* path);
@@ -147,6 +153,7 @@ uint64_t sys_rename(const char* old_path, const char* new_name);
 uint64_t sys_mkdir(const char* path, uint32_t mode);
 
 uint64_t sys_dup2(int oldfd, int newfd);
+uint64_t sys_fcntl(int fd, uint32_t cmd, uint64_t arg);
 
 /* Operações Primitivas do Processo e Alocação */
 uint64_t sys_brk(void* addr);
@@ -187,5 +194,8 @@ uint64_t sys_setgid(gid_t gid);
 uint64_t sys_kmod_load(const uint8_t *user_buffer, size_t size);
 uint64_t sys_kmod_unload(const char *user_name);
 uint64_t sys_kmod_print(void);
+
+uint64_t sys_chdir(const char *path);
+uint64_t sys_getcwd(char *buf, size_t size);
 
 #endif /* _SYSCALL_H_ */

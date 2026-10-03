@@ -6,7 +6,7 @@
 
 extern size_t strlen(const char *s);
 
-extern void *memset(void *s, char val, size_t count);
+extern void *memset(void *s, int val, size_t count);
 
 extern char *strcpy(char* s1, const char* s2);
 
