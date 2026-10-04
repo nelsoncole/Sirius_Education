@@ -39,10 +39,26 @@ int k_dup2(process_t* proc, int oldfd, int newfd) {
     vfs_file_t* old_file = proc->file_descriptor_table[oldfd];
     if (!old_file) return -1;
 
-    // 4. Se o destino já tiver um ficheiro aberto, fecha-o primeiro
-    if (proc->file_descriptor_table[newfd]) {
-        // No futuro, chama aqui a tua função interna de fecho:
-        // k_close_internal(proc, newfd);
+    // 4. Se o destino já tiver um ficheiro aberto, FECHA-O CORRETAMENTE
+    vfs_file_t* file_to_close = proc->file_descriptor_table[newfd];
+    if (file_to_close != NULL) {
+        
+        // Remove a referência do processo a este ficheiro antigo
+        file_to_close->ref_count--;
+
+        // Se mais nenhum processo (ou FD) estiver a usar este ficheiro antigo, liberta-o
+        if (file_to_close->ref_count == 0) {
+            if (file_to_close->node) {
+                vfs_close(file_to_close->node); // Aciona o socket_vfs_close se for um socket!
+            }
+            kfree(file_to_close);
+            kprintf("[VFS] k_dup2: Ficheiro anterior em FD %d fechado e libertado.\n", newfd);
+        } else {
+            kprintf("[VFS] k_dup2: Referencia do ficheiro em FD %d decrementada (Restam %u).\n", 
+                    newfd, file_to_close->ref_count);
+        }
+
+        // Invalida o slot antes de receber o novo ficheiro
         proc->file_descriptor_table[newfd] = NULL;
     }
 

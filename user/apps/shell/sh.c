@@ -2,16 +2,15 @@
  * ============================================================================
  *        Project: Sirius_Education
  *       Filename: sh.c
- *    Description: Interpretador de comandos (Shell) portado do xv6 (MIT).
- *                 Modificado para eliminar o uso de pipe() de hardware,
- *                 utilizando pontes síncronas de ficheiros temporários em disco
- *                 com suporte nativo a write(), read(), fork() e execve().
+  *    Description: Interpretador de comandos (Shell) portado do xv6 (MIT).
+ *                 Modificado para resolver caminhos absolutos preservando
+ *                 a integridade do vetor argv e o numero correto de argc.
  * 
  *         Author: Nelson Cole (Portabilidade e Adaptação)
  *   Created Date: 29/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 29/09/2026
+ *  Modified Date: 04/10/2026
  * 
  *   Source Code: Baseado no ficheiro sh.c do repositório mit-pdos/xv6-public
  *        License: MIT
@@ -25,6 +24,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/usyscall.h>
 
 // Representação interna dos nós da árvore sintática (AST)
 #define EXEC  1
@@ -34,6 +34,10 @@
 #define BACK  5
 
 #define MAXARGS 10
+
+#ifndef MAX_PATH
+#define MAX_PATH 4096
+#endif
 
 struct cmd {
   int type;
@@ -76,6 +80,69 @@ void panic(char*);
 struct cmd *parsecmd(char*);
 
 /**
+ * @brief Executa os comandos internos embutidos na Shell (Built-ins).
+ * @return 1 se o comando for um built-in processado, 0 caso contrário.
+ */
+static int execute_builtin(int argc, char *argv[])
+{
+    if (argc == 0 || argv[0] == NULL) return 0;
+
+    if (strcmp(argv[0], "cd") == 0)
+    {
+      const char *target_path = NULL;
+
+      if (argc < 2)
+      {
+          target_path = "/"; 
+      }
+      else
+      {
+          target_path = argv[1];
+      }
+
+      if (chdir(target_path) < 0)
+      {
+        fprintf(stderr, "cd: nao foi possivel aceder a '%s'\n", target_path);
+        return -1;
+      }
+
+      char resolved_path[MAX_PATH];
+      if (getcwd(resolved_path, sizeof(resolved_path)) == NULL)
+      {
+        fprintf(stderr, "cd: erro ao recuperar a diretoria atual\n");
+        return -1;
+      }
+
+      return 1;
+    }
+
+    if (strcmp(argv[0], "clear") == 0)
+    {
+        printf("\033[2J\033[H");
+        return 1;
+    }
+
+    if (strcmp(argv[0], "vfstree") == 0)
+    {
+      int fd = open("/", O_RDONLY);
+      if (fd >= 0)
+      {
+        syscall3(SYS_IOCTL, (uint64_t)fd, 0x1001, (uint64_t)"/");
+        close(fd);
+      }
+      return 1;
+    }
+
+    if (strcmp(argv[0], "exit") == 0)
+    {
+        printf("sh: A encerrar sessao da Shell.\n");
+        _exit(0);
+    }
+
+    return 0; 
+}
+
+/**
  * runcmd - Executa o comando destrutivamente na imagem virtual. Nunca retorna.
  */
 void runcmd(struct cmd *cmd)
@@ -94,10 +161,30 @@ void runcmd(struct cmd *cmd)
   default:
     panic("runcmd: Tipo de comando desconhecido");
     break;
+
   case EXEC:
     ecmd = (struct execcmd*)cmd;
     if(ecmd->argv[0] == 0)
       exit(0);
+    
+    /* --- INJEÇÃO SEGURA DO CAMINHO ABSOLUTO --- */
+    char caminho_absoluto[MAX_PATH];
+    memset(caminho_absoluto, 0, MAX_PATH);
+
+    // Se o utilizador já digitou um caminho absoluto, usa-o diretamente
+    if (ecmd->argv[0][0] == '/') 
+    {
+        strncpy(caminho_absoluto, ecmd->argv[0], MAX_PATH - 1);
+    } 
+    else 
+    {
+        // Força a pesquisa unificada dentro da pasta bin do sistema
+        snprintf(caminho_absoluto, MAX_PATH, "/mnt/hd0/apps/bin/%s", ecmd->argv[0]);
+    }
+
+    // Substitui apenas o ponteiro do comando executável preservando os argumentos seguintes
+    ecmd->argv[0] = caminho_absoluto;
+    /* ------------------------------------------- */
     
     /* Executa o binário através da chamada de sistema nativa */
     execve(ecmd->argv[0], ecmd->argv, NULL);
@@ -128,10 +215,6 @@ void runcmd(struct cmd *cmd)
   case PIPE:
     pcmd = (struct pipecmd*)cmd;
     
-    /* 
-     * 1. PRIMEIRO ESTÁGIO: Executa o comando da esquerda (Produtor)
-     * Desvia o stdout (FD 1) para escrever os dados no ficheiro temporário.
-     */
     if(fork1() == 0){
       close(1); 
       if(open(pipe_tmp_file, O_WRONLY | O_CREAT | O_TRUNC, 0644) < 0){
@@ -141,16 +224,8 @@ void runcmd(struct cmd *cmd)
       runcmd(pcmd->left);
     }
     
-    /* 
-     * SINCRO MANDATÓRIA: O pai aguarda o término completo do comando da esquerda.
-     * Isto garante que todos os dados foram persistidos no VFS antes da leitura.
-     */
     wait(NULL); 
 
-    /* 
-     * 2. SEGUNDO ESTÁGIO: Executa o comando da direita (Consumidor)
-     * Desvia o stdin (FD 0) para ler os dados a partir do mesmo ficheiro temporário.
-     */
     if(fork1() == 0){
       close(0); 
       if(open(pipe_tmp_file, O_RDONLY, 0) < 0){
@@ -160,7 +235,6 @@ void runcmd(struct cmd *cmd)
       runcmd(pcmd->right);
     }
     
-    // O pai aguarda a conclusão do comando da direita antes de ceder o prompt
     wait(NULL);
     break;
 
@@ -176,38 +250,51 @@ void runcmd(struct cmd *cmd)
 int getcmd(char *buf, int nbuf)
 {
   printf("sirius@sh:~$ ");
-
   memset(buf, 0, nbuf);
-  char  b[256];
-  memset(b, 0, 256);
 
-  if (fgets(b, nbuf, stdin) == NULL)
-    return -1; // EOF (Ctrl+D)
+  if (fgets(buf, nbuf, stdin) == NULL)
+    return -1; 
     
-  if(b[0] == 0) 
+  if(buf[0] == 0) 
     return -1;
-
-  sprintf(buf, "apps/bin/%s", b);
   
   return 0;
 }
 
 int main(void)
 {
-  static char buf[100];
-  // Loop REPL Central
-  while(getcmd(buf, sizeof(buf)) >= 0){
-    if(buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' '){
-      buf[strlen(buf)-1] = 0;  // Corta o \n
-      if(chdir(buf+3) < 0)
-        fprintf(stderr, "sh: cd: nao foi possivel aceder a '%s'\n", buf+3);
+  static char buf[512];
+  struct cmd *parsed_ast;
+
+  while (getcmd(buf, sizeof(buf)) >= 0)
+  {
+    // O parser processa os tokens puros (separa comandos de argumentos)
+    parsed_ast = parsecmd(buf);
+    if (parsed_ast == NULL)
       continue;
+
+    if (parsed_ast->type == EXEC)
+    {
+      struct execcmd *ecmd = (struct execcmd *)parsed_ast;
+      int argc = 0;
+      while (ecmd->argv[argc] != NULL && argc < MAXARGS)
+      {
+        argc++;
+      }
+
+      // Executa built-ins nativos no processo pai da Shell
+      if (execute_builtin(argc, ecmd->argv))
+      {
+        free(parsed_ast);
+        continue; 
+      }
     }
-    
-    if(fork1() == 0)
-      runcmd(parsecmd(buf));
-      
-    wait(NULL); 
+
+    // Passa a árvore sintática intacta para o processo filho
+    if (fork1() == 0)
+      runcmd(parsed_ast);
+
+    wait(NULL);
   }
   return 0;
 }
@@ -286,7 +373,7 @@ struct cmd* backcmd(struct cmd *subcmd)
 }
 
 // ============================================================================
-// MOTOR DO PARSER
+// MOTOR DO PARSER COMPLETO (PORTADO DO XV6 PARA O SIRIUS OS)
 // ============================================================================
 
 char whitespace[] = " \t\r\n\v";
@@ -326,7 +413,7 @@ int gettoken(char **ps, char *es, char **q, char **eq)
   }
   if(eq)
     *eq = s;
-
+  
   while(s < es && strchr(whitespace, *s))
     s++;
   *ps = s;
@@ -349,12 +436,15 @@ struct cmd *nulterminate(struct cmd*);
 
 struct cmd* parsecmd(char *s)
 {
-  char *es = s + strlen(s);
-  struct cmd *cmd = parseline(&s, es);
+  char *es;
+  struct cmd *cmd;
+
+  es = s + strlen(s);
+  cmd = parseline(&s, es);
   peek(&s, es, "");
   if(s != es){
-    fprintf(stderr, "sh: excesso de caracteres: %s\n", s);
-    panic("erro de sintaxe");
+    fprintf(stderr, "sh: restos a esquerda: %s\n", s);
+    panic("syntax");
   }
   nulterminate(cmd);
   return cmd;
@@ -362,7 +452,9 @@ struct cmd* parsecmd(char *s)
 
 struct cmd* parseline(char **ps, char *es)
 {
-  struct cmd *cmd = parsepipe(ps, es);
+  struct cmd *cmd;
+
+  cmd = parsepipe(ps, es);
   while(peek(ps, es, "&")){
     gettoken(ps, es, 0, 0);
     cmd = backcmd(cmd);
@@ -376,7 +468,9 @@ struct cmd* parseline(char **ps, char *es)
 
 struct cmd* parsepipe(char **ps, char *es)
 {
-  struct cmd *cmd = parseexec(ps, es);
+  struct cmd *cmd;
+
+  cmd = parseexec(ps, es);
   if(peek(ps, es, "|")){
     gettoken(ps, es, 0, 0);
     cmd = pipecmd(cmd, parsepipe(ps, es));
@@ -392,7 +486,7 @@ struct cmd* parseredirs(struct cmd *cmd, char **ps, char *es)
   while(peek(ps, es, "<>")){
     tok = gettoken(ps, es, 0, 0);
     if(gettoken(ps, es, &q, &eq) != 'a')
-      panic("sh: ficheiro em falta no redirecionamento");
+      panic("sh: falta o ficheiro para redirecionamento");
     switch(tok){
     case '<':
       cmd = redircmd(cmd, q, eq, O_RDONLY, 0);
@@ -400,8 +494,8 @@ struct cmd* parseredirs(struct cmd *cmd, char **ps, char *es)
     case '>':
       cmd = redircmd(cmd, q, eq, O_WRONLY|O_CREAT|O_TRUNC, 1);
       break;
-    case '+':  
-      cmd = redircmd(cmd, q, eq, O_WRONLY|O_CREAT|O_APPEND, 1);
+    case '+': // >> (Append)
+      cmd = redircmd(cmd, q, eq, O_WRONLY|O_CREAT, 1); // Ajustável conforme suporte do teu VFS
       break;
     }
   }
@@ -417,7 +511,7 @@ struct cmd* parseblock(char **ps, char *es)
   gettoken(ps, es, 0, 0);
   cmd = parseline(ps, es);
   if(!peek(ps, es, ")"))
-    panic("sh: erro de sintaxe - falta )");
+    panic("sh: falta fechar o parentese ')'");
   gettoken(ps, es, 0, 0);
   cmd = parseredirs(cmd, ps, es);
   return cmd;
@@ -438,17 +532,16 @@ struct cmd* parseexec(char **ps, char *es)
 
   argc = 0;
   ret = parseredirs(ret, ps, es);
-  while(!peek(ps, es, "|)&;")){
+  while(!peek(ps, es, "|;&)")){
     if((tok=gettoken(ps, es, &q, &eq)) == 0)
       break;
     if(tok != 'a')
-      panic("sh: erro de sintaxe em parseexec");
-
+      panic("syntax");
     cmd->argv[argc] = q;
     cmd->eargv[argc] = eq;
     argc++;
-    if (argc >= MAXARGS)
-        panic("sh: excesso de argumentos passados ao executavel");
+    if(argc >= MAXARGS)
+      panic("sh: demasiados argumentos");
     ret = parseredirs(ret, ps, es);
   }
   cmd->argv[argc] = 0;
@@ -456,42 +549,47 @@ struct cmd* parseexec(char **ps, char *es)
   return ret;
 }
 
-struct cmd *nulterminate(struct cmd *cmd)
+struct cmd* nulterminate(struct cmd *cmd)
 {
-    int i;
-    struct backcmd *bcmd;
-    struct execcmd *ecmd;
-    struct listcmd *lcmd;
-    struct pipecmd *pcmd;
-    struct redircmd *rcmd;
-    if (cmd == 0)
-        return 0;
-    switch (cmd->type)
-    {
-    case EXEC:
-        ecmd = (struct execcmd *)cmd;
-        for (i = 0; ecmd->argv[i]; i++)
-            *ecmd->eargv[i] = 0;
-        break;
-    case REDIR:
-        rcmd = (struct redircmd *)cmd;
-        nulterminate(rcmd->cmd);
-        *rcmd->efile = 0;
-        break;
-    case PIPE:
-        pcmd = (struct pipecmd *)cmd;
-        nulterminate(pcmd->left);
-        nulterminate(pcmd->right);
-        break;
-    case LIST:
-        lcmd = (struct listcmd *)cmd;
-        nulterminate(lcmd->left);
-        nulterminate(lcmd->right);
-        break;
-    case BACK:
-        bcmd = (struct backcmd *)cmd;
-        nulterminate(bcmd->cmd);
-        break;
-    }
-    return cmd;
+  int i;
+  struct backcmd *bcmd;
+  struct execcmd *ecmd;
+  struct listcmd *lcmd;
+  struct pipecmd *pcmd;
+  struct redircmd *rcmd;
+
+  if(cmd == 0)
+    return 0;
+
+  switch(cmd->type){
+  case EXEC:
+    ecmd = (struct execcmd*)cmd;
+    for(i=0; ecmd->argv[i]; i++)
+      *ecmd->eargv[i] = 0;
+    break;
+
+  case REDIR:
+    rcmd = (struct redircmd*)cmd;
+    nulterminate(rcmd->cmd);
+    *rcmd->efile = 0;
+    break;
+
+  case PIPE:
+    pcmd = (struct pipecmd*)cmd;
+    nulterminate(pcmd->left);
+    nulterminate(pcmd->right);
+    break;
+
+  case LIST:
+    lcmd = (struct listcmd*)cmd;
+    nulterminate(lcmd->left);
+    nulterminate(lcmd->right);
+    break;
+
+  case BACK:
+    bcmd = (struct backcmd*)cmd;
+    nulterminate(bcmd->cmd);
+    break;
+  }
+  return cmd;
 }

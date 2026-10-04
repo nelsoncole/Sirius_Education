@@ -17,10 +17,10 @@
 
 // Ponteiro global oficial POSIX para a tabela de variáveis de ambiente do processo.
 // O Kernel preenche isto na inicialização da pilha do Ring 3.
-extern char **environ;
+char **environ;
 
 // O teu ponteiro de fallback local
-extern char *pwd;
+char *pwd;
 
 /**
  * getenv - Procura e retorna o valor de uma variável de ambiente.
@@ -47,9 +47,13 @@ char *getenv(const char *name)
         }
     }
 
-    // 2. FALLBACK SEGURO DO SIRIUSOS: Se 'environ' não existir, confronta o teu PWD local
+    // Se 'environ' não existir, confronta o PWD local
     if (strcmp(name, "PWD") == 0) {
         return pwd; // Sem necessidade de cast forçado (char*)
+    }
+
+    if (strcmp(name, "HOME") == 0) {
+        return "/"; // Retorna a raiz como a HOME por defeito do sistema
     }
 
     return NULL; // Variável não encontrada na tabela de ambiente

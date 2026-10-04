@@ -1,0 +1,15 @@
+O Roteiro para Implementar o SSH do Zero (RFC 4251)
+
++-----------------------------------------------------------+
+
+| 3. Camada de Ligação (SSH-CONNECTION)                     | -> Canais, Terminais (Shell), Encaminhamento
++-----------------------------------------------------------+
+
+| 2. Camada de Autenticação (SSH-USERAUTH)                  | -> Password ou Chave Pública (id_rsa)
++-----------------------------------------------------------+
+
+| 1. Camada de Transporte Seguro (SSH-TRANS)                | -> Criptografia, Troca de Chaves, Integridade
++-----------------------------------------------------------+
+                       |        ^
+                       v        |
+               [ Sockets TCP Puros (Porta 22) ]

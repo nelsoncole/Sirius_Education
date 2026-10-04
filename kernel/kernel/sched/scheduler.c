@@ -130,7 +130,7 @@ void idle_thread_routine(void)
     while (1) 
     {
         /* Limpa a memória das threads mortas acumuladas neste núcleo */
-        scheduler_reclaim_dead_threads();
+        //scheduler_reclaim_dead_threads();
 
         /* Coloca o núcleo do CPU em suspensão segura até à próxima interrupção */
         __asm__ __volatile__("hlt");
@@ -489,11 +489,14 @@ void scheduler_exit(int exit_code)
         current->state = THREAD_DEAD;
         current->exit_code = exit_code;
 
+        if(current_proc) process_destroy(current_proc);
+
         /* 
          * Move a tarefa atual para a fila de descarte assíncrono.
          * A 'idle_thread' irá desalocar o TCB e a Kernel Stack desta thread mais tarde.
          */
         enqueue_dead_thread(cpu, current);
+
     }
 
     /* 5. Localiza a próxima tarefa pronta na runqueue deste Core */

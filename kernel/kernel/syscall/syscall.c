@@ -263,6 +263,7 @@ uint64_t sys_open(const char* path, uint32_t flags) {
     file->offset = 0;
     file->flags = flags;
     proc->file_descriptor_table[fd] = file;
+    file->ref_count++;
 
     return (uint64_t)fd;
 }
@@ -274,9 +275,23 @@ uint64_t sys_close(int fd) {
     if (!proc || !proc->file_descriptor_table[fd]) return (uint64_t)-1;
 
     vfs_file_t* file = proc->file_descriptor_table[fd];
-    vfs_close(file->node);
-    kfree(file);
+
+    /* 1. DECREMENTA O CONTADOR DE REFERÊNCIAS EXISTENTE */
+    file->ref_count--;
+
+    /* 2. REMOVE O ACESSO DO PROCESSO ATUAL IMEDIATAMENTE */
     proc->file_descriptor_table[fd] = NULL;
+
+    /* 3. SÓ DESTRÓI O NÓ SE ESTE FOR O ÚLTIMO PROCESSO A USÁ-LO */
+    if (file->ref_count == 0) {
+        if (file->node) {
+            vfs_close(file->node);
+        }
+        kfree(file);
+        kprintf("[VFS] Descritor destruido definitivamente (ref_count == 0).\n");
+    } else {
+        kprintf("[VFS] Descritor mantido vivo para outros processos. Restam: %u\n", file->ref_count);
+    }
 
     return 0;
 }
@@ -802,8 +817,8 @@ uint64_t sys_waitpid(int32_t pid, int *wstatus, int options)
 
             kprintf("[SCI] sys_waitpid: Filho PID %d recolhido. Removendo...\n", child_pid);
 
-            process_list_remove(child_proc); 
-            process_destroy(child_proc);    
+            process_list_remove(child_proc);
+            kfree(child_proc);    
             return (uint64_t)child_pid; 
         }
 

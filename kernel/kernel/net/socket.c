@@ -143,41 +143,45 @@ socket_t* tcp_input_lookup(uint32_t src_ip, tcp_header_t* tcp)
     spin_lock(&g_socket_list_lock); 
     socket_t* curr = g_bound_sockets_head;
 
+    /* PASSO 1: PROCURA EXATA POR FILHOS (SESSÕES ATIVAS) */
     while (curr != NULL)
     {
-        /* Apenas sockets IPv4 e do tipo STREAM (TCP) nos interessam aqui */
         if (curr->family == AF_INET && curr->type == SOCK_STREAM)
         {
             struct sockaddr_in* local_sin = (struct sockaddr_in*)curr->local_addr;
 
-            /* 1. VERIFICAÇÃO DA PORTA LOCAL */
+            // Verifica se bate na mesma porta local
             if (local_sin->sin_port == tcp->dest_port)
             {
-                struct sockaddr_in* remote_sin = (struct sockaddr_in*)curr->remote_addr;
-
-                /* PASSO A: PROCURA EXATA (SOCKET DE SESSÃO) */
-                if (curr->state == TCP_STATE_ESTABLISHED || curr->state == TCP_STATE_SYN_RECV)
+                // Se for um socket de sessão (não está em LISTEN)
+                if (curr->state != TCP_STATE_LISTEN)
                 {
+                    struct sockaddr_in* remote_sin = (struct sockaddr_in*)curr->remote_addr;
+                    
+                    // Validação estrita da quádrupla: IP e Porta de origem coincidem?
                     if (remote_sin->sin_port == tcp->src_port && remote_sin->sin_addr.s_addr == src_ip)
                     {
-                        /* Encontrámos o socket de sessão exato! Devolve imediatamente. */
+                        /* Encontrámos o filho/sessão exata! Devolve imediatamente */
                         spin_unlock(&g_socket_list_lock);
                         return curr;
                     }
                 }
-                
-                /* PASSO B: GUARDAR O FALLBACK (SOCKET PASSIVO) */
-                if (curr->state == TCP_STATE_LISTEN)
+                else
                 {
+                    /* Se passámos pelo socket Pai (LISTEN), guardamos como plano B */
                     listen_fallback = curr;
                 }
             }
         }
-        curr = curr->next;
+        // ATENÇÃO: Use o ponteiro correto da lista global aqui (global_next ou next conforme o seu nó)
+        curr = curr->global_next; 
     }
+    
     spin_unlock(&g_socket_list_lock);
 
-    /* Se não encontrámos nenhuma sessão ativa (como no pacote SYN inicial), devolvemos o LISTEN */
+    /* PASSO 2: FALLBACK PARA O PAI 
+       Se não houver nenhuma sessão ativa idêntica (ex: pacote SYN inicial), 
+       retorna o socket LISTEN encontrado */
     return listen_fallback;
 }
 
@@ -255,7 +259,26 @@ static int socket_vfs_close(vfs_node_t* node)
 
     socket_t* sock = (socket_t*)node->private_data;
 
-    /* REMOVE DA LISTA GLOBAL DO KERNEL SE ELE ESTIVESSE REGISTADO VIA BIND */
+    if(!sock) return -1;
+
+    if (sock->proto_ops && sock->proto_ops->release) {
+        sock->proto_ops->release(sock);
+    }
+    
+    if (sock->type == SOCK_STREAM) 
+    {
+        if (sock->state != TCP_STATE_CLOSED) 
+        {
+            spin_lock(&sock->lock);
+            node->private_data = NULL;
+            spin_unlock(&sock->lock);
+
+            kprintf("[VFS] Socket mantido na lista como orfao para aguardar pacotes finais.\n");
+            return 0; 
+        }
+    }
+
+    // SE FOR UDP OU SE O TCP JÁ ESTIVER CLOSED, FAZ A LIMPEZA TOTAL IMEDIATA
     spin_lock(&g_socket_list_lock);
     socket_t* curr = g_bound_sockets_head;
     socket_t* prev = NULL;
@@ -268,18 +291,16 @@ static int socket_vfs_close(vfs_node_t* node)
         prev = curr;
         curr = curr->next;
     }
+
     spin_unlock(&g_socket_list_lock);
 
-    if (sock->peer) {
-        sock->peer->state = 0; 
-        sock->peer->peer = NULL;
-    }
-
+    // 3. Libertar os recursos de memória do socket VFS
     if (sock->rx_buffer) kfree(sock->rx_buffer);
     if (sock->tx_buffer) kfree(sock->tx_buffer);
 
     kfree(sock);
     node->private_data = NULL;
+    
     return 0; 
 }
 
@@ -414,6 +435,7 @@ int socket(int family, int type, int protocol)
             file->node = vnode;
             file->flags = VFS_MODE_READ | VFS_MODE_WRITE;
             file->offset = 0;
+            file->ref_count++;
 
             proc->file_descriptor_table[i] = file;
             fd = i;
@@ -600,6 +622,7 @@ int accept(int fd, void* addr, unsigned long* addrlen)
 
         client_file->node = client_node;
         client_file->flags = file->flags;
+        client_file->ref_count++;
 
         proc->file_descriptor_table[client_fd] = client_file;
         

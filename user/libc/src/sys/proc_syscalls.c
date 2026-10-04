@@ -23,10 +23,10 @@
 #include <string.h>
 #include <stdio.h>
 
-/* ============================================================================
- * 1. GESTÃO DE PROCESSOS E FLUXO DE EXECUÇÃO
- * ============================================================================
- */
+
+#ifndef MAX_PATH_LEN
+#define MAX_PATH_LEN 4096
+#endif
 
 /**
  * _exit - Termina o processo atual de forma imediata e atómica.
@@ -56,15 +56,15 @@ pid_t fork(void)
  */
 int execve(const char *pathname, char *const argv[], char *const envp[])
 {
-    char new_pathname[PATH_MAX];
+    char new_pathname[MAX_PATH_LEN];
     if (pathname[0] == '/')
     {
         strcpy(new_pathname, pathname);
     }
     else
     {
-        char pwd[PATH_MAX];
-        if (getcwd(pwd, PATH_MAX) == NULL)
+        char pwd[MAX_PATH_LEN];
+        if (getcwd(pwd, MAX_PATH_LEN) == NULL)
         {
             return -1;
         }
@@ -78,7 +78,7 @@ int execve(const char *pathname, char *const argv[], char *const envp[])
 }
 
 /**
- * execv - Wrapper conveniente para execve omitindo variáveis de ambiente.
+ * execv - conveniente para execve omitindo variáveis de ambiente.
  */
 int execv(const char *pathname, char *const argv[])
 {
@@ -87,7 +87,7 @@ int execv(const char *pathname, char *const argv[])
 }
 
 /**
- * execl - Wrapper para executar um binário passando argumentos via Lista Variádica.
+ * execl - para executar um binário passando argumentos via Lista Variádica.
  */
 int execl(const char *pathname, const char *arg, ...)
 {
@@ -139,12 +139,6 @@ pid_t wait(int *wstatus)
 }
 
 
-
-/* ============================================================================
- * 2. IDENTIFICAÇÃO E UTILIDADES DE PROCESSOS
- * ============================================================================
- */
-
 /**
  * getpid - Obtém o ID do processo atual.
  */
@@ -193,17 +187,11 @@ int setgid(gid_t gid)
     return (int)syscall1(SYS_SETGID, (uint64_t)gid);
 }
 
-/* ============================================================================
- * 3. UTILITÁRIOS DE TEMPO E SINCRONISMO
- * ============================================================================
- */
-
 /**
  * sleep - Suspende a execução da thread atual por um período em segundos.
  */
 unsigned int sleep(unsigned int seconds)
 {
-    /* Invoca o serviço de bloqueio temporal do Kernel */
     return (unsigned int)syscall1(SYS_SLEEP, (uint64_t)seconds);
 }
 
@@ -212,7 +200,6 @@ unsigned int sleep(unsigned int seconds)
  */
 int usleep(unsigned int usec)
 {
-    /* Mapeia para a syscall especializada do kernel para micro-latências */
     return (int)syscall1(SYS_USLEEP, (uint64_t)usec);
 }
 
@@ -223,13 +210,71 @@ int usleep(unsigned int usec)
 int chdir(const char *path) 
 {
     if (!path) return -1;
+
+    char new_pathname[MAX_PATH_LEN];
+    memset(new_pathname, 0, MAX_PATH_LEN);
+
+    if (path[0] == '/')
+    {
+        strcpy(new_pathname, path);
+    }
+    else
+    {
+        /* 1. TRATAMENTO CIRÚRGICO PARA COMPONENTES DE DIRETÓRIA (Localizado na Libc) */
+        if (strcmp(path, ".") == 0)
+        {
+            // "cd ." -> Simplesmente mantém o PWD atual
+            if (getcwd(new_pathname, MAX_PATH_LEN) == NULL) return -1;
+        }
+        else if (strcmp(path, "..") == 0)
+        {
+            // "cd .." -> Recupera o PWD atual e recua um nível
+            if (getcwd(new_pathname, MAX_PATH_LEN) == NULL) return -1;
+            
+            size_t len = strlen(new_pathname);
+            if (len > 1) 
+            {
+                // Remove barra terminal se existir (ex: "/apps/" -> "/apps")
+                if (new_pathname[len - 1] == '/') {
+                    new_pathname[len - 1] = '\0';
+                }
+
+                // Procura a última barra para truncar o caminho
+                char *last_slash = strrchr(new_pathname, '/');
+                if (last_slash != NULL) 
+                {
+                    if (last_slash == new_pathname) 
+                    {
+                        // Se a última barra for a da raiz (ex: "/apps"), recua para "/"
+                        *(last_slash + 1) = '\0';
+                    } 
+                    else 
+                    {
+                        // Corta a string na última barra (ex: "/apps/bin" -> "/apps")
+                        *last_slash = '\0';
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Caminho relativo comum (ex: cd "bin" quando se está em "/apps")
+            char pwd[MAX_PATH_LEN];
+            if (getcwd(pwd, MAX_PATH_LEN) == NULL)
+            {
+                return -1;
+            }
+            else
+            {
+                sprintf(new_pathname, "%s/%s", pwd, path);
+            }
+        }
+    }
     
-    /* Dispara a chamada de sistema passando o ponteiro do caminho */
-    int ret = (int)syscall1(SYS_CHDIR, (uint64_t)path);
+    // 2. Invoca a Syscall com o caminho estrito e absoluto já resolvido
+    int ret = (int)syscall1(SYS_CHDIR, (uint64_t)new_pathname);
     
-    // Se o kernel retornar um valor negativo (erro), podes mapear para o errno aqui
     if (ret < 0) {
-        // errno = -ret; (Opcional, se usares a variável global errno)
         return -1;
     }
     

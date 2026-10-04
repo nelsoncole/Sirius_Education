@@ -570,7 +570,8 @@ void process_destroy(process_t* proc)
                  */
                 if (proc->file_descriptor_table[i]->ref_count == 0)
                 {
-                    kprintf("[VFS] A fechar recurso partilhado globalmente: %s\n", 
+                    kprintf("[VFS] ref_count == %d A fechar recurso partilhado globalmente: %s\n", 
+                            proc->file_descriptor_table[i]->ref_count,
                             proc->file_descriptor_table[i]->node->name);
                     
                     /* Fecha o nó no sistema de ficheiros virtual */
@@ -594,13 +595,11 @@ void process_destroy(process_t* proc)
 
     }
 
-    /* 3. Desalocação final do PCB */
-    kfree(proc);
-    
     kprintf("[Process] Processo %d destruido com sucesso total.\n", proc->pid);
 }
 
 void process_exit(int code) {
+    
     scheduler_exit(code);
 }
 /**

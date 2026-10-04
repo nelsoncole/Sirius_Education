@@ -19,6 +19,7 @@
 #include <kernel/kernel/mm/pmm.h>
 #include <kernel/kpaging.h>
 #include <kernel/kvmm.h>
+#include <kernel/klib.h>
 
 // Ponteiro global que indica a raiz (início) da lista encadeada do Heap
 static HEAP_HEADER* g_heap_start = (void*)0;
@@ -26,15 +27,39 @@ static HEAP_HEADER* g_heap_start = (void*)0;
 // Variável de Lock: 0 = Livre, 1 = Ocupado
 static volatile int g_heap_lock = 0;
 
-// Primitiva de Spinlock usando Builtins atómicos do GCC
-static inline void heap_lock(void) {
+static inline unsigned long heap_lock_irq(void) {
+    unsigned long flags;
+
+    // 1. Guarda o RFLAGS atual na stack, descarrega para a variável 'flags' e executa 'cli'
+    asm volatile(
+        "pushfq\n\t"
+        "pop %0\n\t"
+        "cli"
+        : "=rm"(flags)
+        :
+        : "memory"
+    );
+
+    // 2. Executa o Spinlock atómico em ambiente SMP seguro
     while (__atomic_test_and_set(&g_heap_lock, __ATOMIC_ACQUIRE)) {
-        __builtin_ia32_pause(); // Instrução PAUSE indica ao CPU um loop de espera otimizado
+        __builtin_ia32_pause(); // Instrução PAUSE otimiza o consumo do pipeline do CPU
     }
+
+    return flags; // Retorna as flags originais para que o kmalloc/kfree possam guardar
 }
 
-static inline void heap_unlock(void) {
+static inline void heap_unlock_irq(unsigned long flags) {
+    // 1. Liberta o Spinlock atomicamente
     __atomic_clear(&g_heap_lock, __ATOMIC_RELEASE);
+
+    // 2. Restaura o RFLAGS (se as IRQs já estavam desligadas antes do lock, continuam desligadas)
+    asm volatile(
+        "push %0\n\t"
+        "popfq"
+        :
+        : "g"(flags)
+        : "memory"
+    );
 }
 
 
@@ -53,7 +78,7 @@ void kheap_init(void) {
     g_heap_start->is_free = 1;
     g_heap_start->next = (void*)0;
 
-    heap_unlock();
+    g_heap_lock = 0;
 }
 
 /*
@@ -81,7 +106,7 @@ static unsigned long g_heap_current_end = KERNEL_HEAP_VIRTUAL_BASE + KERNEL_HEAP
 void* kmalloc(unsigned long size) {
     if (size == 0) return (void*)0;
 
-    heap_lock();
+    unsigned long flags = heap_lock_irq();
 
     // Garante que o tamanho útil solicitado é sempre múltiplo estrito de 16
     size = (size + 15) & ~15UL;
@@ -132,7 +157,8 @@ void* kmalloc(unsigned long size) {
             // Se o PMM esgotar a RAM física do hardware, não há como expandir
             if (phys_page == 0)
             {
-                heap_unlock();
+                kprintf("[KMALLOC DEBUG] ERRO: Memoria RAM fisica esgotada! PMM retornou 0. Nao e possivel expandir o heap para alocar %lu bytes.\n", size);
+                heap_unlock_irq(flags);
                 return (void*)0;
             } 
 
@@ -190,7 +216,7 @@ void* kmalloc(unsigned long size) {
     // Marca o bloco escolhido como ocupado
     best_block->is_free = 0;
 
-    heap_unlock();
+    heap_unlock_irq(flags);
 
     // Retorna o ponteiro virtual útil pronto para uso
     return (void*)((unsigned long)best_block + sizeof(HEAP_HEADER));
@@ -206,7 +232,7 @@ void* kmalloc(unsigned long size) {
 void kfree(void* ptr) {
     if (ptr == (void*)0) return;
 
-    heap_lock();
+    unsigned long flags = heap_lock_irq();
 
     // Recupera o cabeçalho original recuando o tamanho dos metadados
     HEAP_HEADER* header = (HEAP_HEADER*)((unsigned long)ptr - sizeof(HEAP_HEADER));
@@ -229,5 +255,5 @@ void kfree(void* ptr) {
         current = current->next;
     }
 
-    heap_unlock();
+    heap_unlock_irq(flags);
 }

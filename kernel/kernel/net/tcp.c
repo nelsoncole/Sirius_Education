@@ -26,10 +26,12 @@
 extern int ip_output(uint32_t dest_ip, uint8_t protocol, const void* data, uint32_t len);
 
 /* Definição interna de Flags do Cabeçalho TCP */
+#define TCP_FLAG_FIN  0x0001
 #define TCP_FLAG_SYN  0x0002
 #define TCP_FLAG_RST  0x0004
 #define TCP_FLAG_PSH  0x0008
 #define TCP_FLAG_ACK  0x0010
+#define TCP_FLAG_URG  0x0020
 
 /* Estrutura do Pseudo-Cabeçalho IPv4 necessário para o cálculo do Checksum TCP */
 typedef struct {
@@ -164,6 +166,109 @@ int tcp_connect_handshake(socket_t* sock, struct sockaddr_in* dest)
 }
 
 /**
+ * @brief Envia um segmento de fecho (FIN ou RST) baseado na FSM do socket e atualiza o estado.
+ */
+int tcp_disconnect(socket_t* sock)
+{
+    if (!sock) return -1;
+    /* Captura atómica e validação dos endereços locais/remotos */
+    spinlock_acquire(&sock->lock);
+    
+    if (sock->local_addr_len < sizeof(struct sockaddr_in) || 
+        sock->remote_addr_len < sizeof(struct sockaddr_in)) 
+    {
+        spinlock_release(&sock->lock);
+        return -4; /* Endereços inválidos ou não conectados */
+    }
+
+    struct sockaddr_in* local = (struct sockaddr_in*)sock->local_addr;
+    struct sockaddr_in* dest  = (struct sockaddr_in*)sock->remote_addr;
+    uint16_t src_port = local->sin_port;
+    uint16_t dst_port = dest->sin_port;
+
+    uint32_t current_state = sock->state;
+    uint16_t flags_to_send = 0;
+
+    /* Triagem da Máquina de Estados (FSM) do TCP */
+    if (current_state == TCP_STATE_ESTABLISHED || current_state == TCP_STATE_CLOSE_WAIT)
+    {
+        /* Fecho gracioso: Envia FIN + ACK para confirmar receções anteriores */
+        flags_to_send = TCP_FLAG_FIN | TCP_FLAG_ACK;
+        sock->state = TCP_STATE_FIN_WAIT_1; // (Ajuste para o ID da FSM)
+    }
+    else if (current_state == TCP_STATE_SYN_SENT)
+    {
+        /* Ligação ainda não estabelecida: Aborta abruptamente enviando um RST */
+        flags_to_send = TCP_FLAG_RST;
+        sock->state = TCP_STATE_CLOSED;
+    }
+    else 
+    {
+        /* Já está fechado ou em estado que não requer envio de pacotes */
+        spinlock_release(&sock->lock);
+        return 0;
+    }
+
+    /* Avança o número de sequência local: o FIN consome 1 sequência lógica */
+    uint32_t seq_to_send = sock->local_seq;
+    uint32_t ack_to_send = sock->remote_ack;
+    
+    if (flags_to_send & TCP_FLAG_FIN) {
+        sock->local_seq++; 
+    }
+
+    spinlock_release(&sock->lock);
+
+    /* Alocação idêntica ao seu connect_handshake (Apenas cabeçalho TCP) */
+    uint32_t tcp_packet_size = sizeof(tcp_header_t);
+    uint8_t* tcp_buffer = (uint8_t*)kmalloc(tcp_packet_size);
+    if (!tcp_buffer) return -2;
+    memset(tcp_buffer, 0, tcp_packet_size);
+
+    /* Montagem do Cabeçalho seguindo rigorosamente o seu padrão */
+    tcp_header_t* tcp = (tcp_header_t*)tcp_buffer;
+    tcp->src_port   = src_port;
+    tcp->dest_port  = dst_port;
+    tcp->seq_num    = htonl(seq_to_send); 
+    tcp->ack_num    = htonl(ack_to_send);       
+    
+    tcp->data_offset_flags = htons((5 << 12) | flags_to_send); 
+    tcp->window_size       = htons(1024); 
+    tcp->checksum          = 0x0000;
+    tcp->urgent_ptr        = 0x0000;
+
+    /* Configuração do Pseudo-Cabeçalho IP para cálculo do Checksum */
+    tcp_pseudo_header_t pseudo;
+    uint32_t my_ip = 0;
+    net_get_interface_ip(0, &my_ip);
+    pseudo.src_ip   = my_ip; 
+    pseudo.dest_ip  = dest->sin_addr.s_addr;
+    pseudo.reserved = 0;
+    pseudo.protocol = IPPROTO_TCP;       
+    pseudo.tcp_len  = htons(tcp_packet_size);
+
+    /* Payload nulo para controle */
+    tcp->checksum = tcp_calculate_checksum(&pseudo, tcp, NULL, 0);
+
+    kprintf("[TCP] Enviando pacote de desconexao (Flags: 0x%02X, Seq: %u, Ack: %u).\n", 
+            flags_to_send, seq_to_send, ack_to_send);
+
+    /* Despacha o segmento montado para a rede */
+    int res = ip_output(dest->sin_addr.s_addr, IPPROTO_TCP, tcp_buffer, tcp_packet_size);
+    kfree(tcp_buffer);
+
+    if (res < 0 && res != -11) {
+        /* Se falhou o envio físico do pacote, força o fecho local na FSM */
+        spinlock_acquire(&sock->lock);
+        sock->state =  TCP_STATE_CLOSED;
+        spinlock_release(&sock->lock);
+        return -3;
+    }
+
+    return 0;
+}
+
+/**
  * @brief tcp_send_stream - Envia blocos contínuos de bytes através de uma conexão ativa.
  */
 long tcp_send_stream(socket_t* sock, const void* buf, unsigned long len)
@@ -266,7 +371,7 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
 
     /* 2. Demultiplexação de Porta: Localiza o socket TCP alvo no Kernel */
     socket_t* sock = tcp_input_lookup(src_ip, tcp);
-    if (!sock) return 0; /* Descarte silencioso (Porta fechada / Port Unreachable) */
+    if (!sock) return 0;/* Descarte silencioso (Porta fechada / Port Unreachable) */
 
     /* Garante exclusão mútua do Ring Buffer em ambiente SMP */
     spin_lock(&sock->lock);
@@ -309,7 +414,7 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                 
                 /* Computa o pseudo-cabeçalho IP para o Checksum do ACK de resposta */
                 tcp_pseudo_header_t pseudo;
-                uint32_t my_ip = 0x10101010;
+                uint32_t my_ip = 0;
                 net_get_interface_ip(0, &my_ip);
                 pseudo.src_ip   = my_ip;
                 pseudo.dest_ip  = src_ip;
@@ -375,7 +480,7 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
 
                 /* Checksum do Pseudo-Cabeçalho */
                 tcp_pseudo_header_t pseudo;
-                uint32_t my_ip = 0x10101010;
+                uint32_t my_ip = 0;
                 net_get_interface_ip(0, &my_ip);
                 pseudo.src_ip   = my_ip;
                 pseudo.dest_ip  = src_ip;
@@ -463,6 +568,79 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
             }
             spin_unlock(&sock->lock);
         }
+    }
+    else if (sock->state == TCP_STATE_FIN_WAIT_1)
+    {
+        if ((flags & TCP_FLAG_FIN) && (flags & TCP_FLAG_ACK)) 
+        {
+           
+            sock->remote_ack = ntohl(tcp->seq_num) + 1;
+            sock->local_seq  = ntohl(tcp->ack_num);
+
+            sock->state = TCP_STATE_CLOSED;
+            
+            uint32_t ack_packet_size = sizeof(tcp_header_t);
+            uint8_t* ack_buffer = (uint8_t*)kmalloc(ack_packet_size);
+            if (ack_buffer) 
+            {
+                memset(ack_buffer, 0, ack_packet_size);
+                tcp_header_t* reply_tcp = (tcp_header_t*)ack_buffer;
+                
+                reply_tcp->src_port   = tcp->dest_port;
+                reply_tcp->dest_port  = tcp->src_port;
+                reply_tcp->seq_num    = htonl(sock->local_seq);
+                reply_tcp->ack_num    = htonl(sock->remote_ack);
+                reply_tcp->data_offset_flags = htons((5 << 12) | TCP_FLAG_ACK);
+                reply_tcp->window_size       = htons(2048);
+                
+                tcp_pseudo_header_t pseudo;
+                uint32_t my_ip = 0;
+                net_get_interface_ip(0, &my_ip);
+                pseudo.src_ip   = my_ip;
+                pseudo.dest_ip  = src_ip;
+                pseudo.reserved = 0;
+                pseudo.protocol = IPPROTO_TCP;
+                pseudo.tcp_len  = htons(ack_packet_size);
+                
+                reply_tcp->checksum = tcp_calculate_checksum(&pseudo, reply_tcp, NULL, 0);
+                
+                spin_unlock(&sock->lock);
+                ip_output(src_ip, IPPROTO_TCP, ack_buffer, ack_packet_size);
+                kfree(ack_buffer);
+
+                /* --- REMOÇÃO SEGURA DA LISTA GLOBAL --- */
+                spin_lock(&g_socket_list_lock);
+                socket_t *curr = g_bound_sockets_head;
+                socket_t *prev = NULL;
+                while (curr != NULL)
+                {
+                    if (curr == sock)
+                    {
+                        if (prev == NULL)
+                            g_bound_sockets_head = curr->global_next;
+                        else
+                            prev->global_next = curr->global_next;
+                        break;
+                    }
+                    prev = curr;
+                    curr = curr->global_next;
+                }
+                spin_unlock(&g_socket_list_lock);
+
+                // Agora libertamos o lock do próprio socket antes de o destruir
+                spin_unlock(&sock->lock);
+
+                /* --- LIBERTAÇÃO DE MEMÓRIA (Ninguém mais consegue aceder ao sock) --- */
+                if (sock->rx_buffer) kfree(sock->rx_buffer);
+                if (sock->tx_buffer) kfree(sock->tx_buffer);
+                kfree(sock);
+
+                return 0;
+            }
+        }
+        
+        spin_unlock(&sock->lock);
+        return -1;
     }
     else if (sock->state == TCP_STATE_ESTABLISHED)
     {

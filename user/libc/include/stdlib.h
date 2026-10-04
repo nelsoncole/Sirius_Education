@@ -58,7 +58,7 @@ long long int strtoul ( const char *nptr, char **endptr, int base);
 
 void exit(int rc);
 char *getenv(const char *name);
-
+int setenv(const char *name, const char *value, int overwrite);
 void abort(void);
 
 void qsort(void *base, size_t nmemb, size_t size,int (*compar)(const void *, const void *));

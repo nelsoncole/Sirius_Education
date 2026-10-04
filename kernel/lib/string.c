@@ -124,3 +124,18 @@ char* strchr(const char* s, int c) {
     }
     return (char*)s; // Retorna o ponteiro para o caractere encontrado
 }
+
+char *strrchr(const char *s, int c)
+{
+    const char *p = s + strlen(s);
+
+    while (p >= s)
+    {
+        if (*p == (char)c)
+            return (char*)p;
+
+        p--;
+    }
+
+    return NULL;
+}

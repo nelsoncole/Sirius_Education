@@ -7,7 +7,7 @@
  *                 biblioteca unificada TLSe, mantendo a ponte de E/S com o
  *                 Kernel através de unistd.h.
  * 
- *         Author: Nelson Cole (Portabilidade e Adaptacao)
+ *         Author: Nelson Cole
  *   Created Date: 01/10/2026
  * 
  *    Modified By: Nelson Cole
@@ -23,7 +23,7 @@
 
 int main(int argc, char *argv[]) {
     (void)argc; (void)argv;
-    
+
     int socket_desc, client_sock;
     unsigned int c;
     struct sockaddr_in server, client;
@@ -57,8 +57,7 @@ int main(int argc, char *argv[]) {
         int pid = fork();
         if (pid == 0)
         {
-            // Processo Filho: assume o terminal remoto
-            close(socket_desc); // Fecha o socket pai neste contexto filho
+            close(socket_desc);
 
             /* 
              * PONTE MÁGICA DO VFS:
@@ -69,6 +68,8 @@ int main(int argc, char *argv[]) {
             dup2(client_sock, 1); // stdout -> Placa de Rede
             dup2(client_sock, 2); // stderr -> Placa de Rede
 
+            if(client_sock > 2) close(client_sock);
+
             // Executa o interpretador de comandos nativo do Sirius OS
             char *sh_args[] = {"apps/bin/sh", NULL};
             execve(sh_args[0], sh_args, NULL);
@@ -77,12 +78,13 @@ int main(int argc, char *argv[]) {
             _exit(-1);
         }
         else if (pid > 0)
-        {
-            int status;
-            waitpid(pid, &status, 0);
+        {   
+            // O pai DEVE fechar a sua cópia do client_sock IMEDIATAMENTE para que 
+            // a ligação termine fisicamente quando o filho der exit.
+            close(client_sock);
 
-            // Processo Pai: Desconecta-se deste cliente e volta para o accept()
-            close(client_sock); 
+            //int status;
+            //waitpid(pid, &status, 0);
         }
     }
     

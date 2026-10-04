@@ -37,7 +37,7 @@
 #define W_OK          2  /* Teste de permissão de escrita */
 #define R_OK          4  /* Teste de permissão de leitura */
 
-#define PATH_MAX    512
+
 
 /* 
  * ============================================================================

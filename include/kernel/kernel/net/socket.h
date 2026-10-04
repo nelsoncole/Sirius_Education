@@ -64,6 +64,7 @@ typedef struct protocol_operations {
     long (*recvfrom)(struct socket* sock, void* buf, unsigned long len, int flags, void* src_addr, unsigned long* addrlen);
     int (*listen)(struct socket* sock, int backlog);
     struct socket* (*accept)(struct socket* sock);
+    int (*release)(struct socket* sock);
 } protocol_operations_t;
 
 /**

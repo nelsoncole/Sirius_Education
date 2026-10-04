@@ -20,6 +20,11 @@
 #include <string.h>
 #include <stdarg.h>
 
+
+#ifndef MAX_PATH_LEN
+#define MAX_PATH_LEN 4096
+#endif
+
 /*
  * ============================================================================
  * OPERAÇÕES FUNDAMENTAIS EM FILE DESCRIPTORS
@@ -30,20 +35,20 @@ int open(const char *pathname, int flags, ...)
 {
     if (!pathname) return -1;
 
-    char absolute_path[PATH_MAX];
-    memset(absolute_path, 0, PATH_MAX);
+    char absolute_path[MAX_PATH_LEN];
+    memset(absolute_path, 0, MAX_PATH_LEN);
 
     // CASO 1: O caminho já é absoluto (Começa com '/')
     if (pathname[0] == '/') 
     {
         // Copia diretamente para passar ao kernel
-        strncpy(absolute_path, pathname, PATH_MAX);
+        strncpy(absolute_path, pathname, MAX_PATH_LEN);
     }
     // CASO 2: O caminho é RELATIVO (Ex: "nelson" ou "docs/config.ini")
     else 
     {
         // 1. Pergunta ao Kernel qual é o PWD atual deste processo via libc getcwd()
-        if (getcwd(absolute_path, PATH_MAX) == NULL) {
+        if (getcwd(absolute_path, MAX_PATH_LEN) == NULL) {
             return -1; // Falha se não conseguir ler o PWD
         }
 

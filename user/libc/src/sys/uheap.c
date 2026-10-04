@@ -66,39 +66,40 @@ static inline void* sbrk_user(intptr_t increment)
  */
 void* umalloc(size_t size) 
 {
-    if (size == 0) return (void*)0;
+    if (size == 0) return null;
 
-    // Alinhamento estrito a 16 bytes
+    // Alinhamento estrito a 16 bytes para os dados do utilizador
     size = (size + 15) & ~15UL;
 
     UHEAP_HEADER* current;
     UHEAP_HEADER* best_block = null;
     size_t smallest_diff = 0xFFFFFFFFFFFFFFFFUL;
+    
+    // Como sizeof(UHEAP_HEADER) é 32, a constante é limpa e segura
+    const size_t h_size = sizeof(UHEAP_HEADER); 
 
-    // 1. Inicialização tardia do Heap (Executada apenas UMA vez na vida do processo)
+    // 1. Inicialização tardia do Heap
     if (g_uheap_start == null) 
     {
         uint64_t base_break = (uint64_t)sbrk_user(0);
         if (base_break == (uint64_t)-1) return null;
 
-        // Aloca imediatamente o primeiro bloco real na base do processo
         unsigned long initial_expansion = 16 * 1024;
-        
-        if(size > (initial_expansion - sizeof(UHEAP_HEADER))) 
-            initial_expansion = size + sizeof(UHEAP_HEADER);
+        if(size > (initial_expansion - h_size)) 
+            initial_expansion = (size + h_size + 15) & ~15UL;
 
         void* first_space = sbrk_user(initial_expansion);
         if (first_space == (void*)-1) return null;
 
         g_uheap_start = (UHEAP_HEADER*)first_space;
-        g_uheap_start->size = initial_expansion - sizeof(UHEAP_HEADER);
+        g_uheap_start->size = initial_expansion - h_size;
         g_uheap_start->is_free = 1;
         g_uheap_start->next = null;
 
         g_uheap_current_end = (uint64_t)first_space + initial_expansion;
     }
 
-    // 2. Varre a lista à procura do melhor bloco livre (Best-Fit)
+    // 2. Busca Best-Fit
     current = g_uheap_start;
     while (current != null) 
     {
@@ -114,53 +115,51 @@ void* umalloc(size_t size)
         current = current->next;
     }
 
-    // 3. Se não encontrou nenhum bloco livre que sirva, força a expansão do break
+    // 3. Expansão do break se não encontrou bloco
     if (best_block == null) 
     {
-        unsigned long expansion_size = 16 * 1024; // 16 KiB padrão
-        if (size + sizeof(UHEAP_HEADER) > expansion_size) 
+        unsigned long expansion_size = 16 * 1024;
+        if (size + h_size > expansion_size) 
         {
-            expansion_size = (size + sizeof(UHEAP_HEADER) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+            expansion_size = (size + h_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
         }
 
         void* allocated_space = sbrk_user(expansion_size);
-        if (allocated_space == (void*)-1) 
-        {
-            return null; // Out of Memory real
-        }
+        if (allocated_space == (void*)-1) return null;
 
-        // O novo bloco nasce no início do espaço cedido pelo kernel
         best_block = (UHEAP_HEADER*)allocated_space;
-        best_block->size = expansion_size - sizeof(UHEAP_HEADER);
+        best_block->size = expansion_size - h_size;
         best_block->is_free = 1;
         best_block->next = null;
 
         g_uheap_current_end = (uint64_t)allocated_space + expansion_size;
 
-        // Procura o último nó da lista atual para encadear o novo bloco expandido
+        // Encontra o último nó atual da lista
         current = g_uheap_start;
         while (current->next != null) 
         {
             current = current->next;
         }
+        
+        // CORREÇÃO: Liga de forma segura o novo bloco ao fim da cadeia
         current->next = best_block;
 
-        // Se o nó imediatamente anterior também estava livre, funde-os agora mesmo
+        // Fusão segura com o anterior se este estiver livre
         if (current->is_free) 
         {
-            current->size += sizeof(UHEAP_HEADER) + best_block->size;
-            current->next = null;
-            best_block = current; // O bloco de trabalho passa a ser o gigante fundido
+            current->size += h_size + best_block->size;
+            current->next = best_block->next; // Mantém a coerência da cauda da lista (NULL neste caso)
+            best_block = current; 
         }
     }
 
-    // 4. Divisão (Split) do bloco escolhido, se o espaço restante justificar um novo cabeçalho
-    if (best_block->size >= (size + sizeof(UHEAP_HEADER) + 16)) 
+    // 4. Split (Divisão) - Totalmente alinhado porque h_size(32) + size(Múltiplo de 16) é perfeitamente alinhado
+    if (best_block->size >= (size + h_size + 16)) 
     {
-        unsigned long next_header_addr = (unsigned long)best_block + sizeof(UHEAP_HEADER) + size;
+        unsigned long next_header_addr = (unsigned long)best_block + h_size + size;
         UHEAP_HEADER* new_next_block = (UHEAP_HEADER*)next_header_addr;
 
-        new_next_block->size = best_block->size - size - sizeof(UHEAP_HEADER);
+        new_next_block->size = best_block->size - size - h_size;
         new_next_block->is_free = 1;
         new_next_block->next = best_block->next;
 
@@ -168,9 +167,8 @@ void* umalloc(size_t size)
         best_block->next = new_next_block;
     }
 
-    // Marcar como ocupado e retornar o ponteiro útil após o cabeçalho
     best_block->is_free = 0;
-    return (void*)((unsigned long)best_block + sizeof(UHEAP_HEADER));
+    return (void*)((unsigned long)best_block + h_size);
 }
 
 /**

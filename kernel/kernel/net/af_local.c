@@ -248,11 +248,58 @@ static long af_local_recvfrom(socket_t* sock, void* buf, unsigned long len, int 
     return (long)bytes_read;
 }
 
+/**
+ * @brief Finaliza o protocolo local (AF_LOCAL), desliga o peer e esvazia as filas.
+ */
+static int af_local_release(socket_t* sock) 
+{
+    if (!sock) return -1;
+
+    spinlock_acquire(&sock->lock);
+
+    // Se o socket for um servidor em modo LISTEN (estado 2), liberta os clientes pendentes
+    if (sock->state == 2) 
+    {
+        socket_t* curr = sock->listen_queue;
+        while (curr != NULL) 
+        {
+            socket_t* next = curr->next;
+            
+            spinlock_acquire(&curr->lock);
+            curr->state = 0; // Aborta a conexão do cliente (SOCKET_CLOSED)
+            curr->next = NULL;
+            spinlock_release(&curr->lock);
+            
+            curr = next;
+        }
+        sock->listen_queue = NULL;
+    }
+
+    // Se o socket estiver conectado (estado 1) e tiver um parceiro ativo (peer)
+    if (sock->state == 1 && sock->peer) 
+    {
+        socket_t* peer_sock = sock->peer;
+        
+        spinlock_acquire(&peer_sock->lock);
+        peer_sock->state = 0;    // Avisa o parceiro que a ligação caiu (EOF para o recvfrom)
+        peer_sock->peer  = NULL; // Quebra o vínculo simétrico (Zero-Copy)
+        spinlock_release(&peer_sock->lock);
+        
+        sock->peer = NULL;
+    }
+
+    sock->state = 0; // Move o estado local para CLOSED
+    spinlock_release(&sock->lock);
+
+    return 0;
+}
+
 protocol_operations_t g_af_local_ops = {
     .bind     = af_local_bind,
     .connect  = af_local_connect,
     .sendto   = af_local_sendto,
     .recvfrom = af_local_recvfrom,
     .listen   = af_local_listen,
-    .accept   = af_local_accept
+    .accept   = af_local_accept,
+    .release  = af_local_release
 };

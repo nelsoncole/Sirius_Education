@@ -394,8 +394,8 @@ void kernel_main(BOOT_INFO *boot_info)
     elf_load_and_create_process(argv_sshd[0], 1, argv_sshd, 0);
 
     char *argv[] = {"/mnt/hd0/apps/bin/sh",};
-    //kprintf("[BOOT] Lancando o processo do user space '%s'...\n", argv[0]);
-    //elf_load_and_create_process(argv[0], 1, argv, 0);
+    kprintf("[BOOT] Lancando o processo do user space '%s'...\n", argv[0]);
+    elf_load_and_create_process(argv[0], 1, argv, 0);
     
 
     //vfs_print_tree("/");

@@ -24,6 +24,7 @@
 
 /* Declarações das rotinas externas e nativas da pilha TCP/UDP */
 extern int  tcp_connect_handshake(socket_t* sock, struct sockaddr_in* dest);
+extern int tcp_disconnect(socket_t* sock);
 extern long tcp_send_stream(socket_t* sock, const void* buf, unsigned long len);
 extern long udp_send_datagram(socket_t* sock, const void* buf, unsigned long len, struct sockaddr_in* dest);
 
@@ -335,6 +336,63 @@ static long af_inet_recvfrom(socket_t* sock, void* buf, unsigned long len, int f
     return (long)bytes_read;
 }
 
+/**
+ * @brief Finaliza o protocolo e limpa o estado do PCB integrado no socket.
+ */
+static int af_inet_release(socket_t* sock) 
+{
+    if (!sock) return -1;
+
+    if (sock->type == SOCK_STREAM) 
+    {
+        /* TCP: Modifica a FSM e limpa filas se for um servidor em escuta */
+        spinlock_acquire(&sock->lock);
+        
+        // Se o socket estivesse a escutar, descarta conexões pendentes não aceites
+        if (sock->state == TCP_STATE_LISTEN) 
+        {
+            socket_t* curr = sock->listen_queue;
+            while (curr != NULL) 
+            {
+                socket_t* next = curr->next;
+                
+                spinlock_acquire(&curr->lock);
+                curr->state = TCP_STATE_CLOSED;
+                if (curr->peer) {
+                    curr->peer->state = TCP_STATE_CLOSED;
+                    curr->peer->peer = NULL;
+                }
+                spinlock_release(&curr->lock);
+                
+                // Nota: O kfree destes sub-sockets será feito quando o VFS 
+                // deles for fechado, ou aqui se forem órfãos.
+                curr = next;
+            }
+            sock->listen_queue = NULL;
+        }
+
+        spinlock_release(&sock->lock);
+
+        /* 
+         * Aqui chama-se a rotina nativa da pilha TCP para enviar o FIN ou RST.
+         */
+        tcp_disconnect(sock); 
+
+        return 0;
+    }
+    else if (sock->type == SOCK_DGRAM) 
+    {
+        /* UDP: Não tem estado ou conexões pendentes. */
+        spinlock_acquire(&sock->lock);
+        sock->state = TCP_STATE_CLOSED; // Ou um equivalente a unmap
+        spinlock_release(&sock->lock);
+
+        return 0;
+    }
+
+    return -2;
+}
+
 /* ============================================================================
  * EXPORTAÇÃO COMPLETA DA TABELA POLIMÓRFICA DO PROTOCOLO INTERNET (IPv4)
  * ============================================================================
@@ -345,5 +403,6 @@ protocol_operations_t g_af_inet_ops = {
     .sendto   = af_inet_sendto,
     .recvfrom = af_inet_recvfrom,
     .listen   = af_inet_listen,
-    .accept   = af_inet_accept
+    .accept   = af_inet_accept,
+    .release  = af_inet_release
 };

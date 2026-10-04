@@ -36,8 +36,16 @@
 #define S_IWUSR  00200     /* Dono: Escrever */
 #define S_IXUSR  00100     /* Dono: Executar */
 
+/* --- NOVAS DEFINIÇÕES DE COMPATIBILIDADE ADICIONADAS --- */
 #define S_IRWXG  00070     /* Grupo: Ler, Escrever e Executar */
+#define S_IRGRP  00040     /* Grupo: Ler */
+#define S_IWGRP  00020     /* Grupo: Escrever */
+#define S_IXGRP  00010     /* Grupo: Executar */
+
 #define S_IRWXO  00007     /* Outros: Ler, Escrever e Executar */
+#define S_IROTH  00004     /* Outros: Ler */
+#define S_IWOTH  00002     /* Outros: Escrever */
+#define S_IXOTH  00001     /* Outros: Executar */
 
 /* Macros de verificação de tipo para o teu Interpretador de Comandos (sh.c) */
 #define S_ISREG(m)  (((m) & S_IFMT) == S_IFREG)
