@@ -8,7 +8,7 @@
  *   Created Date: 12/09/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 12/09/2026
+ *  Modified Date: 06/10/2026
  *
  *        License: MIT
  * ============================================================================
@@ -595,9 +595,15 @@ static int fat32_open(vfs_node_t *node, uint32_t flags) {
             // B) Sincroniza o tamanho do arquivo para 0 no diretório pai em disco
             vfs_node_t parent_node;
             memset(&parent_node, 0, sizeof(vfs_node_t));
-            parent_node.inode = vol->root_cluster; 
             parent_node.private_data = vol;
             parent_node.flags = VFS_DIRECTORY;
+
+            if (node->parent_inode != 0) {
+                parent_node.inode = node->parent_inode;
+            }
+            else {
+                parent_node.inode = vol->root_cluster;
+            }
 
             fat32_update_entry_size(&parent_node, node->name, 0);
 
@@ -659,25 +665,33 @@ static int fat32_close(vfs_node_t *node) {
 
     // Se for um ficheiro regular
     if (node->flags & VFS_FILE) {
+
+        if (!node->private_data) return -1;
         fat32_volume_t* vol = (fat32_volume_t*)node->private_data;
         
         if (vol) {
+
+            fat32_flush(node);
+
             kprintf("[FAT32] A fechar '%s': Sincronizando tamanho (%llu Bytes) com o HDD/SSD...\n", 
                     node->name, node->size);
 
-            // 1. Cria um nó temporário que representa o diretório pai (por agora a raiz do FAT32)
+            // 1. Cria um nó temporário que representa o diretório pai
             // para permitir que a função localize a entrada de 32 bytes deste ficheiro.
             vfs_node_t parent_node;
             memset(&parent_node, 0, sizeof(vfs_node_t));
-            parent_node.inode = vol->root_cluster; // Assume o cluster raiz como pai provisório
             parent_node.private_data = vol;
             parent_node.flags = VFS_DIRECTORY;
+            if (node->parent_inode != 0) {
+                parent_node.inode = node->parent_inode;
+            }
+            else {
+                parent_node.inode = vol->root_cluster; // Fallback seguro caso seja na raiz
+            }
 
             // 2. Persiste o tamanho real atualizado em memória RAM diretamente nos setores do disco físico
             fat32_update_entry_size(&parent_node, node->name, (uint32_t)node->size);
             
-            // 3. Executa o flush de hardware de forma modular utilizando a nova função
-            fat32_flush(node);
         }
     }
 

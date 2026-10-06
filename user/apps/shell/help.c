@@ -1,22 +1,37 @@
+/*
+ * ============================================================================
+ *        Project: Sirius_Education
+ *       Filename: help.c
+ *    Description: Utilitário de ajuda integrada para a Shell do SiriusOS.
+ *                 Exibe a sintaxe e o uso dos comandos suportados.
+ * 
+ *         Author: Nelson Cole
+ *   Created Date: 06/10/2026
+ *        License: MIT
+ * ============================================================================
+ */
+
 #include <stdio.h>
 #include <string.h>
 
 void menu_geral(void) {
-    printf("\n--- SiriusOS Shell Avançada v1.0 ---\n");
+    printf("SiriusOS Shell Avançada v1.0\n");
     printf("Comandos suportados nativamente:\n");
     printf("  help     - Exibe este menu de ajuda.\n");
     printf("  ls / dir - Lista os ficheiros da diretoria atual.\n");
     printf("  cd <dir> - Altera a diretoria atual (ex: cd .., cd bin).\n");
     printf("  mkdir    - Cria uma nova diretoria no VFS.\n");
     printf("  touch    - Cria um novo ficheiro em /mnt/hd0/.\n");
+    printf("  rm       - Remove um ficheiro ou diretoria do VFS.\n");
+    printf("  cat      - Exibe o conteudo de um ficheiro no terminal.\n");
+    printf("  cp       - Copia um ficheiro de origem para um destino.\n");
     printf("  rename   - Renomeia/Move um ficheiro ou pasta.\n");
-    printf("  vfstree  - Imprime a arvore completa do VFS.\n");
+    printf("  tree     - Imprime a arvore completa do VFS.\n");
     printf("  clear    - Limpa o terminal de texto.\n");
     printf("  echo     - Imprime os argumentos passados.\n");
     printf("  exit     - Encerra a sessao da Shell.\n");
     printf("\nDica: Digite 'help <comando>' para ver a sintaxe (ex: help cd).\n\n");
 }
-
 
 int main(int argc, char *argv[]) {
     // Se o utilizador digitou apenas "help", exibe o menu geral
@@ -36,10 +51,16 @@ int main(int argc, char *argv[]) {
         printf("\n[Comando: mkdir]\nSintaxe: mkdir <nome_da_pasta>\nUso: Cria um novo nó de diretório no VFS.\n\n");
     } else if (strcmp(cmd, "touch") == 0) {
         printf("\n[Comando: touch]\nSintaxe: touch <nome_do_arquivo>\nUso: Inicializa um ficheiro regular vazio.\n\n");
+    } else if (strcmp(cmd, "rm") == 0) {
+        printf("\n[Comando: rm]\nSintaxe: rm [-r] <alvo>\nUso: Remove um ficheiro ou diretoria vazia (ou recursiva se usado -r).\n\n");
+    } else if (strcmp(cmd, "cat") == 0) {
+        printf("\n[Comando: cat]\nSintaxe: cat <arquivo>\nUso: Lê o conteúdo de um ficheiro e despeja no stdout do terminal.\n\n");
+    } else if (strcmp(cmd, "cp") == 0) {
+        printf("\n[Comando: cp]\nSintaxe: cp <origem> <destino>\nUso: Duplica um ficheiro lendo a origem e gravando no destino via Page Cache.\n\n");
     } else if (strcmp(cmd, "rename") == 0) {
         printf("\n[Comando: rename]\nSintaxe: rename <origem> <destino>\nUso: Modifica o caminho/nome de um arquivo.\n\n");
-    } else if (strcmp(cmd, "vfstree") == 0) {
-        printf("\n[Comando: vfstree]\nSintaxe: vfstree\nUso: Imprime o grafo hierárquico estrutural do VFS.\n\n");
+    } else if (strcmp(cmd, "vfstree") == 0 || strcmp(cmd, "tree") == 0) {
+        printf("\n[Comando: tree]\nSintaxe: vfstree\nUso: Imprime o grafo hierárquico estrutural do VFS.\n\n");
     } else if (strcmp(cmd, "clear") == 0) {
         printf("\n[Comando: clear]\nSintaxe: clear\nUso: Envia o comando ANSI para limpar o buffer de ecrã.\n\n");
     } else if (strcmp(cmd, "echo") == 0) {

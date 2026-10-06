@@ -10,7 +10,7 @@
  *   Created Date: 11/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 11/09/2026
+ *  Modified Date: 05/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -108,6 +108,7 @@ typedef struct vfs_node {
     uint32_t flags;                 /* Tipo do nó (VFS_FILE, VFS_DIRECTORY, etc.) */
     uint64_t size;                  /* Tamanho do ficheiro em bytes */
     uint32_t inode;                 /* Identificador numérico interno do sistema de ficheiros */
+    uint32_t parent_inode;          /* Identificador numérico (Cluster) do diretório pai real no disco */
     uint32_t permissions;           /* Permissões POSIX de acesso */
 
     uint32_t uid;

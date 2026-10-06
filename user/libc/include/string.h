@@ -32,7 +32,7 @@ char *strrchr(const char *s, int c);
 extern size_t strspn(const char *s1, const char *s2);
 extern size_t strcspn(const char *s1, const char *s2);
 
-extern char *strtok(char * restrict s1,const char * restrict s2);
+extern char *strtok(char * s1,const char * s2);
 
 extern char *strpbrk(const char *s1, const char *s2);
 extern char *strsep(char **stringp, const char *delim);
@@ -47,6 +47,8 @@ extern char *strerror(int errnum);
 extern int strcoll(const char *a, const char *b);
 
 extern void *memchr(const void *buf, int c, size_t n);
+
+char* strncat(char* dest, const char* src, size_t n);
 
 // Nao padrao
 extern char* strcasestr(const char* haystack, const char* needle);

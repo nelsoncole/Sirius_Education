@@ -122,7 +122,7 @@ static int execute_builtin(int argc, char *argv[])
         return 1;
     }
 
-    if (strcmp(argv[0], "vfstree") == 0)
+    if (strcmp(argv[0], "tree") == 0)
     {
       int fd = open("/", O_RDONLY);
       if (fd >= 0)

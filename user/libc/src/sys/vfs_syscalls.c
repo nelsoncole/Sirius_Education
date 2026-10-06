@@ -19,11 +19,42 @@
 #include <sys/usyscall.h>
 #include <string.h>
 #include <stdarg.h>
+#include <string.h>
 
 
 #ifndef MAX_PATH_LEN
 #define MAX_PATH_LEN 4096
 #endif
+
+static int _resolve_absolute_path(char* out_buf, const char* pathname) {
+    if (!pathname || !out_buf) return -1;
+
+    memset(out_buf, 0, MAX_PATH_LEN);
+
+    // CASO 1: O caminho já é absoluto (Começa com '/')
+    if (pathname[0] == '/') {
+        strncpy(out_buf, pathname, MAX_PATH_LEN - 1);
+    } 
+    // CASO 2: O caminho é RELATIVO
+    else {
+        if (getcwd(out_buf, MAX_PATH_LEN) == NULL) {
+            return -1; // Falha se não conseguir obter o PWD atual do processo
+        }
+
+        size_t pwd_len = strlen(out_buf);
+
+        // Adiciona a barra '/' se o PWD não terminar com uma
+        if (pwd_len > 0 && out_buf[pwd_len - 1] != '/') {
+            strcat(out_buf, "/");
+        }
+
+        // Concatena o resto do caminho relativo fornecido pelo utilizador
+        // Usamos strncat para garantir que não ultrapassamos o limite físico do buffer
+        strncat(out_buf, pathname, MAX_PATH_LEN - strlen(out_buf) - 1);
+    }
+
+    return 0; // Sucesso
+}
 
 /*
  * ============================================================================
@@ -36,36 +67,9 @@ int open(const char *pathname, int flags, ...)
     if (!pathname) return -1;
 
     char absolute_path[MAX_PATH_LEN];
-    memset(absolute_path, 0, MAX_PATH_LEN);
-
-    // CASO 1: O caminho já é absoluto (Começa com '/')
-    if (pathname[0] == '/') 
-    {
-        // Copia diretamente para passar ao kernel
-        strncpy(absolute_path, pathname, MAX_PATH_LEN);
+    if (_resolve_absolute_path(absolute_path, pathname) < 0) {
+        return -1;
     }
-    // CASO 2: O caminho é RELATIVO (Ex: "nelson" ou "docs/config.ini")
-    else 
-    {
-        // 1. Pergunta ao Kernel qual é o PWD atual deste processo via libc getcwd()
-        if (getcwd(absolute_path, MAX_PATH_LEN) == NULL) {
-            return -1; // Falha se não conseguir ler o PWD
-        }
-
-        size_t pwd_len = strlen(absolute_path);
-
-        // 2. Adiciona a barra '/' se o PWD não terminar com uma (ex: evita "//" se estiver em "/")
-        if (absolute_path[pwd_len - 1] != '/') {
-            strcat(absolute_path, "/");
-        }
-
-        // 3. Concatena o nome do ficheiro ou caminho relativo
-        strcat(absolute_path, pathname);
-    }
-    /* 
-     * Encapsula a chamada utilizando a macro de 2 argumentos do teu usyscall.h.
-     * Passa o ponteiro da string do caminho e a máscara binária de flags.
-     */
     return (int)syscall2(SYS_OPEN, (uint64_t)absolute_path, (uint64_t)flags);
 }
 
@@ -133,21 +137,40 @@ int pipe(int pipefd[2])
  * GESTÃO DE SISTEMA DE FICHEIROS
  * ============================================================================
  */
-
 int unlink(const char *pathname) 
 {
-    return (int)syscall1(SYS_UNLINK, (uint64_t)pathname);
+    if (!pathname) return -1;
+
+    char absolute_path[MAX_PATH_LEN];
+    if (_resolve_absolute_path(absolute_path, pathname) < 0) {
+        return -1;
+    }
+
+    return (int)syscall1(SYS_UNLINK, (uint64_t)absolute_path);
 }
 
 int rmdir(const char *pathname) 
 {
-    return (int)syscall1(SYS_RMDIR, (uint64_t)pathname);
+    if (!pathname) return -1;
+
+    char absolute_path[MAX_PATH_LEN];
+    if (_resolve_absolute_path(absolute_path, pathname) < 0) {
+        return -1;
+    }
+
+    return (int)syscall1(SYS_RMDIR, (uint64_t)absolute_path);
 }
 
 int access(const char *pathname, int mode) 
 {
-    /* Reaproveita o SYS_STAT ou a tua tabela interna para validar as permissões */
-    return (int)syscall2(SYS_STAT, (uint64_t)pathname, (uint64_t)mode);
+    if (!pathname) return -1;
+
+    char absolute_path[MAX_PATH_LEN];
+    if (_resolve_absolute_path(absolute_path, pathname) < 0) {
+        return -1;
+    }
+
+    return (int)syscall2(SYS_STAT, (uint64_t)absolute_path, (uint64_t)mode);
 }
 
 int isatty(int fd) 
@@ -166,8 +189,14 @@ int stat(const char *pathname, struct stat *statbuf)
         return -1; /* Retorna erro de argumento inválido (EINVAL / EFAULT) */
     }
 
-    return (int)syscall2(SYS_STAT, (uint64_t)pathname, (uint64_t)statbuf);
+    char absolute_path[MAX_PATH_LEN];
+    if (_resolve_absolute_path(absolute_path, pathname) < 0) {
+        return -1; /* Falha ao tentar resolver o PWD do processo */
+    }
+
+    return (int)syscall2(SYS_STAT, (uint64_t)absolute_path, (uint64_t)statbuf);
 }
+
 
 
 int fstat(int fd, struct stat *statbuf)

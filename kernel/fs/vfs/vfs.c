@@ -10,7 +10,7 @@
  *   Created Date: 11/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 16/09/2026
+ *  Modified Date: 06/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -582,50 +582,52 @@ int vfs_umount(const char* mount_path) {
 vfs_node_t* vfs_open(const char* path, uint32_t flags) {
     if (!path || path[0] == '\0') return NULL;
 
-    vfs_node_t* target_node = vfs_path_to_node(path);
-   
-    if (!target_node) {
-        if (flags & O_CREAT) {
-            char file_name[64];
+    char file_name[64];
+    memset(file_name, 0, sizeof(file_name));
+
+    // 1. Obtém o nó pai e o nome isolado do filho antes de tomar decisões
+    vfs_node_t* parent_node = vfs_get_parent_and_child(path, file_name);
+    if (!parent_node) {
+        return NULL; 
+    }
+
+    vfs_node_t* target_node = NULL;
+
+    // 2. Se o diretório pai tiver suporte a buscas, verifica se o ficheiro já existe
+    if (parent_node->ops && parent_node->ops->finddir) {
+        target_node = parent_node->ops->finddir(parent_node, file_name);
+    }
+
+    // 3. Se o ficheiro NÃO existe e o utilizador passou a flag O_CREAT, ordena a criação física
+    if (!target_node && (flags & O_CREAT)) {
+        if (parent_node->ops && parent_node->ops->create) {
             
-            // Puxa de forma limpa o nó parente real e o nome isolado do filho
-            vfs_node_t* parent_node = vfs_get_parent_and_child(path, file_name);
+            int res = parent_node->ops->create(parent_node, file_name, 0644);
             
-            if (parent_node && parent_node->ops && parent_node->ops->create) {
-                // Executa a criação física no RamFS ou FAT32 (Modo padrão de escrita: 0644)
-                int res = parent_node->ops->create(parent_node, file_name, 0644);
-                
-                if (res == 0) {
-                    target_node = vfs_path_to_node(path);
-                    if (target_node) goto process_driver_open;
-                }
+            if (res == 0) { 
+                // Se a criação física teve sucesso, resgata o nó gerado através do finddir do pai
+                target_node = parent_node->ops->finddir(parent_node, file_name);
             }
         }
-        return NULL;
     }
 
-process_driver_open:
-
+    // Se o ficheiro não existia e não foi pedida a criação (ou se a criação falhou), aborta
     if (!target_node) {
         return NULL;
     }
 
-    target_node->block_size = 0;
-    target_node->cache_pages = NULL;
-
-    // Dispara a inicialização polimórfica específica do driver (ex: clusters, caches)
+    // Garante que o nó filho sabe quem é o seu diretório pai
+    target_node->parent_inode = parent_node->inode;
+    
+    // 4. Dispara a inicialização polimórfica específica do driver
     if (target_node->ops && target_node->ops->open) {
         int res_open = target_node->ops->open(target_node, flags);
-        
         if (res_open != 0) {
             kprintf("[VFS OPEN] Erro: O driver falhou ao abrir o ficheiro '%s' (Codigo: %d).\n", path, res_open);
-            
-            // CORREÇÃO: Removeu-se o bloco destrutivo de kfree().
-            // Se o driver falhou a abertura, o nó NÃO deve ser apagado da RAM,
-            // pois ele pertence à estrutura viva do VFS/Mount. Apenas abortamos a abertura.
             return NULL; 
         }
     }
+
     return target_node; 
 }
 
@@ -1128,9 +1130,6 @@ int vfs_rename(vfs_node_t* old_dir, const char* old_name, vfs_node_t* new_dir, c
     return -2; // Operação não suportada pelo driver do sistema de ficheiros
 }
 
-//-----------------------------------------------------------------------------
-// OPERAÇÃO DE POSICIONAMENTO DE PONTEIRO (SEEK)
-//-----------------------------------------------------------------------------
 /**
  * Altera a posição do ponteiro de leitura/escrita (offset) de um ficheiro aberto.
  * 
@@ -1148,11 +1147,7 @@ uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence) {
         return (uint64_t)-1;
     }
 
-    vfs_node_t* node = file->node;
-
-    if ((node->flags & VFS_MOUNTPOINT) && node->ptr_mount) {
-        node = node->ptr_mount;
-    }
+    vfs_node_t* node = vfs_resolve_mountpoint(file->node);
 
     uint64_t new_offset = file->offset;
 
@@ -1163,6 +1158,7 @@ uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence) {
             break;
 
         case VFS_SEEK_CUR:
+            // Proteção contra Underflow se o offset for negativo
             if (offset < 0 && ((uint64_t)(-offset) > file->offset)) {
                 return (uint64_t)-1;
             }
@@ -1170,6 +1166,7 @@ uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence) {
             break;
 
         case VFS_SEEK_END:
+            // Proteção contra Underflow em relação ao tamanho real do nó resolvido
             if (offset < 0 && ((uint64_t)(-offset) > node->size)) {
                 return (uint64_t)-1;
             }
@@ -1177,23 +1174,19 @@ uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence) {
             break;
 
         default:
-            kprintf("[VFS SEEK] Erro: Diretriz 'whence' (%d) inválida.\n", whence);
+            kprintf("[VFS SEEK] Erro: Diretriz 'whence' (%d) invalida.\n", whence);
             return (uint64_t)-1;
     }
 
-    // Proteção de sanidade (opcional): Impede que o ponteiro vá além dos limites físicos 
-    // se o ficheiro for aberto estritamente em modo de leitura. Em modo de escrita, 
-    // caminhos POSIX permitem fazer seek além do fim para criar "gaps" vazios (sparse files).
+    // Proteção de sanidade: Impede que o ponteiro vá além do EOF se o ficheiro for estritamente Read-Only.
     if (!(file->flags & VFS_MODE_WRITE) && (new_offset > node->size)) {
         new_offset = node->size;
     }
 
-    // Aplica a nova posição lógica
     file->offset = new_offset;
 
     return file->offset;
 }
-
 
 //-----------------------------------------------------------------------------
 // FERRAMENTA DE DIAGNÓSTICO: IMPRESSÃO DA ÁRVORE DO VFS

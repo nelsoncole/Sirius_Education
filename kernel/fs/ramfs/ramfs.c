@@ -82,21 +82,9 @@ static int ramfs_open(vfs_node_t* node, uint32_t flags) {
  */
 static int ramfs_close(vfs_node_t* node) {
     if (!node) return -1;
-
-    // IMPORTANTE: Só podemos dar kfree se o nó NÃO for a raiz global permanente
-    // e se não for um nó persistente da árvore ativa do RamFS.
-    // Para obter a raiz de forma limpa, usamos o getter que criámos.
-    vfs_node_t* root = vfs_get_root();
-
-    if (node != root && node != vfs_resolve_mountpoint(root)) {
-        // Se o nó possui dados privados que foram alocados apenas para a sessão, limpa aqui:
-        // (Nota: Só limpe o private_data aqui se ele foi clonado no open. 
-        // Se for o private_data original do ficheiro, não faça kfree aqui, senão apaga o ficheiro!)
-        
-        kfree(node); // Liberta a estrutura temporária da RAM de forma síncrona
-    }
-
-    return 0; // Devolve 'int' (0 = Sucesso) para bater com a tabela g_ramfs_ops
+    // RAMFS não destrói os nós no close, apenas finaliza a sessão.
+    // Deixa que a estrutura permaneça viva no grafo g_ramfs_ops.
+    return 0;
 }
 
 static int ramfs_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
@@ -199,7 +187,8 @@ static int ramfs_create_object(vfs_node_t* parent, const char* name, uint16_t pe
     
     new_node->flags       = flags;
     new_node->size        = 0;
-    new_node->inode       = (uint64_t)new_node; 
+    new_node->inode       = (uint64_t)new_node;
+    new_node->parent_inode = parent->inode; 
     new_node->permissions = permissions;
     new_node->ops         = &g_ramfs_ops;
     new_node->fs          = parent->fs;
@@ -379,6 +368,10 @@ static int ramfs_rename(vfs_node_t* old_dir, const char* old_name, vfs_node_t* n
             
             // Atualiza a pertença do sistema de ficheiros no nó movido
             target->fs = new_dir->fs;
+
+            // Sincroniza o vínculo de parentesco com a nova localização
+            // Isto impede falhas em cascata ao abrir/fechar o ficheiro após o move!
+            target->parent_inode = new_dir->inode;
         }
     }
 
