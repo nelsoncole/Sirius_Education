@@ -582,10 +582,8 @@ int vfs_umount(const char* mount_path) {
 vfs_node_t* vfs_open(const char* path, uint32_t flags) {
     if (!path || path[0] == '\0') return NULL;
 
-    // 1. Tenta resolver o caminho por inteiro através do motor de Name Lookup central
     vfs_node_t* target_node = vfs_path_to_node(path);
-    
-    // 2. Se o ficheiro não existe, mas a flag O_CREAT está ativa, aciona a fábrica
+   
     if (!target_node) {
         if (flags & O_CREAT) {
             char file_name[64];
@@ -598,23 +596,24 @@ vfs_node_t* vfs_open(const char* path, uint32_t flags) {
                 int res = parent_node->ops->create(parent_node, file_name, 0644);
                 
                 if (res == 0) {
-                    // Re-avalia o caminho para capturar o nó virtual recém-nascido na RAM
                     target_node = vfs_path_to_node(path);
                     if (target_node) goto process_driver_open;
                 }
             }
         }
-        return NULL; // Ficheiro ou diretório intermédio real não encontrado
+        return NULL;
     }
 
 process_driver_open:
 
-    /* 3. BLINDAGEM DEFENSIVA EXTREMA: Garantia contra pânicos de ponteiro nulo */
     if (!target_node) {
         return NULL;
     }
 
-    // 4. Dispara a inicialização polimórfica específica do driver (ex: clusters, caches)
+    target_node->block_size = 0;
+    target_node->cache_pages = NULL;
+
+    // Dispara a inicialização polimórfica específica do driver (ex: clusters, caches)
     if (target_node->ops && target_node->ops->open) {
         int res_open = target_node->ops->open(target_node, flags);
         
@@ -627,20 +626,192 @@ process_driver_open:
             return NULL; 
         }
     }
-
-    // Devolve o nó pronto e testado pelo driver para o sys_open encapsular no FD
     return target_node; 
 }
 
+/**
+ * FUNÇÃO INTERNA DO VFS: Procura ou aloca dinamicamente uma página na lista do nó.
+ * 
+ * @param node          O nó físico do VFS (real_node).
+ * @param block_id      O identificador do bloco do ficheiro (offset / block_size).
+ * @param ler_do_disco  Flag booleana (1 = Executa I/O físico se der Cache Miss, 0 = Bloco Novo/Fresco).
+ * @return              Ponteiro para a estrutura vfs_page_t segura na RAM, ou NULL em caso de erro.
+ */
+static vfs_page_t* vfs_get_or_create_page(vfs_node_t* node, uint64_t block_id, int ler_do_disco) {
+    if (!node || node->block_size == 0) return NULL;
+
+    vfs_page_t* page = node->cache_pages;
+    while (page != NULL) {
+        if (page->block_id == block_id) {
+            return page;
+        }
+        page = page->next;
+    }
+
+    vfs_page_t* new_page = (vfs_page_t*)kmalloc(sizeof(vfs_page_t));
+    if (!new_page) return NULL;
+
+    memset(new_page, 0, sizeof(vfs_page_t));
+
+    new_page->buffer = pool_alloc(node->block_size);
+    if (!new_page->buffer) {
+        kfree(new_page);
+        return NULL;
+    }
+
+    new_page->block_id = block_id;
+    new_page->dirty = 0;
+    new_page->next = NULL;
+
+    if (ler_do_disco) {
+        if (node->ops && node->ops->read) {
+            uint64_t offset_fisico = block_id * node->block_size;
+            
+            uint32_t tamanho_leitura = node->block_size;
+            if (offset_fisico + node->block_size > node->size) {
+                if (node->size > offset_fisico) {
+                    tamanho_leitura = (uint32_t)(node->size - offset_fisico);
+                } else {
+                    tamanho_leitura = 0;
+                }
+            }
+
+            new_page->size = tamanho_leitura;
+
+            if (tamanho_leitura > 0) {
+
+                int res = node->ops->read(node, offset_fisico, tamanho_leitura, new_page->buffer);
+                if (res < 0) {
+                    pool_free(new_page->buffer, node->block_size);
+                    kfree(new_page);
+                    return NULL;
+                }
+            }
+        } else {
+            pool_free(new_page->buffer, node->block_size);
+            kfree(new_page);
+            return NULL;
+        }
+    } else {
+
+        new_page->size = 0; 
+    }
+
+    new_page->next = node->cache_pages;
+    node->cache_pages = new_page;
+
+    return new_page;
+}
+
+static void vfs_invalidate_cache_page(vfs_node_t* node, uint64_t block_id) {
+    vfs_page_t* prev = NULL;
+    vfs_page_t* curr = node->cache_pages;
+
+    while (curr != NULL) {
+        if (curr->block_id == block_id) {
+            if (prev == NULL) {
+                node->cache_pages = curr->next;
+            } else {
+                prev->next = curr->next;
+            }
+            if (curr->buffer) {
+                pool_free(curr->buffer, node->block_size);
+            }
+            kfree(curr);
+            return; 
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+}
 
 int vfs_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
     if (!node || !buffer) return -1;
     node = vfs_resolve_mountpoint(node);
+    
+    if (size == 0) return 0;
 
-    if (node->ops && node->ops->read) {
-        return node->ops->read(node, offset, size, buffer);
+    if (node->block_size == 0) {
+        if (node->ops && node->ops->read) {
+            return node->ops->read(node, offset, size, buffer);
+        }
+        return -2;
     }
-    return -2;
+
+    // Garante que não lê para lá do fim do ficheiro (EOF)
+    if (offset >= node->size) return 0;
+    if (offset + size > node->size) {
+        size = (uint32_t)(node->size - offset);
+    }
+
+    uint32_t bytes_lidos_total = 0;
+    uint8_t* dest_buf = (uint8_t*)buffer;
+
+    while (bytes_lidos_total < size) {
+        uint64_t offset_atual = offset + bytes_lidos_total;
+        uint64_t block_id = offset_atual / node->block_size;
+        uint32_t offset_dentro_do_bloco = (uint32_t)(offset_atual % node->block_size);
+
+        // --- OTIMIZAÇÃO: BYPASS DE CACHE PARA GRANDES LEITURAS ---
+        if (offset_dentro_do_bloco == 0 && (size - bytes_lidos_total) >= node->block_size) {
+            if (node->ops && node->ops->read) {
+                uint32_t blocos_completos = (size - bytes_lidos_total) / node->block_size;
+                
+                for (uint32_t i = 0; i < blocos_completos; i++) {
+                    uint64_t curr_block = block_id + i;
+                    vfs_page_t* p = node->cache_pages;
+                    while (p) {
+                        if (p->block_id == curr_block) {
+                            if (p->dirty && node->ops->write) {
+                                uint64_t offset_bloco = curr_block * node->block_size;
+                                node->ops->write(node, offset_bloco, node->block_size, p->buffer);
+                            }
+                            break;
+                        }
+                        p = p->next;
+                    }
+                    vfs_invalidate_cache_page(node, curr_block);
+                }
+
+                uint32_t tamanho_direto = blocos_completos * node->block_size;
+                int lidos_direto = node->ops->read(node, offset_atual, tamanho_direto, dest_buf + bytes_lidos_total);
+                if (lidos_direto < 0) {
+                    return (bytes_lidos_total > 0) ? (int)bytes_lidos_total : lidos_direto;
+                }
+                
+                bytes_lidos_total += lidos_direto;
+                continue; 
+            }
+        }
+
+        vfs_page_t* page = vfs_get_or_create_page(node, block_id, 1);
+        if (!page) {
+            return (bytes_lidos_total > 0) ? (int)bytes_lidos_total : -5; // -EIO
+        }
+
+        if (offset_dentro_do_bloco >= page->size) {
+            break;
+        }
+
+        uint32_t bytes_disponiveis_na_pagina = page->size - offset_dentro_do_bloco;
+        uint32_t o_que_falta_ler = size - bytes_lidos_total;
+        
+        uint32_t bytes_a_copiar = bytes_disponiveis_na_pagina;
+        if (o_que_falta_ler < bytes_disponiveis_na_pagina) {
+            bytes_a_copiar = o_que_falta_ler;
+        }
+
+        if (bytes_a_copiar == 0) {
+            break;
+        }
+
+        uint8_t* src_cache = (uint8_t*)page->buffer + offset_dentro_do_bloco;
+        memcpy(dest_buf + bytes_lidos_total, src_cache, bytes_a_copiar);
+
+        bytes_lidos_total += bytes_a_copiar;
+    }
+
+    return (int)bytes_lidos_total;
 }
 
 int vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
@@ -648,13 +819,142 @@ int vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
     node = vfs_resolve_mountpoint(node);
 
     if (node->flags & VFS_DIRECTORY) {
-        return -21; // Is a directory: Erro padrão POSIX! (-EISDIR)
+        return -21; // -EISDIR
     }
 
-    if (node->ops && node->ops->write) {
-        return node->ops->write(node, offset, size, buffer);
+    if (size == 0) return 0;
+
+    if (node->block_size == 0) {
+        if (node->ops && node->ops->write) {
+            return node->ops->write(node, offset, size, buffer);
+        }
+        return -2;
     }
-    return -2;
+
+    uint32_t bytes_escritos_total = 0;
+    const uint8_t* src_buf = (const uint8_t*)buffer;
+
+    uint64_t tamanho_original_do_ficheiro = node->size;
+
+    while (bytes_escritos_total < size) {
+        uint64_t offset_atual = offset + bytes_escritos_total;
+        uint64_t block_id = offset_atual / node->block_size;
+        uint32_t offset_dentro_do_bloco = (uint32_t)(offset_atual % node->block_size);
+
+        // --- BYPASS DE CACHE PARA GRANDES ESCRITAS ALINHADAS ---
+        if (offset_dentro_do_bloco == 0 && (size - bytes_escritos_total) >= node->block_size) {
+            if (node->ops && node->ops->write) {
+                uint32_t blocos_completos = (size - bytes_escritos_total) / node->block_size;
+                uint32_t tamanho_direto = blocos_completos * node->block_size;
+
+                for (uint32_t i = 0; i < blocos_completos; i++) {
+                    vfs_invalidate_cache_page(node, block_id + i);
+                }
+
+                int escritos_direto = node->ops->write(node, offset_atual, tamanho_direto, (void*)(src_buf + bytes_escritos_total));
+                if (escritos_direto < 0) {
+                    return (bytes_escritos_total > 0) ? (int)bytes_escritos_total : escritos_direto;
+                }
+
+                bytes_escritos_total += escritos_direto;
+                if (offset_atual + escritos_direto > node->size) {
+                    node->size = offset_atual + escritos_direto;
+                }
+                continue;
+            }
+        }
+
+        uint32_t espaco_no_bloco = node->block_size - offset_dentro_do_bloco;
+        uint32_t o_que_falta_escrever = size - bytes_escritos_total;
+
+        uint32_t bytes_a_escrever = espaco_no_bloco;
+        if (o_que_falta_escrever < espaco_no_bloco) {
+            bytes_a_escrever = o_que_falta_escrever;
+        }
+
+        int ler_do_disco = 1;
+        if (offset_dentro_do_bloco == 0 && bytes_a_escrever == node->block_size) {
+            ler_do_disco = 0;
+        } else {
+            uint64_t inicio_deste_bloco = block_id * node->block_size;
+            if (inicio_deste_bloco >= tamanho_original_do_ficheiro) {
+            
+                ler_do_disco = 0;
+            }
+        }
+
+        vfs_page_t* page = vfs_get_or_create_page(node, block_id, ler_do_disco);
+        if (!page) {
+            return (bytes_escritos_total > 0) ? (int)bytes_escritos_total : -5;
+        }
+
+        uint8_t* dest_cache = (uint8_t*)page->buffer + offset_dentro_do_bloco;
+        memcpy(dest_cache, src_buf + bytes_escritos_total, bytes_a_escrever);
+
+        uint32_t novo_tamanho_da_pagina = offset_dentro_do_bloco + bytes_a_escrever;
+        if (novo_tamanho_da_pagina > page->size) {
+            page->size = novo_tamanho_da_pagina;
+        }
+
+        page->dirty = 1; 
+        bytes_escritos_total += bytes_a_escrever;
+
+        if (offset_atual + bytes_a_escrever > node->size) {
+            node->size = offset_atual + bytes_a_escrever;
+        }
+    }
+
+    return (int)bytes_escritos_total;
+}
+
+int vfs_flush(vfs_node_t* node) {
+    if (!node) return -1;
+    node = vfs_resolve_mountpoint(node);
+
+    if (!node->ops) return -2;
+
+    if (node->block_size == 0) {
+        if (node->ops && node->ops->flush) {
+            return node->ops->flush(node);
+        }
+        return -2;
+    }
+
+    if (node->cache_pages && !node->ops->write) {
+        return -2; 
+    }
+
+    vfs_page_t* page = node->cache_pages;
+    int erro_ocorreu = 0;
+
+    while (page != NULL) {
+        if (page->dirty) {
+            if (page->size > 0) {
+                uint64_t offset_fisico = page->block_id * node->block_size;
+                
+                int bytes_escritos = node->ops->write(node, offset_fisico, page->size, page->buffer);
+                
+                if (bytes_escritos < 0) {
+                    erro_ocorreu = bytes_escritos; 
+                } else {
+                    page->dirty = 0;
+                }
+            } else {
+                page->dirty = 0;
+            }
+        }
+        page = page->next;
+    }
+
+    if (erro_ocorreu < 0) {
+        return erro_ocorreu;
+    }
+
+    if (node->ops->flush) {
+        return node->ops->flush(node);
+    }
+
+    return 0; 
 }
 
 /**
@@ -664,6 +964,8 @@ int vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
 void vfs_close(vfs_node_t* node) {
     if (!node) return;
 
+    vfs_flush(node);
+
     // 1. Resolve o nó real do hardware caso o ficheiro seja um ponto de montagem
     vfs_node_t* real_node = vfs_resolve_mountpoint(node);
     
@@ -671,21 +973,27 @@ void vfs_close(vfs_node_t* node) {
     if (real_node->ops && real_node->ops->close) {
         real_node->ops->close(real_node); // Executa o fecho a nível de hardware/FS
     }
+
+    vfs_page_t* curr_page = real_node->cache_pages;
+    while (curr_page != NULL) {
+        vfs_page_t* next_page = curr_page->next;
+
+        if (curr_page->buffer) {
+            pool_free(curr_page->buffer, real_node->block_size);
+        }
+
+        kfree(curr_page);
+
+        curr_page = next_page;
+    }
+
+    real_node->cache_pages = NULL;
     
     // 3. GESTÃO DE MEMÓRIA:
     // REMOVIDO EM DEFINITIVO: Qualquer chamada a kfree(node) ou kfree(real_node).
     // Como os teus nós são persistentes na RAM e geridos de forma estática 
     // pelas montagens (mounts), fechar um ficheiro ou diretório NÃO pode apagar 
     // a sua estrutura da topologia viva do VFS.
-}
-
-int vfs_flush(vfs_node_t* node) {
-    if (!node) return -1;
-    node = vfs_resolve_mountpoint(node);
-    if (node->ops && node->ops->flush) {
-        return node->ops->flush(node);
-    }
-    return -2;
 }
 
 //-----------------------------------------------------------------------------

@@ -71,6 +71,9 @@
 #define AHCI_PxCMD_ICC_PARTIAL  (2 << 28)   // Coloca a interface em modo Partial (Baixo consumo)
 #define AHCI_PxCMD_ICC_SLUMBER  (6 << 28)   // Coloca a interface em modo Slumber (Suspensão profunda)
 
+
+#define AHCI_PRDT_PER_CMD 8
+
 /**
  * Estrutura do Frame Information Structure (FIS) de Registo Host-to-Device.
  */
@@ -117,7 +120,7 @@ typedef struct {
     uint8_t  cfis[64];              // Command FIS (Região reservada para armazenamento de FIS)
     uint8_t  acmd[16];              // ATAPI Command (Pacote de comandos de 12 ou 16 bytes para CD/DVD)
     uint8_t  rsv[48];               // Reservado
-    hba_prdt_entry_t prdt_entry;    // Entrada PRDT única de alto rendimento
+    hba_prdt_entry_t prdt_entry[AHCI_PRDT_PER_CMD]; // CORREÇÃO: Mude de objeto único para Array!
 } __attribute__((packed)) hba_cmd_tbl_t;
 
 /**

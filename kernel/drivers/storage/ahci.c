@@ -147,52 +147,64 @@ static int ahci_setup_port_dma(ahci_device_t *dev)
 {
     hba_port_t *port = dev->regs;
 
+    /* Para a porta antes de alterar os registos de paginação (Obrigatório) */
     ahci_port_stop(port);
 
-    uintptr_t clb_page = pmm_alloc_page();
-    if (!clb_page)
-        return -1;
-    dev->clb_phys = clb_page;
-    dev->clb_virt = vmm_map_device((unsigned long)dev->clb_phys, PAGE_SIZE);
-    if (!dev->clb_virt)
-        return -1;
+    // 1. Alocação do Command List Base (CLB) - Ocupa 1024 bytes (1 página chega)
+    dev->clb_virt = pool_alloc(PAGE_SIZE);
+    if (!dev->clb_virt) return -1;
+    dev->clb_phys = vmm_get_physical((uintptr_t)dev->clb_virt) & 0x7FFFFFFFFFFFLL;
     memset(dev->clb_virt, 0, PAGE_SIZE);
 
-    uintptr_t fb_page = pmm_alloc_page();
-    if (!fb_page)
-        return -1;
-    dev->fb_phys = fb_page;
-    dev->fb_virt = vmm_map_device((unsigned long)dev->fb_phys, PAGE_SIZE);
-    if (!dev->fb_virt)
-        return -1;
+    // 2. Alocação do FIS Base (FB) - Ocupa 256 bytes (1 página chega)
+    dev->fb_virt = pool_alloc(PAGE_SIZE);
+    if (!dev->fb_virt) return -1;
+    dev->fb_phys = vmm_get_physical((uintptr_t)dev->fb_virt) & 0x7FFFFFFFFFFFLL;
     memset(dev->fb_virt, 0, PAGE_SIZE);
 
+    // Envia os endereços físicos para o hardware
     port->clb = (uint32_t)(dev->clb_phys & 0xFFFFFFFF);
     port->clbu = (uint32_t)((dev->clb_phys >> 32) & 0xFFFFFFFF);
     port->fb = (uint32_t)(dev->fb_phys & 0xFFFFFFFF);
     port->fbu = (uint32_t)((dev->fb_phys >> 32) & 0xFFFFFFFF);
 
-    /* Habilita as interrupções específicas para esta porta (D2H FIS, Interrupt e PRDT) */
+    /* Habilita as interrupções específicas (D2H FIS, Interrupt e PRDT/Descriptor Error) */
     port->ie = (1 << 0) | (1 << 2) | (1 << 5);
 
+    // 3. OTIMIZAÇÃO CRÍTICA: Aloca todas as 32 CTBAs contíguas de uma só vez
+    // Tamanho por slot: 128 bytes (cabeçalho FIS) + (8 * 16 bytes por PRDT) = 256 bytes.
+    // Total para 32 slots: 256 * 32 = 8192 bytes = Exatamente 2 Páginas.
+    // Mapeia o bloco contíguo de 8KB no espaço virtual
+    void *ctba_block_virt = pool_alloc(PAGE_SIZE * 2);
+    if (!ctba_block_virt) return -1;
+    uintptr_t ctba_block_phys = vmm_get_physical((uintptr_t)ctba_block_virt) & 0x7FFFFFFFFFFFLL;
+    memset(ctba_block_virt, 0, PAGE_SIZE * 2);
+
+    // 4. Distribui os sub-endereços do bloco pelos 32 slots
     for (int slot = 0; slot < 32; slot++)
     {
-        uintptr_t ctba_page = pmm_alloc_page();
-        if (!ctba_page)
-            return -1;
-        dev->ctba_phys[slot] = ctba_page;
-        dev->ctba_virt[slot] = vmm_map_device((unsigned long)dev->ctba_phys[slot], PAGE_SIZE);
-        if (!dev->ctba_virt[slot])
-            return -1;
-        memset(dev->ctba_virt[slot], 0, PAGE_SIZE);
+        // Cada slot avança exatamente 256 bytes na memória física e virtual
+        uintptr_t current_ctba_phys = ctba_block_phys + (slot * 256);
+        void *current_ctba_virt = (void *)((uintptr_t)ctba_block_virt + (slot * 256));
 
+        dev->ctba_phys[slot] = current_ctba_phys;
+        dev->ctba_virt[slot] = current_ctba_virt;
+
+        // Configura o ponteiro físico correspondente no Command Header da Command List
         hba_cmd_header_t *cmd_hdr = (hba_cmd_header_t *)(dev->clb_virt + (slot * sizeof(hba_cmd_header_t)));
-        cmd_hdr->ctba = (uint32_t)(dev->ctba_phys[slot] & 0xFFFFFFFF);
-        cmd_hdr->ctbau = (uint32_t)((dev->ctba_phys[slot] >> 32) & 0xFFFFFFFF);
+        memset(cmd_hdr, 0, sizeof(hba_cmd_header_t));
+        
+        cmd_hdr->ctba = (uint32_t)(current_ctba_phys & 0xFFFFFFFF);
+        cmd_hdr->ctbau = (uint32_t)((current_ctba_phys >> 32) & 0xFFFFFFFF);
 
         dev->slot_busy[slot] = 0;
     }
 
+    /* Limpa buffers e estados de erro antigos antes do arranque elétrico */
+    port->serr = port->serr;
+    port->is = port->is;
+
+    /* Reinicia o motor de processamento DMA da porta */
     ahci_port_start(port);
     return 0;
 }
@@ -211,22 +223,45 @@ static int ahci_dma_io(ahci_device_t *dev, uint64_t lba, uint32_t sector_count, 
     hba_cmd_header_t *cmdhdr = (hba_cmd_header_t *)(dev->clb_virt + (slot * sizeof(hba_cmd_header_t)));
     cmdhdr->cfl = sizeof(h2d_register_fis_t) / sizeof(uint32_t);
     cmdhdr->w = write_flag ? 1 : 0;
-    cmdhdr->prdtl = 1;
     cmdhdr->pmp = 0;
 
     hba_cmd_tbl_t *cmdtable = (hba_cmd_tbl_t *)dev->ctba_virt[slot];
-    memset(cmdtable, 0, PAGE_SIZE);
+    // CORREÇÃO: Limpar apenas a tabela FIS de comandos, não a página inteira, para poupar ciclos de CPU
+    memset(cmdtable, 0, sizeof(h2d_register_fis_t)); 
 
-    cmdtable->prdt_entry.dba = (uint32_t)(phys_buffer & 0xFFFFFFFFUL);
-    cmdtable->prdt_entry.dbau = (uint32_t)((phys_buffer >> 32) & 0xFFFFFFFFUL);
-    cmdtable->prdt_entry.dbc = (sector_count * 512) - 1;
-    cmdtable->prdt_entry.i = 1;
+    // --- CORREÇÃO CRÍTICA: DIVISÃO DINÂMICA DO PRDT ---
+    uint32_t bytes_left = sector_count * 512;
+    uintptr_t current_phys = phys_buffer;
+    int prdt_index = 0;
+
+    while (bytes_left > 0 && prdt_index < AHCI_PRDT_PER_CMD) {
+        // Cada entrada PRDT aguenta no máximo 4MB (0x400000 bytes)
+        // Dica: Se o seu OS usar paginação de 4KB não contígua, altere 4MB para 4096 nesta linha
+        uint32_t chunk_size = (bytes_left > 0x400000) ? 0x400000 : bytes_left;
+
+        cmdtable->prdt_entry[prdt_index].dba = (uint32_t)(current_phys & 0xFFFFFFFFUL);
+        cmdtable->prdt_entry[prdt_index].dbau = (uint32_t)((current_phys >> 32) & 0xFFFFFFFFUL);
+        cmdtable->prdt_entry[prdt_index].dbc = chunk_size - 1; // 0-based count
+        cmdtable->prdt_entry[prdt_index].i = (bytes_left <= 0x400000) ? 1 : 0; // Interrompe apenas no último chunk
+
+        current_phys += chunk_size;
+        bytes_left -= chunk_size;
+        prdt_index++;
+    }
+
+    // Se o tamanho do I/O ultrapassar o suporte de PRDTs alocados nesta arquitetura
+    if (bytes_left > 0) {
+        return -2; // Erro: Tamanho de I/O demasiado grande para o limite atual de PRDTs
+    }
+
+    cmdhdr->prdtl = prdt_index; // Atualiza o hardware com o número real de blocos gerados
+    // --------------------------------------------------
 
     h2d_register_fis_t *cfis = (h2d_register_fis_t *)(&cmdtable->cfis);
     cfis->fis_type = FIS_TYPE_REG_H2D;
     cfis->c = 1;
     cfis->command = write_flag ? ATA_CMD_WRITE_DMA_EXT : ATA_CMD_READ_DMA_EXT;
-    cfis->device = 1 << 6;
+    cfis->device = 1 << 6; // Modo LBA
 
     cfis->lba0 = lba & 0xFF;
     cfis->lba1 = (lba >> 8) & 0xFF;
@@ -246,11 +281,10 @@ static int ahci_dma_io(ahci_device_t *dev, uint64_t lba, uint32_t sector_count, 
     /* Dispara o comando elétrico no hardware */
     port->ci = (1 << slot);
 
-    /* LOOP DE ESPERA ASYNC (A ISR irá alterar 'slot_busy' para 0 quando a IRQ disparar) */
+    /* LOOP DE ESPERA ASYNC */
     while (dev->slot_busy[slot] == 1)
     {
-        // Se a sua máquina real demorar ou falhar a IRQ, implementamos um Fallback de polling 
-        // para evitar que o Kernel congele infinitamente se a BIOS prender o vetor MSI:
+        // Fallback de segurança contra IRQs perdidas em hardware real/emuladores
         if ((port->ci & (1 << slot)) == 0) {
             dev->slot_busy[slot] = 0;
             break;
@@ -258,9 +292,8 @@ static int ahci_dma_io(ahci_device_t *dev, uint64_t lba, uint32_t sector_count, 
         __builtin_ia32_pause();
     }
 
-    // Garante que o pipeline de interrupção da porta foi limpo e rearmado para o próximo comando
-    volatile uint32_t dummy = port->is;
-    port->is = dummy;
+    // Limpa a interrupção gerada no controlador de forma segura
+    port->is = port->is;
 
     return 0;
 }
@@ -315,12 +348,14 @@ static int ahci_identify_device_polling(ahci_device_t *dev)
 
     // Configura a tabela PRDT usando o buffer persistente
     hba_cmd_tbl_t *cmdtable = (hba_cmd_tbl_t *)dev->ctba_virt[slot];
-    memset(cmdtable, 0, PAGE_SIZE);
+    // OTIMIZAÇÃO: Limpa apenas a região do cabeçalho FIS para poupar tempo de execução
+    memset(cmdtable, 0, sizeof(h2d_register_fis_t)); 
 
-    cmdtable->prdt_entry.dba = (uint32_t)(phys_buffer & 0xFFFFFFFFUL);
-    cmdtable->prdt_entry.dbau = (uint32_t)((phys_buffer >> 32) & 0xFFFFFFFFUL);
-    cmdtable->prdt_entry.dbc = 511; // 512 bytes (512 - 1)
-    cmdtable->prdt_entry.i = 0;     // Polling ativo (Sem interrupção do PRDT)
+    // CORREÇÃO CRÍTICA DE SINTAXE: Referenciar o índice [0] do novo array PRDT
+    cmdtable->prdt_entry[0].dba = (uint32_t)(phys_buffer & 0xFFFFFFFFUL);
+    cmdtable->prdt_entry[0].dbau = (uint32_t)((phys_buffer >> 32) & 0xFFFFFFFFUL);
+    cmdtable->prdt_entry[0].dbc = 511; // 512 bytes (512 - 1)
+    cmdtable->prdt_entry[0].i = 0;     // Polling ativo (Sem interrupção do PRDT)
 
     // Monta o FIS Host-to-Device (H2D)
     h2d_register_fis_t *cfis = (h2d_register_fis_t *)(&cmdtable->cfis);
@@ -428,15 +463,6 @@ static int ahci_identify_device_polling(ahci_device_t *dev)
     {
         dev->total_sectors = id->total_sectors_28;
     }
-
-    /*
-    // Nota: O cálculo de GB necessita de cast (uint64_t) para prevenir overflow aritmético de 32 bits
-    uint64_t size_in_gb = (dev->total_sectors * 512UL) / (1024UL * 1024UL * 1024UL);
-
-    kprintf("[AHCI] HDDs/SSDs SATA Identificado com Sucesso!\n");
-    kprintf("[AHCI] Modelo: %s\n", id->model_number);
-    kprintf("[AHCI] Tamanho: %llu GB (%llu setores em LBA)\n", size_in_gb, dev->total_sectors);
-    */
 
     return 0;
 }

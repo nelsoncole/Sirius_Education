@@ -90,6 +90,14 @@ typedef struct vfs_operations {
     int (*rename)(struct vfs_node* old_dir, const char* old_name, struct vfs_node* new_dir, const char* new_name);
 } vfs_operations_t;
 
+/* Declaração antecipada da estrutura de página do Page Cache */
+typedef struct vfs_page {
+    uint64_t block_id;              /* ID do bloco/cluster do arquivo (offset / block_size) */
+    void*    buffer;                /* Ponteiro virtual da Pool contendo os dados (ex: 64KB) */
+    uint32_t size;                  /* Tamanho real de leitura*/
+    int      dirty;                 /* 1 se foi modificado em RAM e precisa de ir para o AHCI */
+    struct vfs_page* next;          /* Ponteiro para o próximo bloco em cache deste nó */
+} vfs_page_t;
 
 /**
  * O Nó do Sistema de Ficheiros Virtual (VFS Node / Inode Genérico)
@@ -101,7 +109,13 @@ typedef struct vfs_node {
     uint64_t size;                  /* Tamanho do ficheiro em bytes */
     uint32_t inode;                 /* Identificador numérico interno do sistema de ficheiros */
     uint32_t permissions;           /* Permissões POSIX de acesso */
+
+    uint32_t uid;
+    uint32_t gid;
+    uint32_t block_size;            /* Tamanho do cluster injetado pelo FAT32 (ex: 65536) */
     
+    vfs_page_t* cache_pages;        /* Lista ligada de blocos de 64KB guardados na RAM */
+
     vfs_operations_t* ops;          /* Tabela de funções correspondente ao tipo de FS */
     struct vfs_filesystem* fs;      /* Ponteiro para o sistema de ficheiros ao qual pertence */
     void* private_data;             /* Dados privados do driver (ex: cluster inicial no FAT) */
@@ -109,13 +123,13 @@ typedef struct vfs_node {
     struct vfs_node* ptr_mount;     /* Se for um ponto de montagem, aponta para a raiz mapeada */
 } vfs_node_t;
 
-/* Estrutura de controlo de sessão de ficheiro para o processo */
+/* Estrutura de controlo de sessão de ficheiro para o processo (Fica 100% limpa) */
 typedef struct vfs_file {
-    vfs_node_t* node;           // Ponteiro para o nó do VFS correspondente
-    uint64_t    offset;         // Posição atual de leitura/escrita em bytes
-    uint32_t    flags;          // O_RDONLY, O_WRONLY, O_RDWR, O_NONBLOCK, O_APPEND
-    uint32_t    fd_flags;       // Flags do descritor (FD_CLOEXEC) - ADICIONE ESTA LINHA
-    uint32_t    ref_count;      // Contador de referências para partilha entre processos
+    vfs_node_t* node;               // Ponteiro para o nó do VFS correspondente
+    uint64_t    offset;             // Posição atual de leitura/escrita em bytes INDIVIDUAL
+    uint32_t    flags;              // O_RDONLY, O_WRONLY, O_RDWR, O_NONBLOCK, O_APPEND
+    uint32_t    fd_flags;           // Flags do descritor (FD_CLOEXEC)
+    uint32_t    ref_count;          // Contador de referências para partilha entre processos
 } vfs_file_t;
 
 typedef struct vfs_stat {

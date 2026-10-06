@@ -416,6 +416,9 @@ int socket(int family, int type, int protocol)
 
     memset(vnode, 0, sizeof(vfs_node_t));
 
+    vnode->block_size = 0;
+    vnode->cache_pages = NULL;
+
     vnode->flags = VFS_CHAR_DEV; 
     vnode->private_data = sock;   
     vnode->ops = &g_socket_vfs_ops;
@@ -612,6 +615,9 @@ int accept(int fd, void* addr, unsigned long* addrlen)
             return -4;
         }
         memset(client_node, 0, sizeof(vfs_node_t));
+
+        client_node->block_size = 0;
+        client_node->cache_pages = NULL;
 
         /* Liga a estrutura polimórfica (VFS Node -> Private Data -> Socket) */
         client_node->private_data = client;

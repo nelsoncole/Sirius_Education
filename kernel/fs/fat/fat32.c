@@ -559,10 +559,32 @@ static int fat32_open(vfs_node_t *node, uint32_t flags) {
         return -3; // Erro: Permissão de escrita negada no hardware físico
     }
 
+    fat32_volume_t* vol = (fat32_volume_t*)node->private_data;
+
+    // ========================================================================
+    // BLINDAGEM DO PAGE CACHE: SÓ ATIVA SE FOR UM ARQUIVO REGULAR
+    // ========================================================================
+    if ((node->flags & VFS_DIRECTORY) == 0) { 
+        if (vol) {
+            // Tamanho do Bloco = Setores por Cluster * 512 bytes por setor (Ex: 65536 para 64KB)
+            node->block_size = vol->bytes_per_cluster;
+        } else {
+            node->block_size = 4096; // Fallback seguro
+        }
+
+        // Inicializa a cabeça da lista ligada se estiver vazia
+        if (!node->cache_pages) {
+            node->cache_pages = NULL; 
+        }
+    } else {
+        // Se for um diretório, desativa completamente as variáveis do Page Cache
+        node->block_size = 0;
+        node->cache_pages = NULL;
+    }
+    // ========================================================================
+
     // 3. Suporte a TRUNCATE (Limpar o ficheiro ao abrir para escrita fresca)
     if ((flags & VFS_MODE_WRITE) && (flags & VFS_MODE_TRUNC)) {
-        fat32_volume_t* vol = (fat32_volume_t*)node->private_data;
-        
         if (vol && node->inode >= 2) {
             kprintf("[FAT32] TRUNCATE ativo para '%s': Libertando cadeia de clusters (Cluster: %u)...\n", 
                     node->name, node->inode);
@@ -571,8 +593,6 @@ static int fat32_open(vfs_node_t *node, uint32_t flags) {
             fat32_free_cluster_chain(vol, node->inode);
 
             // B) Sincroniza o tamanho do arquivo para 0 no diretório pai em disco
-            // Como no open o pai direto nem sempre está acessível na struct do nó, 
-            // simulamos o nó pai raiz ou usamos o seu atualizador de metadados padrão:
             vfs_node_t parent_node;
             memset(&parent_node, 0, sizeof(vfs_node_t));
             parent_node.inode = vol->root_cluster; 
@@ -583,15 +603,28 @@ static int fat32_open(vfs_node_t *node, uint32_t flags) {
 
             // C) Zera o tamanho também no nó em memória RAM
             node->size = 0;
+
+            // Se o arquivo foi truncado, limpa as páginas obsoletas que estavam na cache
+            if (node->cache_pages != NULL) {
+                vfs_page_t* current_page = node->cache_pages;
+                while (current_page != NULL) {
+                    vfs_page_t* next_page = current_page->next;
+                    if (current_page->buffer) {
+                        pool_free(current_page->buffer, node->block_size);
+                    }
+                    kfree(current_page);
+                    current_page = next_page;
+                }
+                node->cache_pages = NULL; 
+            }
         }
     }
 
-    kprintf("[FAT32] Ficheiro '%s' (Cluster Inicial: %u) verificado e aberto com sucesso.\n", 
-            node->name, node->inode);
+    kprintf("[FAT32] '%s' (Cluster Inicial: %u, Cache: %s) aberto com sucesso.\n", 
+            node->name, node->inode, (node->cache_pages != NULL || node->block_size > 0) ? "ATIVO" : "BYPASS");
 
-    return 0; // Sucesso: Nó validado, limpo (se truncado) e pronto
+    return 0; 
 }
-
 /**
  * Força a sincronização de dados e metadados pendentes do volume FAT32 com o hardware.
  * 
