@@ -58,7 +58,7 @@ static bool elf_validate_header(Elf64_Ehdr *ehdr)
 /*
  * Rotina principal de carregamento dinâmico de módulos (LKM).
  */
-int kmod_load(const uint8_t *elf_buffer, size_t size)
+int kmod_load(const uint8_t *elf_buffer, size_t size, void *dev)
 {
     if (!elf_buffer || size < sizeof(Elf64_Ehdr))
     {
@@ -276,7 +276,7 @@ int kmod_load(const uint8_t *elf_buffer, size_t size)
 
     /* Executa o módulo dinâmico em Ring 0 */
     kprintf("[kmod]: A saltar para module_init()...\n");
-    int status = (*init_func)();
+    int status = (*init_func)(dev);
 
     if (status != 0)
     {

@@ -9,7 +9,7 @@
  *   Created Date: 31/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 31/08/2026
+ *  Modified Date: 10/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -41,34 +41,42 @@ static uint32_t ioapic_read(uint8_t reg) {
 }
 
 /*
- * Configura o roteamento de uma IRQ física para um vetor da IDT e um núcleo alvo
- * 
- * Parâmetros:
- *   irq:    O pino físico de hardware (ex: IRQ 1 = Teclado PS/2)
- *   apic_id:O ID do Local APIC que vai receber a interrupção (ex: 0 para o BSP)
- *   vector: O vetor destino na IDT (deve ser >= 32, fora da zona de exceções)
+ * Nova Função Estendida Corrigida: Garante que desmascara o pino (Bit 16 = 0)
+ * e injeta o perfil elétrico exato (Level/Low) exigido pelo silício do ICH9.
  */
-void ioapic_set_irq(uint8_t irq, uint64_t apic_id, uint8_t vector) {
-    // Cada pino usa 2 registadores sequenciais começando em 0x10 + (irq * 2)
+void ioapic_set_irq_extended(uint8_t irq, uint64_t apic_id, uint8_t vector, uint8_t type) {
     uint8_t reg_low = IOAPIC_REDTBL + (irq * 2);
     uint8_t reg_high = reg_low + 1;
 
-    /*
-     * Parte Baixa (Bits 0..31):
-     * Bits 0..7   -> O vetor destino na IDT
-     * Bit 16      -> Interrupt Mask (0 = Ativo/Desmascarado, 1 = Mascarado)
-     */
-    uint32_t low_flags = vector & 0xFF; // Define o vetor na IDT e limpa a máscara (Bit 16 = 0)
+    // Bits 0..7: Vetor destino na IDT (Ex: 32 + irq)
+    uint32_t low_flags = vector & 0xFF; 
 
-    /*
-     * Parte Alta (Bits 32..63):
-     * Bits 56..63 -> Destinatário (O Local APIC ID do Core que receberá a interrupção)
-     */
+    // CORREÇÃO CRÍTICA: Força o Bit 16 (Interrupt Mask) a ZERO para desmascarar e ativar o pino.
+    // Também garante o Delivery Mode em 0 (Fixed) e Destination Mode em 0 (Physical).
+    low_flags &= ~(1 << 16); 
+
+    // Se type == 1 (PCI no ICH9/VMware/Real), configura o perfil elétrico obrigatório:
+    if (type == 1) {
+        low_flags |= (1 << 15); // Bit 15 = 1: Level Triggered (Disparado por Nível)
+        low_flags |= (1 << 13); // Bit 13 = 1: Active Low (Sinal elétrico ativo em baixo)
+    }
+    else {
+        // Se for 0 (ISA), garante Edge Triggered (Bit 15 = 0) e Active High (Bit 13 = 0)
+        low_flags &= ~(1 << 15);
+        low_flags &= ~(1 << 13);
+    }
+
+    // Parte Alta: Bits 56..63 recebem o Local APIC ID mapeado para a CPU alvo
     uint32_t high_flags = (apic_id & 0xFF) << 24;
 
-    // Grava as alterações no hardware
+    // Envia os comandos de escrita sincronizados para as janelas MMIO do chip
     ioapic_write(reg_low, low_flags);
     ioapic_write(reg_high, high_flags);
+}
+
+void ioapic_set_irq(uint8_t irq, uint64_t apic_id, uint8_t vector) {
+    // 0 = Tipo padrão ISA (Edge Triggered, Active High)
+    ioapic_set_irq_extended(irq, apic_id, vector, 0);
 }
 
 /*
@@ -77,7 +85,6 @@ void ioapic_set_irq(uint8_t irq, uint64_t apic_id, uint8_t vector) {
 void ioapic_init(void) {
     kprintf("[IOAPIC] Mapeando registadores de IO em 0x%lX...\n", IOAPIC_PHYS_DEFAULT);
 
-    // Mapeia a página de 4 KB na janela de 512 GB com Cache Disable (0x1B)
     g_ioapic = (volatile uint32_t *) vmm_map_device(IOAPIC_PHYS_DEFAULT, 4096);
 
     if (!g_ioapic) {
@@ -85,18 +92,12 @@ void ioapic_init(void) {
         for(;;);
     }
 
-    // Lê a versão e o número máximo de pinos de interrupção (Redirection Entries)
     uint32_t version_reg = ioapic_read(IOAPIC_VER);
     uint32_t max_interrupts = ((version_reg >> 16) & 0xFF) + 1;
 
     kprintf("[IOAPIC] Chip detectado. Versao: 0x%X, Pinos de interrupcao suportados: %u\n", 
             version_reg & 0xFF, max_interrupts);
 
-    /*
-     * MASCARAMENTO DE SEGURANÇA INICIAL
-     * Desativamos todos os pinos de redirecionamento por padrão para limpar resíduos.
-     * Escrever 0x10000 ativa o bit 16 (Masked), silenciando o pino.
-     */
     for (uint32_t i = 0; i < max_interrupts; i++) {
         ioapic_write(IOAPIC_REDTBL + (i * 2), 0x10000);
         ioapic_write(IOAPIC_REDTBL + (i * 2) + 1, 0);

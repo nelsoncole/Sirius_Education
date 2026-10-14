@@ -53,6 +53,7 @@ extern int vfs_register_filesystem(void *fs);
 /* Subsistema de Rede do Kernel (Network Stack / Driver API) */
 extern int net_driver_register(const uint8_t *mac_addr, void *ops_table);
 extern int net_driver_receive(const void *buffer, uint32_t packet_size);
+extern void net_set_link_event(uint32_t event);
 
 /* Barramento PCI (Configuração e Ativação de Hardware) */
 /* (Certifica-te de que pci_device_t está acessível via kmod.h ou inclui o teu pci.h) */
@@ -60,6 +61,9 @@ extern uint32_t pci_config_read_dword(uint8_t bus, uint8_t slot, uint8_t func, u
 extern void pci_config_write_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t data);
 extern void pci_enable_mmio_busmastering(void *dev); /* Mapeado como void* ou pci_device_t* se declarado */
 extern int pci_load_devices_by_class(uint8_t class_code, uint8_t subclass_code, int (*init_cb)(void *dev));
+extern uint8_t pci_route_ioapic_irq(void *dev);
+
+extern void kernel_panic(const char* message);
 /*
  * Tabela estática contendo os símbolos públicos do Kernel.
  * Cada entrada associa uma cadeia de caracteres ao endereço real da função.
@@ -99,12 +103,16 @@ static kernel_symbol_t kernel_symtab[] = {
     /* --- Abstração da Pilha de Rede (TCP/IP / Ethernet Layer) --- */
     {"net_driver_register",             (uintptr_t)net_driver_register},
     {"net_driver_receive",              (uintptr_t)net_driver_receive},
+    {"net_set_link_event",              (uintptr_t)net_set_link_event},
     
     /* --- Subsistema de Controlo de Dispositivos PCI --- */
     {"pci_config_read_dword",           (uintptr_t)pci_config_read_dword},
     {"pci_config_write_dword",          (uintptr_t)pci_config_write_dword},
     {"pci_enable_mmio_busmastering",    (uintptr_t)pci_enable_mmio_busmastering},
     {"pci_load_devices_by_class",       (uintptr_t)pci_load_devices_by_class},
+    {"pci_route_ioapic_irq",            (uintptr_t)pci_route_ioapic_irq},
+
+    {"kernel_panic",                    (uintptr_t)kernel_panic},
     
     /* Sentinela: fim da tabela de símbolos */
     {NULL, 0}

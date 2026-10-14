@@ -17,6 +17,7 @@
  * ============================================================================
  */
 
+ #include <kernel/arch/x86_64/kapi/acpi.h>
 #include <kernel/drivers/bus/pci.h>
 #include <kernel/klib.h>
 
@@ -70,6 +71,46 @@ uint32_t pci_config_read_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t 
 
     /* Lê e devolve o dado contido na porta de dados */
     return inl(PCI_CONFIG_DATA);
+}
+
+uint8_t pci_config_read_byte(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
+{
+    // Lê o dword completo (4 bytes) alinhado usando a tua função nativa
+    uint32_t dword = pci_config_read_dword(bus, slot, func, offset);
+    
+    // Isola o byte correto dependendo do alinhamento (offset & 3)
+    // offset % 4 == 0 -> de desloca 0 bits (byte 0)
+    // offset % 4 == 1 -> de desloca 8 bits (byte 1)
+    // offset % 4 == 2 -> de desloca 16 bits (byte 2)
+    // offset % 4 == 3 -> de desloca 24 bits (byte 3)
+    return (uint8_t)((dword >> ((offset & 3) * 8)) & 0xFF);
+}
+
+void pci_config_write_byte(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint8_t val)
+{
+    uint32_t address;
+    uint32_t lbus  = (uint32_t)bus;
+    uint32_t lslot = (uint32_t)slot;
+    uint32_t lfunc = (uint32_t)func;
+
+    // Monta o endereço padrão da porta PCI_CONFIG_ADDRESS (alinhado a 4 bytes com offset & 0xFC)
+    address = (uint32_t)((lbus << 16) | (lslot << 11) |
+                         (lfunc << 8) | (offset & 0xFC) | ((uint32_t)0x80000000));
+
+    outl(PCI_CONFIG_ADDRESS, address);
+
+    // Lê o valor atual completo de 32 bits para modificar apenas o byte pretendido (Preservação)
+    uint32_t current_dword = inl(PCI_CONFIG_DATA);
+    
+    // Calcula a máscara e a posição do bit-shift
+    uint8_t shift = (offset & 3) * 8;
+    uint32_t mask = ~(0xFF << shift);
+    
+    // Injeta o novo byte na posição correta sem corromper os outros 3 bytes
+    uint32_t new_dword = (current_dword & mask) | ((uint32_t)val << shift);
+
+    // Envia o dword modificado de volta
+    outl(PCI_CONFIG_DATA, new_dword);
 }
 
 /**
@@ -283,13 +324,35 @@ pci_device_t* pci_find_device(uint16_t vendor_id, uint16_t device_id)
  * @param from Dispositivo a partir do qual continuar a busca (use NULL para iniciar do topo).
  * @return Ponteiro para o próximo dispositivo correspondente encontrado, ou NULL.
  */
-pci_device_t* pci_find_by_class(uint8_t class_code, uint8_t subclass_code, pci_device_t *from)
+pci_device_t* pci_find_by_class_end_subclass(uint8_t class_code, uint8_t subclass_code, pci_device_t *from)
 {
     pci_device_t *current = (from == NULL) ? g_pci_devices_head : from->next;
 
     while (current)
     {
         if (current->class_code == class_code && current->subclass_code == subclass_code)
+        {
+            return current;
+        }
+        current = current->next;
+    }
+
+    return NULL;
+}
+
+/**
+ * Procura um dispositivo através dos códigos de Classe.
+ * 
+ * @param from Dispositivo a partir do qual continuar a busca (use NULL para iniciar do topo).
+ * @return Ponteiro para o próximo dispositivo correspondente encontrado, ou NULL.
+ */
+pci_device_t* pci_find_by_class(uint8_t class_code, pci_device_t *from)
+{
+    pci_device_t *current = (from == NULL) ? g_pci_devices_head : from->next;
+
+    while (current)
+    {
+        if (current->class_code == class_code)
         {
             return current;
         }
@@ -330,7 +393,7 @@ int pci_load_devices_by_class(uint8_t class_code, uint8_t subclass_code, int (*i
      * O loop utiliza a função pci_find_by_class passando o ponteiro 'current' anterior.
      * Isto faz com que a busca continue exatamente a partir do último nó encontrado.
      */
-    while ((current = pci_find_by_class(class_code, subclass_code, current)) != NULL)
+    while ((current = pci_find_by_class_end_subclass(class_code, subclass_code, current)) != NULL)
     {
         kprintf("[PCI] Carregando dispositivo de barramento em %02x:%02x.%d | Vid:0x%04x Did:0x%04x\n",
                 current->address.bus, current->address.device, current->address.function,
@@ -356,18 +419,53 @@ void pci_enable_mmio_busmastering(pci_device_t *dev)
 {
     if (!dev) return;
 
-    /* Lê o registo de Comando PCI padrão (Offset 0x04) usando a estrutura guardada */
+    /* Lê o registo de Comando PCI padrão (Offset 0x04) */
     uint32_t pci_cmd = pci_config_read_dword(dev->address.bus, dev->address.device, dev->address.function, PCI_REG_COMMAND);
 
     /* 
-     * Injeta os bits cirúrgicos da especificação PCI:
+     * Injeta os bits cirúrgicos da especificação PCI/PCIe:
      * Bit 1: Memory Space Enable (0x02)
      * Bit 2: Bus Master Enable (0x04)
+     * Bit 6: Parity Error Response Enable (0x40) - Necessário para sincronia PCIe no ICH9
+     * Bit 8: SERR# Enable (0x100) - EXIGIDO pelo ICH9 para permitir o disparo de INTx legados
      */
-    pci_cmd |= (1 << 1); // Ativa Memory Space MMIO
-    pci_cmd |= (1 << 2); // Ativa Bus Mastering DMA
-    pci_cmd &= ~(1<<10); // Enable interrupts
+    pci_cmd |= (1 << 1);  // Ativa Memory Space MMIO
+    pci_cmd |= (1 << 2);  // Ativa Bus Mastering DMA
+    pci_cmd |= (1 << 6);  // Ativa Resposta de Erro de Paridade (PCIe Host Sync)
+    pci_cmd |= (1 << 8);  // Ativa SERR# (Obrigatório para encaminhar INTx no ICH9)
+    
+    /* Garante que o Bit 10 (Interrupt Disable) está a ZERO para ativar interrupções elétricas */
+    pci_cmd &= ~(1 << 10); 
 
     /* Grava a nova palavra de controlo estável no espaço de configuração */
     pci_config_write_dword(dev->address.bus, dev->address.device, dev->address.function, PCI_REG_COMMAND, pci_cmd);
+}
+
+
+/*
+ * Roteamento Universal de Interrupções PCI utilizando o subsistema ACPI.
+ * Resolve o mistério do ICH9: Lê o IRQ 9 do PCI e traduz para GSI 19 via MADT.
+ */
+uint8_t pci_route_ioapic_irq(pci_device_t *dev) 
+{
+    // 1. Lê a linha padrão pré-configurada pelo firmware no registo 0x3C (Retorna 9 no ICH9)
+    uint8_t pci_line = pci_config_read_byte(dev->address.bus, dev->address.device, dev->address.function, 0x3C);
+  
+    // Se o registo vier vazio (0xFF ou 0), calcula o pino elétrico genérico por swizzling
+    if (pci_line == 0xFF || pci_line == 0)
+    {
+        uint8_t int_pin = pci_config_read_byte(dev->address.bus, dev->address.device, dev->address.function, 0x3D);
+        pci_line = 16 + ((dev->address.device + (int_pin - 1)) % 4);
+    }
+
+    kprintf("[PCI] Linha lida do registo 0x3C: %d\n", pci_line);
+
+    // 2. CONSULTA A MADT DO ACPI: 
+    // No ICH9, isto vai detetar o Source Override: ISA 9 -> GSI 19 e devolverá 19!
+    // No PIIX3, como não há override para a rede, devolverá o IRQ original (ex: 11) de forma 1:1.
+    uint8_t final_gsi = (uint8_t)acpi_get_ioapic_irq(pci_line);
+
+    kprintf("[PCI] Vetor final roteado via ACPI para o IOAPIC: %d\n", final_gsi);
+
+    return final_gsi;
 }

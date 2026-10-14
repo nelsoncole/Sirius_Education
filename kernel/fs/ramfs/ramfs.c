@@ -384,3 +384,25 @@ static int ramfs_rename(vfs_node_t* old_dir, const char* old_name, vfs_node_t* n
 
     return 0; // Sucesso absoluto na translação em RAM!
 }
+
+static vfs_filesystem_t g_ramfs_fs_driver = {
+    .name    = "ramfs",
+    .mount   = NULL,
+    .unmount = NULL,
+    .root    = NULL
+};
+
+/* Referência externa para a raiz global instanciada pelo vfs_init */
+extern vfs_node_t* g_vfs_root;
+
+void ramfs_init(void) {
+    // --- UNIÃO ATÓMICA E SEGURA ---
+    // Preenche as propriedades do driver diretamente por dentro do módulo ramfs.c
+    if (g_vfs_root) {
+        g_vfs_root->fs = &g_ramfs_fs_driver;
+        g_ramfs_fs_driver.root = g_vfs_root;
+    }
+
+    // Regista o driver no catálogo de sistemas de ficheiros do SiriusOS
+    vfs_register_filesystem(&g_ramfs_fs_driver);
+}

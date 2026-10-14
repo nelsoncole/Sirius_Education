@@ -1013,9 +1013,9 @@ uint64_t sys_getsockopt(int sockfd, int level, int optname, void *optval, uint32
     return 0;
 }
 
-uint64_t sys_kmod_load(const uint8_t *user_buffer, size_t size) {
+uint64_t sys_kmod_load(const uint8_t *user_buffer, size_t size, void* dev) {
 
-    return (uint64_t)kmod_load(user_buffer, size);
+    return (uint64_t)kmod_load(user_buffer, size, dev);
 }
 
 uint64_t sys_kmod_unload(const char *user_name) {

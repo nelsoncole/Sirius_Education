@@ -80,8 +80,16 @@ void disable_irq(uint8_t irq_number)
 
 void kapi_register_irq_handler(pci_device_t *dev, void (*fuc)(void))
 {
-    if (apic_send_msi(dev, fuc))
+    if (apic_send_msi(dev, fuc) == 0)
     {
-        irq_handler(dev->irq_line, fuc);
+        kprintf("[KAPI] Dispositivo PCI %x:%x registado com sucesso via MSI (Vetor: %d)\n", 
+                dev->vendor_id, dev->device_id, dev->irq_line);
+        return; // Sucesso absoluto por mensagem. Ignora o IOAPIC.
     }
+
+    int ioapic_pin = pci_route_ioapic_irq(dev);
+    
+    kprintf("[KAPI] MSI nao suportado. Fallback para IOAPIC no pino GSI: %d\n", ioapic_pin);
+    
+    irq_handler(ioapic_pin, fuc);
 }

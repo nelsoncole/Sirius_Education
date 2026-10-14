@@ -47,6 +47,7 @@
 #include <kernel/arch/x86_64/kapi/timer.h>
 #include <kernel/kmods/kmod.h>
 #include <kernel/kernel/net/net.h>
+#include <kernel/drivers/net/net_core.h>
 
 extern void test(void* arg);
 extern void tty_emulator_thread(void* arg);
@@ -298,7 +299,7 @@ void kernel_main(BOOT_INFO *boot_info)
     /* 18. Modules */
     kmod_init();
 
-    if (kmod_load_by_name("/mnt/hd0/mods/sample_mod.ko") != 0)
+    if (kmod_load_by_name("/mnt/hd0/mods/sample_mod.ko", NULL) != 0)
     {
         kprintf("[kmod]: Erro critico: Falha ao carregar o modulo '/mnt/hd0/mods/sample_mod.ko'.\n");
         /*
@@ -311,18 +312,9 @@ void kernel_main(BOOT_INFO *boot_info)
         kprintf("[kmod]: Modulo '/mnt/hd0/mods/sample_mod.ko' carregado com sucesso!\n");
     }
 
-    if (kmod_load_by_name("/mnt/hd0/mods/e1000.ko") != 0)
-    {
-        kprintf("[kmod]: Erro critico: Falha ao carregar o modulo '/mnt/hd0/mods/e1000.ko'.\n");
-        /*
-         * Podes adicionar aqui um 'panic("Falha na carga do modulo essencial");'
-         * caso este driver fosse obrigatório para o boot do Sirius_Education.
-         */
-    }
-    else
-    {
-        kprintf("[kmod]: Modulo '/mnt/hd0/mods/e1000.ko' carregado com sucesso!\n");
-    }
+    kmod_net_init("/mnt/hd0/mods");
+    
+    
 
     kprintf("\n========================================================================\n");
     kprintf("Sirius OS carregado com sucesso. Sistema pronto.\n");
@@ -395,7 +387,7 @@ void kernel_main(BOOT_INFO *boot_info)
 
     char *argv[] = {"/mnt/hd0/apps/bin/sh",};
     kprintf("[BOOT] Lancando o processo do user space '%s'...\n", argv[0]);
-    elf_load_and_create_process(argv[0], 1, argv, 0);
+    //elf_load_and_create_process(argv[0], 1, argv, 0);
     
 
     //vfs_print_tree("/");

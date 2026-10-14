@@ -121,7 +121,8 @@ int pci_register_driver(const char* name, uint16_t vendor_id, uint16_t device_id
  * @param from Dispositivo a partir do qual continuar a busca (use NULL para iniciar do topo).
  * @return Ponteiro para o próximo dispositivo correspondente encontrado, ou NULL.
  */
-pci_device_t* pci_find_by_class(uint8_t class_code, uint8_t subclass_code, pci_device_t *from);
+pci_device_t* pci_find_by_class_end_subclass(uint8_t class_code, uint8_t subclass_code, pci_device_t *from);
+pci_device_t* pci_find_by_class(uint8_t class_code, pci_device_t *from);
 
 /**
  * Expõe a cabeça da lista ligada de dispositivos PCI.
@@ -147,5 +148,9 @@ int pci_load_devices_by_class(uint8_t class_code, uint8_t subclass_code, int (*i
  * - Memory Space MMIO (Habilita a resposta aos BARs de memória)
  */
 void pci_enable_mmio_busmastering(pci_device_t *dev);
+
+pci_device_t* pci_find_bridge_for_bus(uint8_t target_bus);
+
+uint8_t pci_route_ioapic_irq(pci_device_t *dev);
 
 #endif

@@ -81,15 +81,17 @@ extern int vfs_register_filesystem(void *fs);
  */
 extern int net_driver_register(const uint8_t *mac_addr, void *ops_table);
 extern int net_driver_receive(const void *buffer, uint32_t packet_size);
+typedef enum {
+    NET_EVENT_NONE,
+    NET_EVENT_LINK_UP,
+    NET_EVENT_LINK_DOWN
+} net_event_t;
+extern void net_set_link_event(net_event_t event);
 
 /* ============================================================================
  * 9. SUBSISTEMA DE CONTROLO DO BARRAMENTO PCI
  * ============================================================================
  */
-extern uint32_t pci_config_read_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset);
-extern void     pci_config_write_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t data);
-extern void     pci_enable_mmio_busmastering(void *dev);
-extern int pci_load_devices_by_class(uint8_t class_code, uint8_t subclass_code, int (*init_cb)(void *dev));
 
 /* Estrutura que representa a localização física de uma função no barramento */
 typedef struct {
@@ -112,4 +114,11 @@ typedef struct pci_device {
     struct pci_device* next;    /* Ponteiro para encadeamento de lista no Kernel */
 } pci_device_t;
 
+extern uint32_t pci_config_read_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset);
+extern void     pci_config_write_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t data);
+extern void     pci_enable_mmio_busmastering(pci_device_t *dev);
+extern int      pci_load_devices_by_class(uint8_t class_code, uint8_t subclass_code, int (*init_cb)(pci_device_t *dev));
+extern          uint8_t pci_route_ioapic_irq(pci_device_t *dev);
+
+extern void kernel_panic(const char* message);
 #endif /* _KAPI_H_ */

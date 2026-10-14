@@ -1,0 +1,41 @@
+# ============================================================================
+#        Project: Sirius_Education
+#       Filename: Makefile
+#    Description: Sistema de build para compilação de módulos dinâmicos (LKM).
+#                 Gera código x86_64 relocável adequado para o espaço de Kernel.
+# 
+#         Author: Nelson Cole
+#   Created Date: 10/10/2026
+# ============================================================================
+
+CC = gcc
+LD = ld
+
+ROOT_DIR = ../..
+INCLUDE_DIR = $(ROOT_DIR)/include
+BUILD_DIR = $(ROOT_DIR)/mods/build
+
+CFLAGS = -m64 -Wall -Wextra -nostdinc -ffreestanding \
+         -mcmodel=large -mno-red-zone \
+         -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables \
+         -I$(INCLUDE_DIR)
+
+LDFLAGS = -m elf_x86_64 -r
+
+TARGET = $(BUILD_DIR)/pcnet.ko
+OBJ = main.o
+
+.PHONY: all clean
+
+all: $(TARGET) clean
+
+$(TARGET): $(OBJ)
+	@mkdir -p $(BUILD_DIR)
+	$(LD) $(LDFLAGS) $(OBJ) -o $@
+	@echo "[LKM] Modulo compilado com sucesso: $@"
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f *.o

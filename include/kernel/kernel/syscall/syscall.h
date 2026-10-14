@@ -191,7 +191,7 @@ uint64_t sys_setuid(uid_t uid);
 uint64_t sys_setgid(gid_t gid);
 
 /* Operações de Módulos */
-uint64_t sys_kmod_load(const uint8_t *user_buffer, size_t size);
+uint64_t sys_kmod_load(const uint8_t *user_buffer, size_t size, void* dev);
 uint64_t sys_kmod_unload(const char *user_name);
 uint64_t sys_kmod_print(void);
 

@@ -119,6 +119,7 @@ C_OBJ := \
 	$(BUILD_DIR)/symbols.o \
 	$(BUILD_DIR)/loader.o \
 	$(BUILD_DIR)/kmod_loader.o \
+	$(BUILD_DIR)/net_core.o \
 	$(BUILD_DIR)/test.o
 
 # ============================================================
@@ -292,6 +293,9 @@ $(BUILD_DIR)/vfs_tty_kbd.o: $(DRIVERS_DIR)/tty/vfs_tty_kbd.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/console.o: $(DRIVERS_DIR)/video/console.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/net_core.o: $(DRIVERS_DIR)/net/net_core.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================

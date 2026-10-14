@@ -11,12 +11,13 @@
  *   Created Date: 18/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 20/09/2026
+ *  Modified Date: 11/10/2026
  * 
  *        License: MIT
  * ============================================================================
  */
 
+#include <kernel/drivers/net/net_core.h>
 #include <kernel/kernel/net/net.h>
 #include <kernel/kernel/net/socket.h>
 #include <kernel/lib/stddef.h>
@@ -26,6 +27,11 @@
 
 #define NET_RX_QUEUE_SIZE 64
 #define MAX_NETWORK_INTERFACES 4
+
+extern int net_init_dhcp_client(void);
+extern void net_clear_dhcp_leases(void);
+extern void arp_init(void);
+volatile net_event_t g_net_link_event = NET_EVENT_NONE;
 
 typedef struct 
 {
@@ -358,15 +364,52 @@ int net_driver_receive(const void* buffer, uint32_t packet_size)
     return 0; 
 }
 
-extern int net_init_dhcp_client(void);
+void net_set_link_event(net_event_t event)
+{
+    unsigned long flags;
+    
+    /* Protege a escrita contra concorrência e preempção na IRQ */
+    flags = spinlock_lock_irqsave(&g_net_rx_lock);
+    g_net_link_event = event;
+    spinlock_unlock_irqrestore(&g_net_rx_lock, flags);
+}
+
+net_event_t net_consume_link_event(void)
+{
+    if (g_net_link_event == NET_EVENT_NONE)
+    {
+        return NET_EVENT_NONE;
+    }
+
+    unsigned long flags;
+    net_event_t event;
+
+    flags = spinlock_lock_irqsave(&g_net_rx_lock);
+    
+    event = g_net_link_event;
+    g_net_link_event = NET_EVENT_NONE; /* Consome o evento (Reset) */
+    
+    spinlock_unlock_irqrestore(&g_net_rx_lock, flags);
+
+    return event;
+}
+
 void network_rx_thread(void* arg) {
     (void)arg;
     kprintf("[NET CORE] Thread de processamento de pacotes (RX) ativa em Ring 0.\n");
 
-    net_init_dhcp_client();
-
     while (1)
     {
+        // 1. Verifica se houve mudança no estado do cabo/link
+        net_event_t ev = net_consume_link_event();
+        
+        if (ev == NET_EVENT_LINK_UP) {
+            net_init_dhcp_client();
+        } 
+        else if (ev == NET_EVENT_LINK_DOWN) {
+            net_clear_dhcp_leases();
+        }
+
         uint8_t* packet_data = NULL;
         uint32_t packet_len  = 0;
         unsigned long flags;
@@ -418,7 +461,6 @@ void network_rx_thread(void* arg) {
     }
 }
 
-extern void arp_init(void);
 void net_init(void)
 {
     g_active_net_driver_ops = NULL;

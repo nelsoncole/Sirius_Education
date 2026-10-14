@@ -27,7 +27,7 @@
  * @param path     Caminho absoluto do módulo (ex: "/lib/modules/sample_mod.ko").
  * @return 0 em caso de sucesso, ou código de erro negativo.
  */
-int kmod_load_by_name(const char *path) 
+int kmod_load_by_name(const char *path, void *dev) 
 {
     if (!path) 
     {
@@ -76,7 +76,7 @@ int kmod_load_by_name(const char *path)
     kprintf("[kmod]: Transferencia concluida (%d bytes). Injetando no Kernel...\n", bytes_lidos);
 
     /* 4. Encaminha o buffer carregado para o motor oficial de relocações ELF64 */
-    int status = kmod_load((const uint8_t *)binary_buffer, binary_size);
+    int status = kmod_load((const uint8_t *)binary_buffer, binary_size, dev);
 
     /* 5. Liberta o buffer temporário da Pool (Evita Memory Leak) */
     pool_free(binary_buffer, alloc_size);

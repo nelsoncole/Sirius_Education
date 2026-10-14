@@ -65,6 +65,8 @@ typedef struct {
 void  acpi_init(BOOT_INFO *boot_info);
 void* acpi_find_table(const char *signature);
 
+unsigned int acpi_get_ioapic_irq(unsigned int isa_irq);
+
 unsigned int acpi_pm_read(void);
 
 #endif // _ACPI_H_

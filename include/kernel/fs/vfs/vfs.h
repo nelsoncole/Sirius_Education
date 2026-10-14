@@ -155,6 +155,9 @@ typedef struct vfs_filesystem {
     // Callback de Desmontagem: Liberta as estruturas do volume e fecha o hardware
     int (*unmount)(struct vfs_node* root_node);
 
+    // Ponteiro para o nó de raiz principal da partição/volume ativo
+    struct vfs_node* root; 
+
 } vfs_filesystem_t;
 
 /* Estrutura interna para mapeamento de montagens dinâmicas (Sem atropelar a raiz) */

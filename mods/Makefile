@@ -4,9 +4,9 @@
 #    Description: Gestor central de compilação e instalação de módulos (LKM).
 # 
 #         Author: Nelson Cole
-#   Created Date: 19/09/2026
+#   Created Date: 10/10/2026
 # ============================================================================
-MODULES = sample_mod e1000
+MODULES = sample_mod e1000 pcnet rtl8169
 
 # Caminhos do Sistema de Build
 BUILD_DIR = build

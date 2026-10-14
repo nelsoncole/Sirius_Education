@@ -44,7 +44,7 @@ struct e1000_rx_memory {
     unsigned int descsize;
     unsigned int blocksize;
     unsigned long long start;
-} __attribute__((packed));
+} __attribute__((packed)); 
 
 #define INTEL_VEND                      0x8086  
 #define E1000_DEV                       0x100E  
@@ -54,7 +54,8 @@ struct e1000_rx_memory {
 #define REG_CTRL                        0x0000      
 #define REG_STATUS                      0x0008      
 #define REG_EEPROM                      0x0014      
-#define REG_EERD                        0x0014      
+#define REG_EERD                        0x0014
+#define REG_MDIC                        0x0020        
 #define REG_CTRL_EXT                    0x0018      
 #define REG_ICR                         0x00c0      
 #define REG_IMASK                       0x00D0      
@@ -62,7 +63,9 @@ struct e1000_rx_memory {
 #define REG_RCTRL                       0x0100      
 #define REG_RCTL                        0x0100      
 #define REG_TCTRL                       0x0400      
-#define REG_TIPG                        0x0410      
+#define REG_TIPG                        0x0410
+
+#define REG_PBA                         0x10AC 
 
 #define REG_RDBAL                       0x2800      
 #define REG_RDBAH                       0x2804      
@@ -82,8 +85,11 @@ struct e1000_rx_memory {
 
 #define REG_MTA                         0x5200      
 #define REG_RAL                         0x5400      
-#define REG_RAH                         0x5404      
+#define REG_RAH                         0x5404
+      
  
+#define STATUS_LU                       (1 << 1) /* Link Up Status Bit */
+
 #define ECTRL_SLU                       0x40        
 #define CTRL_SLU                        (1 << 6)    
  

@@ -25,7 +25,7 @@
 /*
  * Assinaturas de funções obrigatórias para os módulos dinâmicos
  */
-typedef int (*mod_init_t)(void);
+typedef int (*mod_init_t)(void* dev);
 typedef void (*mod_exit_t)(void);
 
 /*
@@ -58,11 +58,11 @@ typedef struct kernel_symbol {
  * Protótipos de funções globais para a gestão de módulos
  */
 int kmod_init(void);
-int kmod_load(const uint8_t *elf_buffer, size_t size);
+int kmod_load(const uint8_t *elf_buffer, size_t size, void *dev);
 int kmod_unload(const char *name);
 uintptr_t kmod_find_symbol(const char *name);
 void kmod_register_tracked_module(module_t *new_mod);
 void kmod_print_all(void);
-int kmod_load_by_name(const char *path);
+int kmod_load_by_name(const char *path, void *dev);
 
 #endif /* _KMOD_H_ */

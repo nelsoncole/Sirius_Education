@@ -88,3 +88,27 @@ int net_init_dhcp_client(void)
      */
     return 0;
 }
+
+/**
+ * @brief net_clear_dhcp_leases - Reseta as configurações de IP e desativa a interface.
+ */
+void net_clear_dhcp_leases(void)
+{
+    kprintf("[DHCP CORE]: Evento Link Down detetado. A limpar concessões DHCP...\n");
+
+    net_set_interface_ip(0);       /* 0.0.0.0 */
+    net_set_interface_mask(0);     /* 0.0.0.0 */
+    net_set_interface_gateway(0);  /* 0.0.0.0 */
+
+    /* Desativa o estado de inicialização/pronto da interface eth0 */
+    net_get_interface_init(0, false);
+
+    socket_t* sock = socket_find_by_port(htons(68), SOCK_DGRAM);
+    if (sock)
+    {
+        socket_close(sock);
+        kprintf("[DHCP CORE]: Socket DHCP residual limpo.\n");
+    }
+
+    kprintf("[DHCP CORE]: Interface de rede resetada com sucesso. Estado: DISCONNECTED.\n");
+}

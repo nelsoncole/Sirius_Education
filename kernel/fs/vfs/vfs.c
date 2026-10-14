@@ -16,6 +16,7 @@
  * ============================================================================
  */
 #include <kernel/fs/vfs/vfs.h>
+#include <kernel/fs/ramfs/ramfs.h>
 #include <kernel/klib.h>
 #include <kernel/drivers/storage/partitions.h>
 #include <kernel/kernel/sched/process.h>
@@ -26,7 +27,7 @@
 
 /* Tabelas Globais de Controlo do Subsistema */
 static vfs_filesystem_t* g_registered_filesystems[FS_MAX_REG_DRIVERS];
-static vfs_node_t*       g_vfs_root = NULL;
+vfs_node_t*              g_vfs_root = NULL;
 static vfs_mount_t*      g_mount_list = NULL;
 
 /* Armazena o nome literal da partição física de boot (ex: "ahci0.1") */
@@ -274,12 +275,17 @@ void vfs_init(void) {
         g_vfs_root->flags = VFS_DIRECTORY;
         g_vfs_root->size = 0;
         g_vfs_root->inode = 1;
+        g_vfs_root->parent_inode = 0;   // A raiz global não possui pai acima dela
         g_vfs_root->private_data = NULL; // Começa sem filhos na RAM
 
         /* Diz à raiz que ela fala o dialeto do RamFS */
         g_vfs_root->ops          = &g_ramfs_ops; 
-        g_vfs_root->fs           = NULL;
         g_vfs_root->ptr_mount    = NULL;
+        g_vfs_root->block_size   = 4096; // Tamanho padrão da Page Cache em RAM
+        g_vfs_root->fs           = NULL; // Será preenchido dinamicamente pelo ramfs_init
+
+        // 3. Inicializa e delega ao RamFS a configuração do driver sobre este nó criado
+        ramfs_init();
         
         kprintf("[VFS] Virtual File System Root '/' inicializado com sucesso em RAM.\n");
     } else {
@@ -563,18 +569,6 @@ int vfs_umount(const char* mount_path) {
     return 0;
 }
 
-//-----------------------------------------------------------------------------
-// OPERAÇÕES GENÉRICAS DE E/S (INVOCAÇÃO POLIMÓRFICA DIRETA)
-//-----------------------------------------------------------------------------
-/* 
- * Nota de Arquitetura: Como validado anteriormente, ler os ponteiros ->ops->funcao
- * NÃO requer spinlock de tabelas globais do VFS. O desvio de Mountpoint é resolvido.
- */
-
-//-----------------------------------------------------------------------------
-// OPERAÇÃO CENTRAL DE ABERTURA DE FICHEIROS (VFS OPEN)
-//-----------------------------------------------------------------------------
-
 /**
  * vfs_open - Abre ou cria de forma dinâmica um nó no VFS do Kernel.
  *            Garante isolamento de drivers polimórficos e proteção contra memory leaks.
@@ -587,19 +581,11 @@ vfs_node_t* vfs_open(const char* path, uint32_t flags) {
 
     // 1. Obtém o nó pai e o nome isolado do filho antes de tomar decisões
     vfs_node_t* parent_node = vfs_get_parent_and_child(path, file_name);
-    if (!parent_node) {
-        return NULL; 
-    }
 
-    vfs_node_t* target_node = NULL;
-
-    // 2. Se o diretório pai tiver suporte a buscas, verifica se o ficheiro já existe
-    if (parent_node->ops && parent_node->ops->finddir) {
-        target_node = parent_node->ops->finddir(parent_node, file_name);
-    }
+    vfs_node_t* target_node = vfs_path_to_node(path);
 
     // 3. Se o ficheiro NÃO existe e o utilizador passou a flag O_CREAT, ordena a criação física
-    if (!target_node && (flags & O_CREAT)) {
+    if (!target_node && parent_node && (flags & O_CREAT)) {
         if (parent_node->ops && parent_node->ops->create) {
             
             int res = parent_node->ops->create(parent_node, file_name, 0644);
@@ -617,7 +603,12 @@ vfs_node_t* vfs_open(const char* path, uint32_t flags) {
     }
 
     // Garante que o nó filho sabe quem é o seu diretório pai
-    target_node->parent_inode = parent_node->inode;
+    if(!parent_node) {
+        target_node->parent_inode = 0;
+    }
+    else {
+        target_node->parent_inode = parent_node->inode;
+    }
     
     // 4. Dispara a inicialização polimórfica específica do driver
     if (target_node->ops && target_node->ops->open) {
@@ -1146,7 +1137,7 @@ uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence) {
     if (!file || !file->node) {
         return (uint64_t)-1;
     }
-
+    
     vfs_node_t* node = vfs_resolve_mountpoint(file->node);
 
     uint64_t new_offset = file->offset;

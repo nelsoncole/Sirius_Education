@@ -98,6 +98,8 @@ typedef struct
     uint32_t root_cluster;
 } fat32_volume_t;
 
+static vfs_filesystem_t g_fat32_fs_driver;
+
 //-----------------------------------------------------------------------------
 // FUNÇÕES AUXILIARES DE TRADUÇÃO DE ARMAZENAMENTO
 //-----------------------------------------------------------------------------
@@ -648,7 +650,7 @@ static int fat32_flush(vfs_node_t *node) {
 
     kprintf("[FAT32] Executando flush em '%s' - Sincronizando buffers de hardware...\n", node->name);
 
-    // Executa o flush de hardware se o driver de bloco (ex: AHCI) suportar a interface ioctl
+    // Executa o flush de hardware (ex: AHCI)
     if (vol->dev->ioctl) {
         // Comando 1: Padrão no Sirius_Education para Hardware Disk Sync / Flush
         if (vol->dev->ioctl(vol->dev, 1, 0) != 0) {
@@ -1358,6 +1360,9 @@ static vfs_node_t* fat32_mount_callback(block_device_t* dev, const char* mount_p
     root_node->fs           = NULL;              // Gerido dinamicamente pelo vfs_mount
     root_node->ptr_mount    = NULL;
 
+
+    g_fat32_fs_driver.root  = root_node; // Garante o mapeamento do ponteiro de raiz no driver!
+
     kprintf("[FAT32] Partição '%s' montada com sucesso em '%s'.\n", dev->name, mount_point);
     kprintf("[FAT32] Geometria: %d Bytes/Setor, %d Setores/Cluster, Setor Base de Dados: %llu\n",
             vol->bytes_per_sector, vol->sectors_per_cluster, vol->first_data_sector);
@@ -1385,6 +1390,8 @@ static int fat32_unmount_callback(vfs_node_t* root_node) {
     // 2. Liberta o próprio nó de ancoragem que foi alocado pelo VFS durante o boot
     kfree(root_node);
 
+    g_fat32_fs_driver.root = NULL;
+
     kprintf("[FAT32] Volume desmontado com sucesso.\n");
     return 0; // Sucesso
 }
@@ -1393,7 +1400,8 @@ static int fat32_unmount_callback(vfs_node_t* root_node) {
 static vfs_filesystem_t g_fat32_fs_driver = {
     .name    = "fat32",
     .mount   = fat32_mount_callback,
-    .unmount = fat32_unmount_callback
+    .unmount = fat32_unmount_callback,
+    .root    = NULL
 };
 
 /**
