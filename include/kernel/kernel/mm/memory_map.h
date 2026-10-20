@@ -50,8 +50,12 @@
  * Posicionado estrategicamente a meio do espaço canónico inferior, 
  * garantindo isolamento total contra a expansão ascendente do Heap 
  * e protegendo a descida dinâmica da Pilha (Stack) do utilizador.
+ * Mapeado no índice 224 da PML4, Índice 0 da PDPT, Índice 0 da PD e Índice 0 da PT.
+ * Limite de 256GB no índice 224 da PML4, Índice 511 da PDPT, Índice 511 da PD e Índice 511 da PT.
  */
 #define USER_SHM_VIRTUAL_BASE       0x0000700000000000UL
+#define USER_SHM_VIRTUAL_LIMIT      0x0000704000000000UL
+#define USER_SHM_MAX_PAGES          (USER_SHM_VIRTUAL_LIMIT - USER_SHM_VIRTUAL_BASE) / PAGE_SIZE
 
 /*
  * TOPO DA PILHA DO UTILIZADOR (USER STACK TOP)

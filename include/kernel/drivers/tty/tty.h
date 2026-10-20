@@ -18,7 +18,7 @@
 #include <kernel/kernel/core/spinlock.h>
 
 /* Tamanho do Buffer Circular do TTY (Deve ser potência de 2 para otimização) */
-#define TTY_BUF_SIZE 256
+#define TTY_BUF_SIZE 4096
 
 /* Flags de Configuração de Linha (Estilo termios do POSIX) */
 #define TTY_ICANON  0x00000001  /* Ativa Modo Canónico (Orientado a Linhas) */
@@ -144,5 +144,11 @@ int tty_pop_output(struct tty_device *tty, char *out_c);
 
 void tty_init_video_context(struct tty_device* tty, unsigned int pages);
 void tty_putc_backbuffer(struct tty_device *tty, char c);
+
+
+int tty_write_to_in_queue(struct tty_device* tty, const char* buf, int size);
+int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size);
+int tty_write_to_out_queue(struct tty_device* tty, const char* buf, int size);
+int tty_read_from_out_queue(struct tty_device* tty, char* buf, int size);
 
 #endif /* _TTY_H_ */

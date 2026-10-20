@@ -28,6 +28,7 @@
 #include "lib/stdio.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pool.h"
+#include "kernel/mm/shm.h"
 
 
 #endif /* KLIB_H */

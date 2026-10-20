@@ -21,6 +21,7 @@
 #include <kernel/arch/x86_64/mm/vmm.h>
 #include <kernel/kernel/mm/heap.h>
 #include <kernel/kernel/mm/pool.h>
+#include <kernel/kernel/mm/shm.h>
 #include <kernel/arch/x86_64/cpu/cpu.h>
 #include <kernel/kernel/syscall/syscall.h>
 #include <kernel/arch/x86_64/cpu/idt.h>
@@ -142,6 +143,7 @@ void kernel_main(BOOT_INFO *boot_info)
     vmm_init();
     kheap_init();
     pool_init();
+    shm_init();
 
     /*
      * 5. Inicializando estruturas Per-CPU (CpuDataBlock) para o BSP
@@ -302,10 +304,6 @@ void kernel_main(BOOT_INFO *boot_info)
     if (kmod_load_by_name("/mnt/hd0/mods/sample_mod.ko", NULL) != 0)
     {
         kprintf("[kmod]: Erro critico: Falha ao carregar o modulo '/mnt/hd0/mods/sample_mod.ko'.\n");
-        /*
-         * Podes adicionar aqui um 'panic("Falha na carga do modulo essencial");'
-         * caso este driver fosse obrigatório para o boot do Sirius_Education.
-         */
     }
     else
     {
@@ -387,7 +385,7 @@ void kernel_main(BOOT_INFO *boot_info)
 
     char *argv[] = {"/mnt/hd0/apps/bin/sh",};
     kprintf("[BOOT] Lancando o processo do user space '%s'...\n", argv[0]);
-    //elf_load_and_create_process(argv[0], 1, argv, 0);
+    elf_load_and_create_process(argv[0], 1, argv, 0);
     
 
     //vfs_print_tree("/");

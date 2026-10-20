@@ -1,6 +1,29 @@
 #include "libssh.h"
 #include "tweetnacl.h"
 
+static void ssh_inbound_lock_acquire(ssh_session_t* session) {
+    while (__sync_lock_test_and_set(&session->inbound_lock, 1));
+}
+
+static void ssh_inbound_lock_release(ssh_session_t* session) {
+    __sync_lock_release(&session->inbound_lock);
+}
+
+static void ssh_outbound_lock_acquire(ssh_session_t* session) {
+    while (__sync_lock_test_and_set(&session->outbound_lock, 1));
+}
+
+static void ssh_outbound_lock_release(ssh_session_t* session) {
+    __sync_lock_release(&session->outbound_lock);
+}
+
+void ssh_lock_acquire(ssh_session_t* session) {
+    while (__sync_lock_test_and_set(&session->user_lock, 1));
+}
+
+void ssh_lock_release(ssh_session_t* session) {
+    __sync_lock_release(&session->user_lock);
+}
 
 void ssh_dh_generate_keys(ssh_dh_ctx_t* ctx)
 {
@@ -17,18 +40,15 @@ void ssh_dh_compute_shared_secret(ssh_dh_ctx_t* ctx)
 void ssh_init_session(ssh_session_t* session, int fd, ssh_read_fn r_fn, ssh_write_fn w_fn)
 {
     if (!session) return;
+    ssh_memset(session, 0, sizeof(ssh_session_t));
     session->client_fd = fd;
     session->read_hardware = r_fn;
     session->write_hardware = w_fn;
     session->state = SSH_STATE_EXCHANGE_BANNERS;
-    session->encrypted = 0;
-    session->client_kexinit_len = 0;
-    session->server_kexinit_len = 0;
-    session->session_id_initialized = 0;
     crypto_sign_keypair(session->host_pubkey, session->host_privkey);
 }
 
-int ssh_send_packet(ssh_session_t *session,unsigned char msg_type,const unsigned char *payload,unsigned long payload_len)
+int ssh_send_packet(ssh_session_t *session, unsigned char msg_type, const unsigned char *payload, unsigned long payload_len)
 {
     if (!session || !session->write_hardware)
         return -1;
@@ -39,21 +59,25 @@ int ssh_send_packet(ssh_session_t *session,unsigned char msg_type,const unsigned
     unsigned long block_size = session->encrypted ? 16 : 8;
     unsigned long mac_len = session->encrypted ? 32 : 0;
 
-    if (payload_len > sizeof(session->tx_buffer) - 64)
+    if (payload_len > SSH_MAX_PACKET_LEN - 64)
         return -1;
 
-    unsigned long base_len = 4 + 1 + 1 + payload_len;
-    unsigned long padding_len = (block_size - (base_len % block_size)) % block_size;
-
-    if (padding_len < SSH_MIN_PAD_LEN)
+    unsigned long total_sem_padding = 4 + 1 + 1 + payload_len;
+    unsigned long padding_len = block_size - (total_sem_padding % block_size);
+    
+    while (padding_len < SSH_MIN_PAD_LEN)
+    {
         padding_len += block_size;
+    }
 
     unsigned long packet_length_ul = 1 + 1 + payload_len + padding_len;
     unsigned long packet_bytes = 4 + packet_length_ul;
 
     if (packet_length_ul > 0xFFFFFFFFUL ||
-        packet_bytes + mac_len > sizeof(session->tx_buffer))
+        packet_bytes + mac_len > SSH_MAX_PACKET_LEN)
         return -1;
+
+    ssh_outbound_lock_acquire(session);
 
     session->tx_buffer[0] = (unsigned char)(packet_length_ul >> 24);
     session->tx_buffer[1] = (unsigned char)(packet_length_ul >> 16);
@@ -70,10 +94,10 @@ int ssh_send_packet(ssh_session_t *session,unsigned char msg_type,const unsigned
         &session->tx_buffer[6 + payload_len],
         padding_len);
 
-    unsigned char mac[32];
-
     if (session->encrypted)
     {
+        unsigned char mac[32];
+
         ssh_hmac_sha256_packet(
             session->outbound_mac_key,
             session->outbound_sequence,
@@ -92,6 +116,11 @@ int ssh_send_packet(ssh_session_t *session,unsigned char msg_type,const unsigned
             session->tx_buffer[packet_bytes + i] = mac[i];
     }
 
+    session->outbound_sequence++;
+
+    // Barreira de memória para garantir consistência de cache antes do I/O de hardware
+    __asm__ __volatile__("" ::: "memory");
+
     unsigned long total_wire_bytes = packet_bytes + mac_len;
     unsigned long bytes_sent = 0;
 
@@ -103,16 +132,19 @@ int ssh_send_packet(ssh_session_t *session,unsigned char msg_type,const unsigned
             total_wire_bytes - bytes_sent);
 
         if (result <= 0 ||
-            (unsigned long)result > total_wire_bytes - bytes_sent)
-            return -3;
+            (unsigned long)result > total_wire_bytes - bytes_sent) {
+                ssh_outbound_lock_release(session);
+                return -3;
+            }
 
         bytes_sent += (unsigned long)result;
     }
 
-    session->outbound_sequence++;
+    ssh_outbound_lock_release(session);
 
     return (int)bytes_sent;
 }
+
 
 int ssh_build_kexdh_reply(ssh_session_t *session, unsigned char *response, unsigned long max_len, unsigned long *out_len)
 {
@@ -223,7 +255,7 @@ int ssh_build_kexdh_reply(ssh_session_t *session, unsigned char *response, unsig
 
     // Calcular Exchange Hash (H)
     unsigned char exchange_hash[32];
-    if (crypto_hash_sha256_tweet(exchange_hash, h_buffer, h_idx) != 0)
+    if (ssh_crypto_hash_sha256(exchange_hash, h_buffer, h_idx) != 0)
         return -1;
 
     for(int i = 0; i < 32; i++) {
@@ -242,6 +274,11 @@ int ssh_build_kexdh_reply(ssh_session_t *session, unsigned char *response, unsig
             session->dh_ctx.shared_k,session->exchange_hash,session->session_id,
             session->outbound_key,session->outbound_iv,session->outbound_mac_key) != 0)
         return -1;
+
+     /*if (ssh_derive_inbound_keys(
+            session->dh_ctx.shared_k, session->exchange_hash, session->session_id,
+            session->inbound_key, session->inbound_iv, session->inbound_mac_key) != 0)
+        return -1;*/
 
     // Assinar o Hash H
     unsigned char signed_msg[128];
@@ -449,6 +486,7 @@ int ssh_process_kexdh_init(ssh_session_t *session, const unsigned char *payload,
     {
         return -5;
     }
+
     int ret = ssh_send_packet(session, SSH_MSG_KEXDH_REPLY, response, response_len);
     if (ret <= 0)
         return -6;
@@ -473,13 +511,19 @@ int ssh_process_newkeys(ssh_session_t *session, const unsigned char *payload, un
     if (session->state != SSH_STATE_EXPECT_NEWKEYS)
         return -2;
 
-    ssh_crypto_enable_inbound_decryption(session);
+    ssh_outbound_lock_acquire(session);
     
+    ssh_crypto_enable_inbound_decryption(session);
+
     session->encrypted = 1;
+
     session->state = SSH_STATE_AUTH_STAGE;
+
+    ssh_outbound_lock_release(session);
 
     return 0;
 }
+
 
 int ssh_process_service_request(ssh_session_t *session,const unsigned char *payload,unsigned long payload_len)
 {
@@ -624,7 +668,7 @@ int ssh_process_userauth_request(ssh_session_t *session,const unsigned char *pay
         ssh_memcmp(&payload[offset], valid_password, password_len) == 0 &&
         authenticated)
     {
-        unsigned char empty_payload[1];
+        unsigned char empty_payload[1] = {0};
 
         session->state = SSH_STATE_AUTH_STAGE;
 
@@ -654,6 +698,86 @@ authentication_failure:
 
     if (ret <= 0)
         return -14;
+
+    return 0;
+}
+
+int ssh_process_channel_refresh(ssh_session_t *session, const unsigned char *payload, unsigned long payload_len)
+{
+    unsigned long offset = 0;
+    unsigned int recipient_channel;
+    unsigned long request_type_len;
+    unsigned char want_reply;
+    
+    unsigned char response_payload[4];
+    int ret;
+
+    if (!session)
+        return -1;
+
+    if (!payload || payload_len < 9)
+        return -2;
+
+    recipient_channel = ((unsigned int)payload[offset] << 24) |
+                        ((unsigned int)payload[offset + 1] << 16) |
+                        ((unsigned int)payload[offset + 2] << 8) |
+                        (unsigned int)payload[offset + 3];
+    offset += 4;
+
+    request_type_len = ((unsigned long)payload[offset] << 24) |
+                       ((unsigned long)payload[offset + 1] << 16) |
+                       ((unsigned long)payload[offset + 2] << 8) |
+                       (unsigned long)payload[offset + 3];
+    offset += 4;
+
+    if (request_type_len > payload_len - offset)
+        return -3;
+
+    const unsigned char *request_type = &payload[offset];
+    offset += request_type_len;
+
+    if (payload_len - offset < 1)
+        return -4;
+
+    want_reply = payload[offset++];
+
+    if (request_type_len == 5 && ssh_memcmp(request_type, "shell", 5) == 0)
+    {
+        session->state = SSH_STATE_CONNECTED_SHELL;
+
+        if (want_reply)
+        {
+            response_payload[0] = (unsigned char)(recipient_channel >> 24);
+            response_payload[1] = (unsigned char)(recipient_channel >> 16);
+            response_payload[2] = (unsigned char)(recipient_channel >> 8);
+            response_payload[3] = (unsigned char)recipient_channel;
+
+            ret = ssh_send_packet(session, SSH_MSG_CHANNEL_SUCCESS, response_payload, 4);
+            if (ret <= 0)
+                return -5;
+        }
+        return 0;
+    }
+    else if (request_type_len == 13 && ssh_memcmp(request_type, "window-change", 13) == 0)
+    {
+        
+        if (payload_len - offset < 8)
+            return -6;
+       
+        return 0;
+    }
+    
+    if (want_reply)
+    {
+        response_payload[0] = (unsigned char)(recipient_channel >> 24);
+        response_payload[1] = (unsigned char)(recipient_channel >> 16);
+        response_payload[2] = (unsigned char)(recipient_channel >> 8);
+        response_payload[3] = (unsigned char)recipient_channel;
+
+        ret = ssh_send_packet(session, SSH_MSG_CHANNEL_FAILURE, response_payload, 4);
+        if (ret <= 0)
+            return -7;
+    }
 
     return 0;
 }
@@ -698,6 +822,8 @@ int ssh_process_channel_open(ssh_session_t *session,const unsigned char *payload
                      ((unsigned int)payload[offset + 2] << 8) |
                      (unsigned int)payload[offset + 3];
     offset += 4;
+
+    session->client_channel_id = remote_channel;
 
     remote_window = ((unsigned int)payload[offset] << 24) |
                     ((unsigned int)payload[offset + 1] << 16) |
@@ -828,6 +954,8 @@ int ssh_process_packet(ssh_session_t *session)
     if (!session || !session->read_hardware)
         return -1;
 
+    ssh_inbound_lock_acquire(session);
+
     unsigned long header_bytes = 0;
     unsigned long block_size = 4;
 
@@ -839,8 +967,10 @@ int ssh_process_packet(ssh_session_t *session)
             block_size - header_bytes
         );
 
-        if (res <= 0 || (unsigned long)res > block_size - header_bytes)
+        if (res <= 0 || (unsigned long)res > block_size - header_bytes) {
+            ssh_inbound_lock_release(session);
             return -2;
+        }
 
         header_bytes += (unsigned long)res;
     }
@@ -864,7 +994,6 @@ int ssh_process_packet(ssh_session_t *session)
             ((unsigned int)decrypted_header[1] << 16) |
             ((unsigned int)decrypted_header[2] << 8) |
             (unsigned int)decrypted_header[3];
-
     }
     else
     {
@@ -875,19 +1004,22 @@ int ssh_process_packet(ssh_session_t *session)
             (unsigned int)session->rx_buffer[3];
     }
 
-    if (packet_length < 6 ||
-        packet_length > SSH_MAX_PACKET_LEN - 4)
+    if (packet_length < 6 || packet_length > SSH_MAX_PACKET_LEN - 4)
     {
+        ssh_inbound_lock_release(session);
         return -4;
     }
 
     unsigned long total_required = (unsigned long)packet_length + 4;
 
-    if (total_required > sizeof(session->rx_buffer))
+    if (total_required > sizeof(session->rx_buffer)) {
+        ssh_inbound_lock_release(session);
         return -4;
+    }
 
     if (session->encrypted && (total_required % 16 != 0))
     {
+        ssh_inbound_lock_release(session);
         return -4;
     }
 
@@ -901,9 +1033,10 @@ int ssh_process_packet(ssh_session_t *session)
             total_required - packet_bytes
         );
 
-        if (res <= 0 ||
-            (unsigned long)res > total_required - packet_bytes)
+        if (res <= 0 || (unsigned long)res > total_required - packet_bytes) {
+            ssh_inbound_lock_release(session);
             return -5;
+        }
 
         packet_bytes += (unsigned long)res;
     }
@@ -916,64 +1049,82 @@ int ssh_process_packet(ssh_session_t *session)
             total_required
         );
 
-        unsigned char mac[32];
+        unsigned char remote_mac[32];
         unsigned long mac_bytes = 0;
 
-        while (mac_bytes < sizeof(mac))
+        while (mac_bytes < sizeof(remote_mac))
         {
             long res = session->read_hardware(
                 session->client_fd,
-                &mac[mac_bytes],
-                sizeof(mac) - mac_bytes
+                &remote_mac[mac_bytes],
+                sizeof(remote_mac) - mac_bytes
             );
 
-            if (res <= 0 ||
-                (unsigned long)res > sizeof(mac) - mac_bytes)
+            if (res <= 0 || (unsigned long)res > sizeof(remote_mac) - mac_bytes) {
+                ssh_inbound_lock_release(session);
                 return -7;
+            }
 
             mac_bytes += (unsigned long)res;
         }
+
+        unsigned char computed_mac[32];
+        ssh_hmac_sha256_packet(
+            session->inbound_mac_key,
+            session->inbound_sequence,
+            session->rx_buffer,
+            total_required,
+            computed_mac
+        );
+
+        if (ssh_memcmp(remote_mac, computed_mac, 32) != 0) {
+            ssh_inbound_lock_release(session);
+            return -8;
+        }
     }
+
+    session->inbound_sequence++;
 
     unsigned char padding_length = session->rx_buffer[4];
     unsigned char msg_type = session->rx_buffer[5];
 
-    if (padding_length < SSH_MIN_PAD_LEN ||
-        (unsigned long)padding_length + 2 > packet_length)
+    if (padding_length < SSH_MIN_PAD_LEN || (unsigned long)padding_length + 2 > packet_length) {
+        ssh_inbound_lock_release(session);
         return -6;
+    }
 
-    unsigned long payload_len =
-        (unsigned long)packet_length - padding_length - 2;
+    unsigned long payload_len = (unsigned long)packet_length - padding_length - 2;
 
     if (msg_type == SSH_MSG_DISCONNECT)
     {
         session->state = SSH_STATE_DISCONNECTED;
+        ssh_inbound_lock_release(session);
         return 0;
     }
 
+    int ret = 0;
+
     if (msg_type == SSH_MSG_KEXINIT)
-        return ssh_process_kexinit(session,&session->rx_buffer[6],payload_len);
+        ret = ssh_process_kexinit(session, &session->rx_buffer[6], payload_len);
+    else if (msg_type == SSH_MSG_KEXDH_INIT)
+        ret = ssh_process_kexdh_init(session, &session->rx_buffer[6], payload_len);
+    else if (msg_type == SSH_MSG_NEWKEYS)
+        ret = ssh_process_newkeys(session, &session->rx_buffer[6], payload_len);
+    else if (msg_type == SSH_MSG_SERVICE_REQUEST)
+        ret = ssh_process_service_request(session, &session->rx_buffer[6], payload_len);
+    else if (msg_type == SSH_MSG_USERAUTH_REQUEST)
+        ret = ssh_process_userauth_request(session, &session->rx_buffer[6], payload_len);
+    else if (msg_type == SSH_MSG_CHANNEL_OPEN)
+        ret = ssh_process_channel_open(session, &session->rx_buffer[6], payload_len);
+    else if (msg_type == SSH_MSG_CHANNEL_REQUEST)
+        ret = ssh_process_channel_refresh(session, &session->rx_buffer[6], payload_len);
+    else if (msg_type == SSH_MSG_CHANNEL_DATA)
+        ret = 0;
 
-    if (msg_type == SSH_MSG_KEXDH_INIT)
-        return ssh_process_kexdh_init(session,&session->rx_buffer[6],payload_len);
-
-    if (msg_type == SSH_MSG_NEWKEYS)
-        return ssh_process_newkeys(session,&session->rx_buffer[6],payload_len );
-
-    if (msg_type == SSH_MSG_SERVICE_REQUEST)
-        return ssh_process_service_request(session, &session->rx_buffer[6], payload_len);
-
-    if (msg_type == SSH_MSG_USERAUTH_REQUEST)
-        return ssh_process_userauth_request(session, &session->rx_buffer[6], payload_len);
-
-    if (msg_type == SSH_MSG_CHANNEL_OPEN)
-        return ssh_process_channel_open(session, &session->rx_buffer[6], payload_len);
-
-    if (msg_type == SSH_MSG_CHANNEL_REQUEST)
-    return ssh_process_channel_request(session, &session->rx_buffer[6], payload_len);
-
-    return 0;
+    ssh_inbound_lock_release(session);
+    return ret;
 }
+
 
 int ssh_do_banner_exchange(ssh_session_t *session)
 {
@@ -1004,4 +1155,80 @@ int ssh_do_banner_exchange(ssh_session_t *session)
         return 0;
     }
     return -4;
+}
+
+int ssh_channel_poll(ssh_session_t *session)
+{
+    if (!session || !session->read_hardware || session->state != SSH_STATE_CONNECTED_SHELL)
+        return 0;
+
+    return 1;
+}
+
+int ssh_channel_read(ssh_session_t *session, void *buffer, unsigned long max_len, int timeout)
+{
+    (void)timeout;
+    if (!session || !buffer || max_len == 0)
+        return -1;
+
+    if (ssh_process_packet(session) != 0) {
+        return -1; 
+    }
+
+    unsigned char msg_type = session->rx_buffer[5];
+    if (msg_type != SSH_MSG_CHANNEL_DATA) {
+        return 0;
+    }
+
+    unsigned long data_len = ((unsigned long)session->rx_buffer[10] << 24) |
+                             ((unsigned long)session->rx_buffer[11] << 16) |
+                             ((unsigned long)session->rx_buffer[12] << 8)  |
+                             (unsigned long)session->rx_buffer[13];
+
+    if (data_len == 0) {
+        return 0;
+    }
+
+    unsigned long bytes_a_copiar = (data_len < max_len) ? data_len : max_len;
+    unsigned char *out = (unsigned char *)buffer;
+    for (unsigned long i = 0; i < bytes_a_copiar; i++) {
+        out[i] = session->rx_buffer[14 + i];
+    }
+    return (int)bytes_a_copiar;
+}
+
+int ssh_channel_write(ssh_session_t *session, const void *buffer, unsigned long len)
+{
+    if (!session || !buffer || len == 0)
+        return -1;
+    unsigned char payload[4096 + 8];
+    ssh_memset(payload, 0, sizeof(payload));
+    unsigned long p_idx = 0;
+
+    payload[p_idx++] = (unsigned char)(session->client_channel_id >> 24);
+    payload[p_idx++] = (unsigned char)(session->client_channel_id >> 16);
+    payload[p_idx++] = (unsigned char)(session->client_channel_id >> 8);
+    payload[p_idx++] = (unsigned char)session->client_channel_id;
+
+    payload[p_idx++] = (unsigned char)(len >> 24);
+    payload[p_idx++] = (unsigned char)(len >> 16);
+    payload[p_idx++] = (unsigned char)(len >> 8);
+    payload[p_idx++] = (unsigned char)len;
+
+    if (p_idx + len > sizeof(payload)) {
+        return -1; 
+    }
+
+    const unsigned char *src = (const unsigned char *)buffer;
+    for (unsigned long i = 0; i < len; i++) {
+        payload[p_idx++] = src[i];
+    }
+    
+    int result = ssh_send_packet(session, SSH_MSG_CHANNEL_DATA, payload, p_idx);
+
+    if (result < 0) {
+        return -1;
+    }
+
+    return (int)len; 
 }

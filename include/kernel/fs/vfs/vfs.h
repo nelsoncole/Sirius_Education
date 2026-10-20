@@ -19,10 +19,10 @@
 #ifndef _VFS_H_
 #define _VFS_H_
 
-#include <kernel/lib/stdint.h>
 #include <kernel/drivers/storage/block.h>
 #include <kernel/kernel.h>
 #include <kernel/lib/stddef.h>
+#include <kernel/lib/stdint.h>
 
 #define VFS_NAME_MAX 256
 
@@ -65,6 +65,9 @@ typedef struct vfs_operations {
     // Leitura e escrita baseadas em offset de bytes
     int (*read)(struct vfs_node* node, uint64_t offset, uint32_t size, void* buffer);
     int (*write)(struct vfs_node* node, uint64_t offset, uint32_t size, void* buffer);
+
+    // Controle de dispositivo e E/S especial (Adicionado)
+    int (*ioctl)(struct vfs_node* node, uint32_t cmd, unsigned long arg);
     
     // Força a sincronização de caches da RAM com o HDD/SSD
     int (*flush)(struct vfs_node* node);

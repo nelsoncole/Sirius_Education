@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <string.h>
+#include <sys/ioctl.h>
 
 
 #ifndef MAX_PATH_LEN
@@ -70,7 +71,21 @@ int open(const char *pathname, int flags, ...)
     if (_resolve_absolute_path(absolute_path, pathname) < 0) {
         return -1;
     }
-    return (int)syscall2(SYS_OPEN, (uint64_t)absolute_path, (uint64_t)flags);
+
+    uint64_t mode = 0;
+    
+    /* 
+     * Se as flags incluírem a criação de ficheiro (assumindo O_CREAT), 
+     * extraímos o modo de permissões enviado no terceiro argumento.
+     */
+    if (flags & O_CREAT) {
+        va_list args;
+        va_start(args, flags);
+        mode = (uint64_t)va_arg(args, int);
+        va_end(args);
+    }
+
+    return (int)syscall3(SYS_OPEN, (uint64_t)absolute_path, (uint64_t)flags, mode);
 }
 
 int creat(const char *pathname, mode_t mode) {
@@ -100,6 +115,19 @@ ssize_t read(int fd, void *buf, size_t count)
 ssize_t write(int fd, const void *buf, size_t count) 
 {
     return (ssize_t)syscall3(SYS_WRITE, (uint64_t)fd, (uint64_t)buf, (uint64_t)count);
+}
+
+int ioctl(int fd, unsigned long request, ...)
+{
+    va_list args;
+    void *arg;
+
+    /* Extrai o terceiro argumento opcional (...) usando stdarg */
+    va_start(args, request);
+    arg = va_arg(args, void *);
+    va_end(args);
+
+    return (int)syscall3(SYS_IOCTL, (uint64_t)fd, (uint64_t)request, (uint64_t)arg);
 }
 
 int close(int fd) 

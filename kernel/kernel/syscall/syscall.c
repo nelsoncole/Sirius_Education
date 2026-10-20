@@ -25,6 +25,7 @@
 #include <kernel/kernel/sched/clone.h>
 #include <kernel/kernel/sched/fork.h>
 #include <kernel/arch/x86_64/kapi/timer.h>
+#include <kernel/kernel/mm/memory_map.h>
 
 /*
  * REGS DE HARDWARE ESPECÍFICOS DA ARQUITETURA (x86_64 MSRs)
@@ -518,50 +519,33 @@ uint64_t sys_brk(void *addr)
  * @arg:     Ponteiro opcional para argumentos ou buffers de dados.
  */
 uint64_t sys_ioctl(int fd, unsigned long request, void *arg) {
-    // 1. Obtém a estrutura do processo que invocou a Syscall a partir do escalonador
     process_t* proc = get_current_process();
     if (!proc || fd < 0 || fd >= MAX_FILES_PER_PROCESS) {
-        return (uint64_t)-1; // EBADF: Descritor inválido
+        return (uint64_t)-1; 
     }
 
-    // 2. Extrai a estrutura física de controlo do ficheiro aberto
     vfs_file_t* file = proc->file_descriptor_table[fd];
     if (!file || !file->node) {
-        return (uint64_t)-1; // EBADF: Ficheiro não aberto
+        return (uint64_t)-1; 
     }
 
     vfs_node_t* node = file->node;
-    (void)node;
-
-    // Log de diagnóstico atómico (Mantive o teu formato original)
-    kprintf("[SCI] sys_ioctl: fd=%d, req=0x%lx, arg=0x%lx\n", fd, request, (uint64_t)arg);
-
-    // ============================================================================
+    
     // INTEGRAÇÃO CRUCIAL DA ÁRVORE DO VFS (Comando Mágico 0x1001)
-    // ============================================================================
     if (request == 0x1001) {
-        // O utilizador passa no argumento 'arg' o caminho de início (ex: "/")
         const char* start_path = (const char*)arg;
         if (!start_path) {
             start_path = "/";
         }
 
-        // Invoca de forma síncrona a tua função recursiva nativa do Kernel!
-        // Ela varre os inodes e faz o kprintf direto na tty0 ativa.
         vfs_print_tree(start_path);
-        return 0; // Sucesso absoluto
+        return 0; 
     }
 
-    // ============================================================================
-    // ROTEAMENTO POLIMÓRFICO PADRÃO PARA DRIVERS (PTY, TTY, AHCI, ETC.)
-    // ============================================================================
-    // Se o driver do dispositivo (como o teu vfs_pty.c) tiver a operação ioctl ativa:
-    /*if (node->ops && node->ops->ioctl) {
-        // Encaminha a execução para o driver físico tratar as flags do hardware
-        return (uint64_t)node->ops->ioctl(node, request, arg);
-    }*/
+    if (node->ops && node->ops->ioctl) {
+        return (uint64_t)node->ops->ioctl(node, (uint32_t)request, (unsigned long)arg);
+    }
 
-    // Se o driver não suportar comandos ioctl, retorna erro de operação não suportada (ENOTTY)
     return (uint64_t)-1; 
 }
 
@@ -704,21 +688,57 @@ uint64_t sys_execve(const char *pathname, char *const argv[], char *const envp[]
 }
 
 
+#define MAP_SHARED      0x01    // Patilha o mapeamento. Alterações são visíveis para outros e gravadas no ficheiro.
+#define MAP_PRIVATE     0x02    // Mapeamento privado (Copy-on-Write). As alteracoes Nao sao gravadas no ficheiro.
+#define MAP_ANONYMOUS   0x20    // Mapeamento anonimo. A memoria nao e ligada a nenhum ficheiro (ignora o argumento fd).
+#define MAP_ANON        MAP_ANONYMOUS // Sinonimo para compatibilidade historica.
+#define MAP_FIXED       0x10    // Forca o kernel a usar extamente o endereco virual ('addr') fornecido pelo utilizador.
+#define MAP_FAILED      ((void *)-1UL)
+
+#define PROT_NONE       0x0     // A pagina nao pode ser acessada (gera um page fault imediato se houver tentativa de acesso).
+#define PROT_READ       0x1     // A pagina pode ser lida
+#define PROT_WRITE      0x2     // A pagina pode ser escrita
+#define PROT_EXEC       0x4     // A pagina pode conter codigo para ser executado pelo CPU
+
+#define PAGE_PRESENT    0x1 // Bit 0: Página presente na RAM
+#define PAGE_WRITABLE   0x2 // Bit 1: Permissão de Escrita (Read/Write)
+#define PAGE_USER       0x4
+
 uint64_t sys_mmap(void *addr, size_t length, int prot, int flags, int fd, int64_t offset) 
 {
-    kprintf("[SCI] sys_mmap: addr=0x%lx, len=%lu, prot=%d, flags=%d\n", (uint64_t)addr, length, prot, flags);
+    if (length == 0) {
+        return -1UL;
+    }
+
+    if (!(flags & MAP_SHARED)) {
+        return -1UL;
+    }
+
+    if(addr == NULL) {
+
+    }
+    else if ((unsigned long)addr >= USER_SHM_VIRTUAL_BASE  && (unsigned long)addr + length <= USER_SHM_VIRTUAL_LIMIT)
+    {
+
+    }
+
+    int user_flags = prot & PROT_READ ? PAGE_PRESENT : 0;
+    user_flags |= prot & PROT_WRITE ? (PAGE_PRESENT | PAGE_WRITABLE) : 0;
     
-    /* TODO: Alocar páginas virtuais no espaço de paginação do utilizador */
-    (void)addr; (void)prot; (void)flags; (void)fd; (void)offset; (void)length;
-    return 0;
+    void *m = shm_alloc(length, user_flags | PAGE_USER);
+    if (m == NULL) {
+        return -1UL;
+    }
+
+    return (uint64_t)m;
+    
+    (void)prot; (void)fd; (void)offset;
 }
 
 uint64_t sys_munmap(void *addr, size_t length) 
-{
-    kprintf("[SCI] sys_munmap: Libertar addr=0x%lx, len=%lu\n", (uint64_t)addr, length);
+{   
+    shm_free(addr, length);
     
-    /* TODO: Desmapear as páginas e atualizar o TLB */
-    (void)addr; (void)length;
     return 0;
 }
 

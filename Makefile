@@ -71,6 +71,7 @@ C_OBJ := \
 	$(BUILD_DIR)/pmm.o \
 	$(BUILD_DIR)/heap.o \
 	$(BUILD_DIR)/pool.o \
+	$(BUILD_DIR)/shm.o \
 	$(BUILD_DIR)/brk.o \
 	$(BUILD_DIR)/acpi.o \
 	$(BUILD_DIR)/timer.o \
@@ -312,6 +313,9 @@ $(BUILD_DIR)/heap.o: $(KERNEL_DIR)/mm/heap.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/pool.o: $(KERNEL_DIR)/mm/pool.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/shm.o: $(KERNEL_DIR)/mm/shm.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/brk.o: $(KERNEL_DIR)/mm/brk.c | $(BUILD_DIR)

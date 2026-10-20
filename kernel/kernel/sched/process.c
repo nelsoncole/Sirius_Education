@@ -459,6 +459,9 @@ int process_flush_user_space(uint64_t pml4_phys)
     // Limpa apenas as primeiras 256 entradas (User Space)
     for (int i = 0; i < 256; i++) 
     {
+        // o 224 e a regiao de memoria compartilhada
+        if(i == 224) continue;
+
         /* GARANTIA JIT: Remapeia o PML4 na Janela 2 a cada ciclo para limpar resíduos de TLB */
         PML4_TABLE* pml4 = (PML4_TABLE*)vmm_scratch_map_internal(pml4_phys, 2);
 

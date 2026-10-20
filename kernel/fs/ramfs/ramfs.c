@@ -55,6 +55,7 @@ vfs_operations_t g_ramfs_ops = {
     .close   = ramfs_close,
     .read    = ramfs_read,
     .write   = ramfs_write,
+    .ioctl   = NULL,
     .flush   = ramfs_flush,
     .finddir = ramfs_finddir,
     .readdir = ramfs_readdir,

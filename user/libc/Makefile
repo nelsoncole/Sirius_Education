@@ -18,7 +18,7 @@ AR      := ar
 RANLIB  := ranlib
 
 # 2. Flags de Compilação para Espaço de Utilizador Isolado (Ring 3)
-CFLAGS  := -Wall -Wextra -m64 -nostdinc -ffreestanding -I./include -O2
+CFLAGS  := -Wall -Wextra -m64 -O2 -nostdinc -ffreestanding -I./include
 ASMFLAGS:= -f elf64
 
 # 3. Nome da Biblioteca Alvo de Saída

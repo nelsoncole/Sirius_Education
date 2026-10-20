@@ -32,6 +32,7 @@ static int tfs_pty_master_read(vfs_node_t* node, uint64_t offset, uint32_t size,
 static int tfs_pty_master_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
 static int tfs_pty_replica_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
 static int tfs_pty_replica_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
+static int tfs_ptmx_ioctl(vfs_node_t* node, uint32_t cmd, unsigned long arg);
 
 /* Operações VFS para o nó Fábrica /dev/ptmx */
 static vfs_operations_t g_ptmx_vfs_ops = {
@@ -39,6 +40,7 @@ static vfs_operations_t g_ptmx_vfs_ops = {
     .close   = tfs_pty_close,
     .read    = tfs_pty_master_read,
     .write   = tfs_pty_master_write,
+    .ioctl   = tfs_ptmx_ioctl,
     .flush   = NULL, .finddir = NULL, .readdir = NULL, .mkdir = NULL,
     .create  = NULL, .unlink  = NULL, .rmdir   = NULL, .stat  = NULL,
     .chmod   = NULL, .rename  = NULL
@@ -50,6 +52,7 @@ static vfs_operations_t g_pty_replica_ops = {
     .close   = tfs_pty_close,
     .read    = tfs_pty_replica_read,
     .write   = tfs_pty_replica_write,
+    .ioctl   = tfs_ptmx_ioctl,
     .flush   = NULL, .finddir = NULL, .readdir = NULL, .mkdir = NULL,
     .create  = NULL, .unlink  = NULL, .rmdir   = NULL, .stat  = NULL,
     .chmod   = NULL, .rename  = NULL
@@ -109,6 +112,8 @@ static pty_pair_t* vfs_pty_allocate_internal(void) {
     if (!pair) return NULL;
     memset(pair, 0, sizeof(pty_pair_t));
 
+    spin_lock_init(&pair->lock);
+
     pair->replica_tty = pty_create_tty_instance();
     if (!pair->replica_tty) {
         kfree(pair);
@@ -154,7 +159,6 @@ static int tfs_ptmx_open(vfs_node_t* node, uint32_t flags) {
 
     spin_lock(&g_vfs_pty_lock);
     pair->master_open_count = 1;
-    // IMPORTANTE: Associa o par dinâmico ao nó privado desta abertura de ficheiro específica
     node->private_data = pair;
     pair->master_node = node;
     spin_unlock(&g_vfs_pty_lock);
@@ -181,7 +185,8 @@ static int tfs_pty_close(vfs_node_t* node) {
     pty_pair_t* pair = (pty_pair_t*)node->private_data;
     int destrutivel = 0;
 
-    spin_lock(&g_vfs_pty_lock);
+    // Protege o acesso aos contadores deste par específico
+    spin_lock(&pair->lock);
     if (node->ops == &g_ptmx_vfs_ops) {
         pair->master_open_count--;
     } else if (node->ops == &g_pty_replica_ops) {
@@ -191,21 +196,21 @@ static int tfs_pty_close(vfs_node_t* node) {
     if (pair->master_open_count <= 0 && pair->replica_open_count <= 0) {
         destrutivel = 1;
     }
-    spin_unlock(&g_vfs_pty_lock);
+    spin_unlock(&pair->lock);
 
     if (destrutivel) {
         kprintf("[VFS PTY] Sessao /dev/pts/%d terminada. Destruindo nos...\n", pair->id);
         
+        // Remove o nó da árvore devfs de forma segura usando o lock mestre
+        spin_lock(&g_vfs_pty_lock);
         if (g_pts_root_node && g_pts_root_node->ops && g_pts_root_node->ops->unlink) {
             char replica_name[16];
             ksprintf(replica_name, "%d", pair->id);
             g_pts_root_node->ops->unlink(g_pts_root_node, replica_name);
         }
-
-        spin_lock(&g_vfs_pty_lock);
-        if (g_active_pty_engine == pair->replica_tty)
-        {
-            g_active_pty_engine = NULL; // Devolve o teclado ao Kernel puro
+        
+        if (g_active_pty_engine == pair->replica_tty) {
+            g_active_pty_engine = NULL; 
         }
         spin_unlock(&g_vfs_pty_lock);
 
@@ -224,7 +229,8 @@ static int tfs_pty_master_read(vfs_node_t* node, uint64_t offset, uint32_t size,
     pty_pair_t* pair = (pty_pair_t*)node->private_data;
     if (!pair || !pair->replica_tty) return -1;
 
-    return tty_read(pair->replica_tty, (char*)buffer, size);
+    // REGRA DO JOGO: O Mestre lê o que o Slave colocou no canal de saída (out)
+    return tty_read_from_out_queue(pair->replica_tty, (char*)buffer, size);
 }
 
 static int tfs_pty_master_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
@@ -234,7 +240,9 @@ static int tfs_pty_master_write(vfs_node_t* node, uint64_t offset, uint32_t size
     pty_pair_t* pair = (pty_pair_t*)node->private_data;
     if (!pair || !pair->replica_tty) return -1;
 
-    return tty_write(pair->replica_tty, (const char*)buffer, size);
+
+     // REGRA DO JOGO: O Mestre injeta dados da rede no canal de entrada (in) da Réplica
+    return tty_write_to_in_queue(pair->replica_tty, (const char*)buffer, size);
 }
 
 static int tfs_pty_replica_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
@@ -244,7 +252,8 @@ static int tfs_pty_replica_read(vfs_node_t* node, uint64_t offset, uint32_t size
     pty_pair_t* pair = (pty_pair_t*)node->private_data;
     if (!pair || !pair->replica_tty) return -1;
 
-    return tty_read(pair->replica_tty, (char*)buffer, size);
+    // REGRA DO JOGO: A Réplica (Shell) consome os dados presentes no canal de entrada (in)
+    return tty_read_from_in_queue(pair->replica_tty, (char*)buffer, size);
 }
 
 /* A Replica ESCREVE (Ex: printf do Bash) direcionando síncronamente para a tty0 */
@@ -256,8 +265,8 @@ static int tfs_pty_replica_write(vfs_node_t* node, uint64_t offset, uint32_t siz
     pty_pair_t* pair = (pty_pair_t*)node->private_data;
     if (!pair || !pair->replica_tty) return -1;
 
-    // 1. Escreve no buffer interno regulamentar da PTY
-    int bytes_escritos = tty_write(pair->replica_tty, (const char*)buffer, size);
+    // 1. Escreve no buffer de saída (out) para que o mestre (SSHD) possa ler via master_read
+    int bytes_escritos = tty_write_to_out_queue(pair->replica_tty, (const char*)buffer, size);
 
     // 2. REGRA DO JOGO: Resolve a tty0 e bombeia síncronamente os dados nela
     vfs_node_t* tty0_node = tty_vfs_get_node_by_name("tty0");
@@ -274,6 +283,23 @@ static int tfs_pty_replica_write(vfs_node_t* node, uint64_t offset, uint32_t siz
     }
 
     return bytes_escritos;
+}
+
+static int tfs_ptmx_ioctl(vfs_node_t* node, uint32_t cmd, unsigned long arg) {
+    if (!node || !node->private_data) return -1;
+
+    pty_pair_t* pair = (pty_pair_t*)node->private_data;
+
+    if (cmd == TIOCGPTN) {
+        
+        unsigned int* user_pty_num = (unsigned int*)arg;
+        if (!user_pty_num) return -1;
+        
+        *user_pty_num = pair->id;
+        return 0;
+    }
+
+    return -1; // Comando não implementado/suportado
 }
 
 /**

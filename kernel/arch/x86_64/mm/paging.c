@@ -529,15 +529,11 @@ setup_paging(
 
         unsigned long pt_index = (virtual_addr >> 12) & 0x1FF;
 
-
         /*
          * Endereço físico da PT.
          */
 
-        unsigned long current_pt_physical =
-            PT_PHYSICAL +
-            pt_number * PAGE_SIZE;
-
+        unsigned long current_pt_physical = PT_PHYSICAL + pt_number * PAGE_SIZE;
 
         /*
          * ====================================================
@@ -550,9 +546,7 @@ setup_paging(
         pd_video[pd_index].us = 0;
         pd_video[pd_index].ps = 0;
 
-        pd_video[pd_index].phy_addr_pt =
-            current_pt_physical >> 12;
-
+        pd_video[pd_index].phy_addr_pt = current_pt_physical >> 12;
 
         /*
          * ====================================================
@@ -560,10 +554,7 @@ setup_paging(
          * ====================================================
          */
 
-        unsigned long pt_entry =
-            (pt_number * 512) +
-            pt_index;
-
+        unsigned long pt_entry = (pt_number * 512) + pt_index;
 
         pt[pt_entry].p  = 1;
         pt[pt_entry].rw = 1;

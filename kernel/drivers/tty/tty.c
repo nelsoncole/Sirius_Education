@@ -10,7 +10,7 @@
  *   Created Date: 14/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 23/09/2026
+ *  Modified Date: 17/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -517,3 +517,134 @@ void tty_putc_backbuffer_X(struct tty_device *tty, char c) {
     }
 }
 
+/* ============================================================================
+ *               APIs de Manipulação de Filas Cruzadas para PTYs
+ * ============================================================================ */
+
+/* Injeta dados no buffer de Entrada (Mestre escreve -> Réplica vai ler) */
+int tty_write_to_in_queue(struct tty_device* tty, const char* buf, int size) {
+    if (!tty || !buf || size == 0) return 0;
+    
+    spin_lock(&tty->lock);
+    int escritos = 0;
+    for (int i = 0; i < size; i++) {
+        char c = buf[i];
+
+        if (c == ASCII_CR) c = ASCII_NL;
+
+        int next = (tty->in_head + 1) % TTY_BUF_SIZE;
+        if (next == tty->in_tail) break; // Fila cheia
+        
+        tty->input_buf[tty->in_head] = c;
+        tty->in_head = next;
+        tty->raw_count++;
+        escritos++;
+
+        if (tty->c_lflag & TTY_ECHO) {
+            tty_put_queue(tty, c);
+        }
+
+        if (tty->c_lflag & TTY_ICANON) {
+            if (c == ASCII_NL) {
+                tty->lines_available++; // Incrementa estritamente por cada \n real que entra
+            }
+        } else {
+            tty->lines_available++; 
+        }
+    }
+    spin_unlock(&tty->lock);
+    return escritos;
+}
+
+/* Consome dados do buffer de Entrada (Réplica/Shell lê o que o Mestre injetou) */
+int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size) {
+    if (!tty || !buf || size == 0) return 0;
+
+    /* Loop de Bloqueio Passivo: Aguarda tráfego válido do mestre */
+    while (1) {
+        spin_lock(&tty->lock);
+        // Em modo canónico, só acorda se houver pelo menos uma linha inteira (\n) disponível
+        if ((tty->c_lflag & TTY_ICANON) && tty->lines_available > 0) {
+            spin_unlock(&tty->lock);
+            break;
+        }
+        // Em modo RAW, acorda se houver qualquer caractere cru
+        if (!(tty->c_lflag & TTY_ICANON) && tty->raw_count > 0) {
+            spin_unlock(&tty->lock);
+            break;
+        }
+        spin_unlock(&tty->lock);
+        __asm__ __volatile__("pause");
+    }
+
+    spin_lock(&tty->lock);
+    int lidos = 0;
+
+    while (tty->in_tail != tty->in_head && lidos < size) {
+        char c = tty->input_buf[tty->in_tail];
+        buf[lidos++] = c;
+        
+        tty->in_tail = (tty->in_tail + 1) % TTY_BUF_SIZE;
+        tty->raw_count--;
+
+        if (tty->c_lflag & TTY_ICANON) {
+            if (c == ASCII_NL) {
+                if (tty->lines_available > 0) {
+                    tty->lines_available--; // Consumiu exatamente uma linha completa
+                }
+                break; // POSIX determina paragem estrita no fim da linha atual
+            }
+        } else {
+            if (tty->lines_available > 0) tty->lines_available--;
+        }
+    }
+
+    // REMOVIDO COMPLETAMENTE: O bloco problemático de recontagem foi eliminado.
+    
+    spin_unlock(&tty->lock);
+    return lidos;
+}
+
+
+/* Injeta dados no buffer de Saída (Réplica/Shell escreve -> Mestre vai ler) */
+int tty_write_to_out_queue(struct tty_device* tty, const char* buf, int size) {
+    if (!tty || !buf || size == 0) return 0;
+    
+    spin_lock(&tty->lock);
+    int escritos = 0;
+    for (int i = 0; i < size; i++) {
+        int next = (tty->out_head + 1) % TTY_BUF_SIZE;
+        if (next == tty->out_tail) break; 
+        
+        tty->output_buf[tty->out_head] = buf[i];
+        tty->out_head = next;
+        escritos++;
+    }
+    spin_unlock(&tty->lock);
+    return escritos;
+}
+
+/* Consome dados do buffer de Saída (Mestre lê o que a Réplica/Shell escreveu) */
+int tty_read_from_out_queue(struct tty_device* tty, char* buf, int size) {
+    if (!tty || !buf || size == 0) return 0;
+
+    while (1) {
+        spin_lock(&tty->lock);
+        if (tty->out_head != tty->out_tail) {
+            spin_unlock(&tty->lock);
+            break;
+        }
+        spin_unlock(&tty->lock);
+        __asm__ __volatile__("pause");
+    }
+
+    spin_lock(&tty->lock);
+    int lidos = 0;
+
+    while (tty->out_tail != tty->out_head && lidos < size) {
+        buf[lidos++] = tty->output_buf[tty->out_tail];
+        tty->out_tail = (tty->out_tail + 1) % TTY_BUF_SIZE;
+    }
+    spin_unlock(&tty->lock);
+    return lidos;
+}

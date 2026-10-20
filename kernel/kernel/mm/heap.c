@@ -105,7 +105,7 @@ static unsigned long g_heap_current_end = KERNEL_HEAP_VIRTUAL_BASE + KERNEL_HEAP
  */
 void* kmalloc(unsigned long size) {
     if (size == 0) return (void*)0;
-
+    unsigned long phys_page = 0;
     unsigned long flags = heap_lock_irq();
 
     // Garante que o tamanho útil solicitado é sempre múltiplo estrito de 16
@@ -152,7 +152,7 @@ void* kmalloc(unsigned long size) {
          * Fornece novas páginas do PMM e injeta-as de forma contínua.
          */
         for (unsigned long offset = 0; offset < expansion_size; offset += PAGE_SIZE) {
-            unsigned long phys_page = pmm_alloc_page();
+            phys_page = pmm_alloc_page();
             
             // Se o PMM esgotar a RAM física do hardware, não há como expandir
             if (phys_page == 0)

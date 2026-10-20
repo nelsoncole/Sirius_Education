@@ -35,6 +35,7 @@ static vfs_operations_t g_tty_vfs_ops = {
     .close   = tfs_tty_close,
     .read    = tfs_tty_read,
     .write   = tfs_tty_write,
+    .ioctl   = NULL,
     .flush   = NULL,
     .finddir = NULL,
     .readdir = NULL,

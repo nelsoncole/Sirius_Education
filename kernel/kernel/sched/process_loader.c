@@ -98,12 +98,12 @@ process_t* elf_load_and_create_process(const char* path, int argc, char** argv, 
             // Monta dinamicamente a string do caminho da Réplica para o filho
             char pts_path[32];
             ksprintf(pts_path, "/dev/pts/%d", pty_id);
-
+            
             // Injeta os canais de E/S adequados ao contexto (ex: a tua nova PTY)
             process_init_standard_io(proc, pts_path);
-
-            ksprintf(proc->pwd, "/mnt/hd0");
         }
+
+        ksprintf(proc->pwd, "/mnt/hd0");
 
         // ATIVAÇÃO: Esta função muda o estado para PROCESS_READY e insere-o na RunQueue
         scheduler_ready_process(proc);

@@ -16,7 +16,6 @@
  * ============================================================================
  */
 
-#include <kernel/arch/x86_64/mm/vmm.h>
 #include <kernel/kernel/mm/pmm.h>
 #include <kernel/kpaging.h>
 #include <kernel/kvmm.h>
@@ -126,10 +125,10 @@ void* pool_alloc(size_t size) {
         // vmm_map_page já trata do mapeamento e da invalidação da TLB internamente
         vmm_map_page(pml4, va, pa, PAGE_PRESENT | PAGE_WRITABLE);
     }
+    
     // 3. Sinaliza a ocupação no bitmap
     pool_set_bits(start_bit, num_pages);
-
-
+    
     return (void*)base_va;
 }
 

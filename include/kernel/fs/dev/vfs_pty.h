@@ -11,7 +11,7 @@
  *   Created Date: 24/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 22/09/2026
+ *  Modified Date: 17/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -23,6 +23,8 @@
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/drivers/tty/tty.h>
 
+#define TIOCGPTN 0x5430 // Comando padrão para obter o número da PTY
+
 /* Estrutura de acoplamento dinâmico para ligar o par Master/Replica */
 typedef struct pty_pair {
     int id;
@@ -33,6 +35,8 @@ typedef struct pty_pair {
     // Controlo de referências para libertação de memória segura [SMP SAFE]
     int master_open_count;
     int replica_open_count;
+
+    spinlock_t lock;                 // Lock privado da instância [SMP FINE-GRAINED]
 } pty_pair_t;
 
 

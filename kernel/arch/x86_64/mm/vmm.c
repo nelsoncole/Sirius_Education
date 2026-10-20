@@ -9,7 +9,7 @@
  *   Created Date: 30/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 27/09/2026
+ *  Modified Date: 18/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -20,7 +20,15 @@
 #include <kernel/kernel/core/panic.h>
 #include <kernel/klib.h>
 
+volatile int vmm_lock = 0;
 
+static void vmm_lock_acquire(void) {
+    while (__sync_lock_test_and_set(&vmm_lock, 1));
+}
+
+static void vmm_lock_release(void) {
+    __sync_lock_release(&vmm_lock);
+}
 /*
  * ============================================================================
  * CONFIGURAÇÃO E INICIALIZAÇÃO DO GERENCIADOR VIRTUAL (VMM SETUP)
@@ -31,6 +39,7 @@
  * dos 2 MB regulamentares para o Heap estável do sistema operativo.
  */
 void vmm_init(void) {
+    vmm_lock = 0;
     // 1. Ativa a infraestrutura da Janela Temporária de 4 KB
     vmm_scratch_setup();
 
@@ -91,6 +100,7 @@ void vmm_switch_pml4(unsigned long pml4_phys) {
  *              - Bit 63      : No-Execute (1 = Impede execução de código/NX).
  */
 void vmm_map_page(PML4_TABLE* pml4, unsigned long virt, unsigned long phys, unsigned long flags) {
+    vmm_lock_acquire();
     unsigned long pml4_idx = GET_PML4_INDEX(virt);
     unsigned long pdpt_idx = GET_PDPT_INDEX(virt);
     unsigned long pd_idx   = GET_PD_INDEX(virt);
@@ -185,6 +195,8 @@ void vmm_map_page(PML4_TABLE* pml4, unsigned long virt, unsigned long phys, unsi
 
     // Sincroniza imediatamente a cache MMU do processador para o endereço virtual alvo
     __asm__ __volatile__("invlpg (%0)" :: "r"(virt) : "memory");
+
+    vmm_lock_release();
 }
 
 /*
@@ -194,28 +206,41 @@ void vmm_map_page(PML4_TABLE* pml4, unsigned long virt, unsigned long phys, unsi
  * ao PMM e limpa as referências. Força o flush da TLB imediatamente.
  */
 void vmm_unmap_page(PML4_TABLE* pml4, unsigned long virt) {
+    vmm_lock_acquire();
     unsigned long pml4_idx = GET_PML4_INDEX(virt);
     unsigned long pdpt_idx = GET_PDPT_INDEX(virt);
     unsigned long pd_idx   = GET_PD_INDEX(virt);
     unsigned long pt_idx   = GET_PT_INDEX(virt);
 
     // 1. Verifica se a PDPT existe
-    if (!pml4[pml4_idx].p) return;
+    if (!pml4[pml4_idx].p){
+        return;
+        vmm_lock_release();
+    }
     unsigned long pdpt_phys = (unsigned long)pml4[pml4_idx].phy_addr_pdpt << 12;
     
     // 2. Verifica se o PD existe
     PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys, 0);
-    if (!pdpt[pdpt_idx].p) return;
+    if (!pdpt[pdpt_idx].p) {
+        return;
+        vmm_lock_release();
+    } 
     unsigned long pd_phys = (unsigned long)pdpt[pdpt_idx].phy_addr_pd << 12;
 
     // 3. Verifica se a PT existe
     PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys, 0);
-    if (!pd[pd_idx].p) return;
+    if (!pd[pd_idx].p){
+        return;
+        vmm_lock_release();
+    }
     unsigned long pt_phys = (unsigned long)pd[pd_idx].phy_addr_pt << 12;
 
     // 4. Mapeia a PT final para inspecionar e modificar a entrada da página
     PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys, 0);
-    if (!pt[pt_idx].p) return;
+    if (!pt[pt_idx].p){
+        return;
+        vmm_lock_release();
+    }
 
     // Recupera o endereço físico do frame antes de anular a entrada
     unsigned long phys_frame = (unsigned long)pt[pt_idx].frames << 12;
@@ -233,6 +258,8 @@ void vmm_unmap_page(PML4_TABLE* pml4, unsigned long virt) {
 
     // 5. Invalida imediatamente o cache TLB do processador para o endereço virtual alvo
     __asm__ __volatile__("invlpg (%0)" :: "r"(virt) : "memory");
+
+    vmm_lock_release();
 }
 
 /*
@@ -314,10 +341,11 @@ void* vmm_map_device(unsigned long phys_addr, unsigned long size)
  */
 unsigned long vmm_create_address_space(void)
 {
+    vmm_lock_acquire();
     /* 1. Aloca uma página física para o novo PML4 (4096 bytes) */
     unsigned long new_pml4_phys = pmm_alloc_page(); 
     if (!new_pml4_phys) 
-    {
+    {   vmm_lock_release();
         kprintf("[VMM] Erro: Falha ao alocar pagina fisica para o novo PML4.\n");
         return 0;
     }
@@ -326,11 +354,9 @@ unsigned long vmm_create_address_space(void)
     unsigned long current_pml4_phys;
     __asm__ __volatile__("mov %%cr3, %0" : "=r"(current_pml4_phys));
     
-    /* 
-     * CORREÇÃO CRÍTICA: Buffer puro de 64 bits (8 bytes por entrada).
-     * Armazena os bits brutos das 256 entradas da metade superior do Kernel.
-     */
     unsigned long long kernel_entries_buffer[256];
+    unsigned long long shm_entries_buffer[1];
+
 
     /* Mapeia o PML4 do Kernel na janela temporária para leitura */
     unsigned long long* current_pml4_raw = (unsigned long long*)vmm_scratch_map_internal(current_pml4_phys, 0);
@@ -340,6 +366,8 @@ unsigned long vmm_create_address_space(void)
     {
         kernel_entries_buffer[i - 256] = current_pml4_raw[i];
     }
+
+    shm_entries_buffer[0] = current_pml4_raw[224];
 
     /* 
      * 2. Mapeia a nova página PML4 alocada na Janela Temporária 
@@ -358,6 +386,11 @@ unsigned long vmm_create_address_space(void)
     {
         new_pml4_raw[i] = kernel_entries_buffer[i - 256];
     }
+
+    /* 5. Restaura a memoria compartilhada clonada do Kernel (Índices 224) */
+    new_pml4_raw[224] = shm_entries_buffer[0];
+
+    vmm_lock_release();
 
     /* Retorna o endereço físico perfeitamente alinhado a 4KB */
     return (new_pml4_phys & ~0xFFFUL);
@@ -379,6 +412,7 @@ unsigned long vmm_clone_address_space(unsigned long parent_pml4_phys)
     unsigned long parent_pt_phys,   child_pt_phys;
     unsigned long parent_page_phys, child_page_phys;
 
+    vmm_lock_acquire();
     /* Ponteiros tipados baseados nas tuas estruturas exatas de paging.h */
     PML4_TABLE* pml4_parent = (PML4_TABLE*)vmm_scratch_map_internal(parent_pml4_phys, 0);
     PML4_TABLE* pml4_child  = (PML4_TABLE*)vmm_scratch_map_internal(child_pml4_phys, 1);
@@ -395,11 +429,19 @@ unsigned long vmm_clone_address_space(unsigned long parent_pml4_phys)
         /* Inspeciona a entrada usando o campo de bit '.p' (Presente) */
         if (!pml4_parent[i].p) continue;
 
+        if (i == 224) {
+            continue; // ignore a memroria partilhada
+        }
+
         /* CORREÇÃO CRÍTICA: Desloca 12 bits para a esquerda para obter o endereço físico real */
         parent_pdpt_phys = (unsigned long)pml4_parent[i].phy_addr_pdpt << 12;
         
         child_pdpt_phys  = pmm_alloc_page();
-        if (!child_pdpt_phys) return 0;
+        if (!child_pdpt_phys)
+        {
+            vmm_lock_release();
+            return 0;
+        }
 
         /* Mapeia e limpa a nova PDPT física do Filho na Janela 3 para remover resíduos */
         pdpt_child = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(child_pdpt_phys, 3);
@@ -427,7 +469,11 @@ unsigned long vmm_clone_address_space(unsigned long parent_pml4_phys)
             parent_pd_phys = (unsigned long)pdpt_parent[j].phy_addr_pd << 12;
             
             child_pd_phys  = pmm_alloc_page();
-            if (!child_pd_phys) return 0;
+            if (!child_pd_phys)
+            {
+                vmm_lock_release();
+                return 0;
+            }
 
             /* Mapeia e limpa o novo PD físico do Filho na Janela 5 */
             pd_child = (PAGE_DIRECTORY*)vmm_scratch_map_internal(child_pd_phys, 5);
@@ -455,7 +501,11 @@ unsigned long vmm_clone_address_space(unsigned long parent_pml4_phys)
                 parent_pt_phys = (unsigned long)pd_parent[k].phy_addr_pt << 12;
                 
                 child_pt_phys  = pmm_alloc_page();
-                if (!child_pt_phys) return 0;
+                if (!child_pt_phys)
+                {
+                    vmm_lock_release();
+                    return 0;
+                }
 
                 /* Mapeia e limpa a nova PT física do Filho na Janela 7 */
                 pt_child = (PAGE_TABLE*)vmm_scratch_map_internal(child_pt_phys, 7);
@@ -486,7 +536,11 @@ unsigned long vmm_clone_address_space(unsigned long parent_pml4_phys)
                     parent_page_phys = (unsigned long)pt_parent[m].frames << 12;
                     
                     child_page_phys  = pmm_alloc_page();
-                    if (!child_page_phys) return 0;
+                    if (!child_page_phys)
+                    {
+                        vmm_lock_release();
+                        return 0;
+                    }
 
                     /* Grava o mapeamento final na PT do Filho, preservando as flags do Pai */
                     pt_child[m].p       = 1;
@@ -517,6 +571,7 @@ unsigned long vmm_clone_address_space(unsigned long parent_pml4_phys)
     /* Atualiza o CR3 global para validar e estabilizar todas as tabelas clonadas na MMU */
     __asm__ __volatile__("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");
 
+    vmm_lock_release();
     return child_pml4_phys;
 }
 
@@ -532,6 +587,7 @@ unsigned long vmm_clone_address_space(unsigned long parent_pml4_phys)
  * @return        O endereço físico bruto (RAM) ou 0 se não estiver mapeado.
  */
 unsigned long vmm_get_physical_address(PML4_TABLE* pml4, unsigned long page_va) {
+    vmm_lock_acquire();
     unsigned long pml4_idx = GET_PML4_INDEX(page_va);
     unsigned long pdpt_idx = GET_PDPT_INDEX(page_va);
     unsigned long pd_idx   = GET_PD_INDEX(page_va);
@@ -539,6 +595,7 @@ unsigned long vmm_get_physical_address(PML4_TABLE* pml4, unsigned long page_va) 
 
     // 1. Caminha até à PDPT
     if (!pml4[pml4_idx].p) {
+        vmm_lock_release();
         return 0; // Entrada PML4 não está presente
     }
     unsigned long pdpt_phys = (unsigned long)pml4[pml4_idx].phy_addr_pdpt << 12;
@@ -546,6 +603,7 @@ unsigned long vmm_get_physical_address(PML4_TABLE* pml4, unsigned long page_va) 
     // 2. Caminha até ao Diretorio de Páginas (PD)
     PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys, 0);
     if (!pdpt[pdpt_idx].p) {
+        vmm_lock_release();
         return 0; // Entrada PDPT não está presente
     }
     unsigned long pd_phys = (unsigned long)pdpt[pdpt_idx].phy_addr_pd << 12;
@@ -553,6 +611,7 @@ unsigned long vmm_get_physical_address(PML4_TABLE* pml4, unsigned long page_va) 
     // 3. Caminha até à Tabela de Páginas (PT)
     PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys, 0);
     if (!pd[pd_idx].p) {
+        vmm_lock_release();
         return 0; // Entrada PD não está presente
     }
     
@@ -560,6 +619,7 @@ unsigned long vmm_get_physical_address(PML4_TABLE* pml4, unsigned long page_va) 
     // o endereço físico base estaria diretamente aqui no diretório de páginas.
     if (pd[pd_idx].ps) {
         unsigned long huge_phys = (unsigned long)pd[pd_idx].phy_addr_pt << 12; // Em Huge Pages, este campo aponta para o frame de 2MB
+        vmm_lock_release();
         return huge_phys;
     }
     
@@ -568,12 +628,14 @@ unsigned long vmm_get_physical_address(PML4_TABLE* pml4, unsigned long page_va) 
     // 4. Lê o descritor de página final (PTE) da Tabela de Páginas
     PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys, 0);
     if (!pt[pt_idx].p) {
+        vmm_lock_release();
         return 0; // Página não está presente na memória
     }
 
     // Reconstrói o endereço físico base de 4KB correspondente
     unsigned long phys_frame = (unsigned long)pt[pt_idx].frames << 12;
 
+    vmm_lock_release();
     return phys_frame;
 }
 
@@ -588,6 +650,7 @@ unsigned long vmm_get_physical_address(PML4_TABLE* pml4, unsigned long page_va) 
  * @return                 O endereço físico real correspondente ou 0 (NULL).
  */
 uintptr_t vmm_get_physical(uintptr_t virtual_address) {
+    vmm_lock_acquire();
     // 1. Extrai os índices e o offset de alinhamento do endereço virtual
     unsigned long pml4_idx = GET_PML4_INDEX(virtual_address);
     unsigned long pdpt_idx = GET_PDPT_INDEX(virtual_address);
@@ -598,6 +661,7 @@ uintptr_t vmm_get_physical(uintptr_t virtual_address) {
     // 2. Acede à PML4 raiz através do endereço fixo definido pelo bootloader
     PML4_TABLE* pml4 = (PML4_TABLE*)PML4_ADDRESS;
     if (!pml4[pml4_idx].p) {
+        vmm_lock_release();
         return 0; // Estrutura ou página não presente
     }
 
@@ -605,6 +669,7 @@ uintptr_t vmm_get_physical(uintptr_t virtual_address) {
     unsigned long pdpt_phys = (unsigned long)pml4[pml4_idx].phy_addr_pdpt << 12;
     PAGE_DIRECTORY_POINTER_TABLE* pdpt = (PAGE_DIRECTORY_POINTER_TABLE*)vmm_scratch_map_internal(pdpt_phys, 0);
     if (!pdpt[pdpt_idx].p) {
+        vmm_lock_release();
         return 0;
     }
 
@@ -613,6 +678,7 @@ uintptr_t vmm_get_physical(uintptr_t virtual_address) {
     if (((unsigned long long*)pdpt)[pdpt_idx] & (1ULL << 7)) {
         unsigned long page_offset_1gb = virtual_address & 0x3FFFFFFFULL;
         unsigned long base_1gb = ((unsigned long long*)pdpt)[pdpt_idx] & 0x000FFFFFFFFFF000ULL;
+        vmm_lock_release();
         return base_1gb | page_offset_1gb;
     }
 
@@ -620,6 +686,7 @@ uintptr_t vmm_get_physical(uintptr_t virtual_address) {
     unsigned long pd_phys = (unsigned long)pdpt[pdpt_idx].phy_addr_pd << 12;
     PAGE_DIRECTORY* pd = (PAGE_DIRECTORY*)vmm_scratch_map_internal(pd_phys, 0);
     if (!pd[pd_idx].p) {
+        vmm_lock_release();
         return 0;
     }
 
@@ -629,6 +696,7 @@ uintptr_t vmm_get_physical(uintptr_t virtual_address) {
         unsigned long page_offset_2mb = virtual_address & 0x1FFFFFULL;
         // O campo phy_addr_pt numa página de 2MB guarda na verdade a base física de 2MB
         unsigned long base_2mb = (unsigned long)pd[pd_idx].phy_addr_pt << 12;
+        vmm_lock_release();
         return base_2mb | page_offset_2mb;
     }
 
@@ -636,10 +704,14 @@ uintptr_t vmm_get_physical(uintptr_t virtual_address) {
     unsigned long pt_phys = (unsigned long)pd[pd_idx].phy_addr_pt << 12;
     PAGE_TABLE* pt = (PAGE_TABLE*)vmm_scratch_map_internal(pt_phys, 0);
     if (!pt[pt_idx].p) {
+        vmm_lock_release();
         return 0;
     }
 
     // 6. Extrai o frame físico final de 4 KB e combina com o offset original
     unsigned long phys_frame = (unsigned long)pt[pt_idx].frames << 12;
+    
+    vmm_lock_release();
+
     return phys_frame | offset;
 }

@@ -32,13 +32,18 @@ void *ssh_memcpy(void *dest, const void *src, unsigned long len)
     return dest;
 }
 
-void randombytes(unsigned char *buf, unsigned long long len)
+void* ssh_memset(void *s, int val, unsigned long count)
 {
-    if (buf == 0)
-    {
+    unsigned long _count = count;
+    unsigned char *tmp = (unsigned char *)s;
+    for (; _count != 0; _count--)
+        *tmp++ = val;
+    return s;
+}
 
-        return;
-    }
+int randombytes(unsigned char *buf, unsigned long long len)
+{
+    if (buf == 0) return -1;
 
     unsigned long long i = 0;
 
@@ -46,15 +51,23 @@ void randombytes(unsigned char *buf, unsigned long long len)
     {
         unsigned int rand_val;
         unsigned char ok;
+        int retries = 0;
+
         do
         {
             __asm__ __volatile__(
-                "rdrand %0\n\t"
+                "rdrand %k0\n\t"
                 "setc %1"
-                : "=&r"(rand_val), "=qm"(ok)
+                : "=&r"(rand_val), "=q"(ok)
                 :
                 : "cc"
             );
+
+            retries++;
+            if (retries > 10) 
+            {
+                return -2; 
+            }
 
         } while (!ok);
 
@@ -62,11 +75,13 @@ void randombytes(unsigned char *buf, unsigned long long len)
              j < sizeof(rand_val) && i < len;
              j++, i++)
         {
-
             buf[i] = (unsigned char)(rand_val >> (j * 8));
         }
     }
+
+    return 0;
 }
+
 
 typedef struct
 {
@@ -243,7 +258,7 @@ static void ssh_sha256_final(unsigned char *digest, ssh_sha256_ctx *context)
     }
 }
 
-int crypto_hash_sha256_tweet(unsigned char *out, const unsigned char *m, unsigned long long n)
+int ssh_crypto_hash_sha256(unsigned char *out, const unsigned char *m, unsigned long long n)
 {
     ssh_sha256_ctx ctx;
 
@@ -308,6 +323,39 @@ int ssh_append_curve25519_mpint(unsigned char *buffer, unsigned long capacity, u
     return 0;
 }
 
+void ssh_hmac_sha256_packet(const unsigned char key[32],unsigned int sequence,const unsigned char *packet,unsigned long packet_len,unsigned char mac[32])
+{
+    unsigned char ipad[64];
+    unsigned char opad[64];
+    unsigned char inner_hash[32];
+    unsigned char seq[4];
+
+    for (int i = 0; i < 64; i++)
+    {
+        unsigned char k = i < 32 ? key[i] : 0;
+        ipad[i] = k ^ 0x36;
+        opad[i] = k ^ 0x5c;
+    }
+
+    seq[0] = (unsigned char)(sequence >> 24);
+    seq[1] = (unsigned char)(sequence >> 16);
+    seq[2] = (unsigned char)(sequence >> 8);
+    seq[3] = (unsigned char)sequence;
+
+    ssh_sha256_ctx ctx;
+
+    ssh_sha256_init(&ctx);
+    ssh_sha256_update(&ctx, ipad, 64);
+    ssh_sha256_update(&ctx, seq, 4);
+    ssh_sha256_update(&ctx, packet, packet_len);
+    ssh_sha256_final(inner_hash, &ctx);
+
+    ssh_sha256_init(&ctx);
+    ssh_sha256_update(&ctx, opad, 64);
+    ssh_sha256_update(&ctx, inner_hash, 32);
+    ssh_sha256_final(mac, &ctx);
+}
+
 void ssh_crypto_enable_inbound_decryption(ssh_session_t *session)
 {
     if (!session)
@@ -316,11 +364,7 @@ void ssh_crypto_enable_inbound_decryption(ssh_session_t *session)
     unsigned char k_mpint[40];
     unsigned long k_mpint_idx = 0;
 
-    if (ssh_append_curve25519_mpint(
-            k_mpint,
-            sizeof(k_mpint),
-            &k_mpint_idx,
-            session->dh_ctx.shared_k) != 0)
+    if (ssh_append_curve25519_mpint(k_mpint, sizeof(k_mpint), &k_mpint_idx, session->dh_ctx.shared_k) != 0)
         return;
 
     unsigned char iv_buffer[128];
@@ -338,7 +382,7 @@ void ssh_crypto_enable_inbound_decryption(ssh_session_t *session)
         iv_buffer[iv_idx++] = session->session_id[i];
 
     unsigned char iv_c2s[32];
-    crypto_hash_sha256_tweet(iv_c2s, iv_buffer, iv_idx);
+    ssh_crypto_hash_sha256(iv_c2s, iv_buffer, iv_idx);
 
     unsigned char key_buffer[128];
     unsigned long key_idx = 0;
@@ -355,7 +399,7 @@ void ssh_crypto_enable_inbound_decryption(ssh_session_t *session)
         key_buffer[key_idx++] = session->session_id[i];
 
     unsigned char key_c2s[32];
-    crypto_hash_sha256_tweet(key_c2s, key_buffer, key_idx);
+    ssh_crypto_hash_sha256(key_c2s, key_buffer, key_idx);
 
     unsigned char mac_buffer[128];
     unsigned long mac_idx = 0;
@@ -372,19 +416,21 @@ void ssh_crypto_enable_inbound_decryption(ssh_session_t *session)
         mac_buffer[mac_idx++] = session->session_id[i];
 
     unsigned char mac_c2s[32];
-    crypto_hash_sha256_tweet(mac_c2s, mac_buffer, mac_idx);
+    ssh_crypto_hash_sha256(mac_c2s, mac_buffer, mac_idx);
 
     for (int i = 0; i < 16; i++)
     {
         session->inbound_iv[i] = iv_c2s[i];
         session->inbound_key[i] = key_c2s[i];
     }
-    
-    (void)mac_c2s;
-    
+
+    for (int i = 0; i < 32; i++)
+    {
+        session->inbound_mac_key[i] = mac_c2s[i];
+    }
 }
 
-/* TABELAS E MÉTODOS COMPLETOS DO AES-128-CTR */
+// TABELAS E MÉTODOS COMPLETOS DO AES-128-CTR
 static const unsigned char sbox[256] = {
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
     0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
@@ -407,42 +453,29 @@ static const unsigned char sbox[256] = {
 void aes_key_expansion(const unsigned char *key, unsigned char *w)
 {
     unsigned char temp[4];
-
     unsigned int rcon = 0x01;
 
     for (int i = 0; i < 16; i++)
-
         w[i] = key[i];
 
     for (int i = 16; i < 176; i += 4)
-
     {
-
         for (int j = 0; j < 4; j++)
-
             temp[j] = w[i - 4 + j];
 
         if (i % 16 == 0)
-
         {
-
             unsigned char k = temp[0];
-
             temp[0] = sbox[temp[1]];
-
             temp[1] = sbox[temp[2]];
-
             temp[2] = sbox[temp[3]];
-
             temp[3] = sbox[k];
 
             temp[0] ^= rcon;
-
-            rcon = (rcon << 1) ^ (rcon & 0x80 ? 0x11b : 0x00);
+            rcon = (rcon << 1) ^ ((rcon & 0x80) ? 0x11b : 0x00);
         }
 
         for (int j = 0; j < 4; j++)
-
             w[i + j] = w[i - 16 + j] ^ temp[j];
     }
 }
@@ -503,7 +536,6 @@ void aes_encrypt_block(const unsigned char *in, unsigned char *out, const unsign
         }
 
         int r_offset = round * 16;
-
         for (int i = 0; i < 16; i++)
             state[i] ^= w[r_offset + i];
     }
@@ -515,7 +547,6 @@ void aes_encrypt_block(const unsigned char *in, unsigned char *out, const unsign
 void aes128_ctr_crypt(const unsigned char *key, unsigned char *iv, const unsigned char *src, unsigned char *dst, unsigned long len)
 {
     unsigned char expanded_key[176];
-
     unsigned char keystream[16];
 
     aes_key_expansion(key, expanded_key);
@@ -523,17 +554,13 @@ void aes128_ctr_crypt(const unsigned char *key, unsigned char *iv, const unsigne
     unsigned long pos = 0;
 
     while (pos < len)
-
     {
-
         aes_encrypt_block(iv, keystream, expanded_key);
 
         for (int i = 15; i >= 0; i--)
         {
             iv[i]++;
-
             if (iv[i] != 0)
-
                 break;
         }
 
@@ -542,29 +569,28 @@ void aes128_ctr_crypt(const unsigned char *key, unsigned char *iv, const unsigne
             dst[pos] = src[pos] ^ keystream[i];
         }
     }
+
+    ssh_memset(expanded_key, 0, sizeof(expanded_key));
+    ssh_memset(keystream, 0, sizeof(keystream));
 }
 
 void ssh_crypto_decrypt_inbound_block(ssh_session_t *session, unsigned char *data, unsigned long len)
 {
-
     if (!session || !data || len == 0)
-
         return;
 
     aes128_ctr_crypt(session->inbound_key, session->inbound_iv, data, data, len);
 }
 
-int ssh_derive_outbound_keys(const unsigned char *shared_k,const unsigned char *exchange_hash,const unsigned char *session_id,unsigned char outbound_key[16],unsigned char outbound_iv[16],unsigned char outbound_mac_key[32])
+int ssh_derive_outbound_keys(const unsigned char *shared_k, const unsigned char *exchange_hash, const unsigned char *session_id, unsigned char outbound_key[16], unsigned char outbound_iv[16], unsigned char outbound_mac_key[32])
 {
-    if (!shared_k || !exchange_hash || !session_id ||
-        !outbound_key || !outbound_iv || !outbound_mac_key)
+    if (!shared_k || !exchange_hash || !session_id || !outbound_key || !outbound_iv || !outbound_mac_key)
         return -1;
 
     unsigned char k_encoded[64];
     unsigned long k_len = 0;
 
-    if (ssh_append_curve25519_mpint(
-            k_encoded, sizeof(k_encoded), &k_len, shared_k) != 0)
+    if (ssh_append_curve25519_mpint(k_encoded, sizeof(k_encoded), &k_len, shared_k) != 0)
         return -1;
 
     unsigned char input[128];
@@ -572,11 +598,7 @@ int ssh_derive_outbound_keys(const unsigned char *shared_k,const unsigned char *
     unsigned long idx;
 
     const unsigned char letters[3] = { 'D', 'B', 'F' };
-    unsigned char *outputs[3] = {
-        outbound_key,
-        outbound_iv,
-        outbound_mac_key
-    };
+    unsigned char *outputs[3] = { outbound_key, outbound_iv, outbound_mac_key };
     const unsigned long output_lengths[3] = { 16, 16, 32 };
 
     for (int i = 0; i < 3; i++)
@@ -594,45 +616,15 @@ int ssh_derive_outbound_keys(const unsigned char *shared_k,const unsigned char *
         for (int j = 0; j < 32; j++)
             input[idx++] = session_id[j];
 
-        if (crypto_hash_sha256_tweet(digest, input, idx) != 0)
+        if (ssh_crypto_hash_sha256(digest, input, idx) != 0)
             return -1;
 
         for (unsigned long j = 0; j < output_lengths[i]; j++)
             outputs[i][j] = digest[j];
     }
 
+    ssh_memset(input, 0, sizeof(input));
+    ssh_memset(digest, 0, sizeof(digest));
+
     return 0;
-}
-
-void ssh_hmac_sha256_packet(const unsigned char key[32],unsigned int sequence,const unsigned char *packet,unsigned long packet_len,unsigned char mac[32])
-{
-    unsigned char ipad[64];
-    unsigned char opad[64];
-    unsigned char inner_hash[32];
-    unsigned char seq[4];
-
-    for (int i = 0; i < 64; i++)
-    {
-        unsigned char k = i < 32 ? key[i] : 0;
-        ipad[i] = k ^ 0x36;
-        opad[i] = k ^ 0x5c;
-    }
-
-    seq[0] = (unsigned char)(sequence >> 24);
-    seq[1] = (unsigned char)(sequence >> 16);
-    seq[2] = (unsigned char)(sequence >> 8);
-    seq[3] = (unsigned char)sequence;
-
-    ssh_sha256_ctx ctx;
-
-    ssh_sha256_init(&ctx);
-    ssh_sha256_update(&ctx, ipad, 64);
-    ssh_sha256_update(&ctx, seq, 4);
-    ssh_sha256_update(&ctx, packet, packet_len);
-    ssh_sha256_final(inner_hash, &ctx);
-
-    ssh_sha256_init(&ctx);
-    ssh_sha256_update(&ctx, opad, 64);
-    ssh_sha256_update(&ctx, inner_hash, 32);
-    ssh_sha256_final(mac, &ctx);
 }

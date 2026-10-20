@@ -21,6 +21,7 @@
 #define SSH_MSG_USERAUTH_SUCCESS            52
 #define SSH_MSG_CHANNEL_OPEN                90
 #define SSH_MSG_CHANNEL_OPEN_CONFIRMATION   91
+#define SSH_MSG_CHANNEL_DATA                94
 #define SSH_MSG_CHANNEL_REQUEST             98
 #define SSH_MSG_CHANNEL_SUCCESS             99
 #define SSH_MSG_CHANNEL_FAILURE             100
@@ -84,10 +85,19 @@ typedef struct {
 
     unsigned char inbound_cipher_name[256];
 
+    unsigned int inbound_sequence;
     unsigned int outbound_sequence;
 
-} ssh_session_t;
+    unsigned int client_channel_id;
 
+    volatile int inbound_lock;
+    volatile int outbound_lock;
+    volatile int user_lock;
+
+}__attribute__((aligned(16))) ssh_session_t;
+
+void ssh_lock_acquire(ssh_session_t* session);
+void ssh_lock_release(ssh_session_t* session);
 void ssh_init_session(ssh_session_t* session, int fd, ssh_read_fn r_fn, ssh_write_fn w_fn);
 int ssh_do_banner_exchange(ssh_session_t* session);
 int ssh_process_packet(ssh_session_t* session);
@@ -103,15 +113,20 @@ int ssh_process_userauth_request(ssh_session_t *session,const unsigned char *pay
 int ssh_process_channel_open(ssh_session_t *session,const unsigned char *payload,unsigned long payload_len);
 int ssh_process_channel_request(ssh_session_t *session,const unsigned char *payload,unsigned long payload_len);
 int ssh_do_banner_exchange(ssh_session_t* session);
+int ssh_channel_poll(ssh_session_t *session);
+int ssh_channel_read(ssh_session_t *session, void *buffer, unsigned long max_len, int timeout);
+int ssh_channel_write(ssh_session_t *session, const void *buffer, unsigned long len);
+void ssh_crypto_enable_inbound_decryption(ssh_session_t *session);
+void ssh_crypto_decrypt_inbound_block(ssh_session_t *session, unsigned char *data, unsigned long len);
 
 
 int ssh_memcmp(const void *ptr1, const void *ptr2, unsigned long len);
 void *ssh_memcpy(void *dest, const void *src, unsigned long len);
-void randombytes(unsigned char *buf, unsigned long long len);
+void* ssh_memset(void *s, int val, unsigned long count);
+int randombytes(unsigned char *buf, unsigned long long len);
+int ssh_crypto_hash_sha256(unsigned char *out, const unsigned char *m, unsigned long long n);
 int ssh_append_curve25519_mpint(unsigned char *buffer,unsigned long capacity,unsigned long *index,const unsigned char shared_k[32]);
-void ssh_crypto_enable_inbound_decryption(ssh_session_t *session);
 void aes128_ctr_crypt(const unsigned char *key, unsigned char *iv, const unsigned char *src, unsigned char *dst, unsigned long len);
-void ssh_crypto_decrypt_inbound_block(ssh_session_t *session, unsigned char *data, unsigned long len);
 void aes_key_expansion(const unsigned char *key, unsigned char *w);
 void aes_encrypt_block(const unsigned char *in, unsigned char *out, const unsigned char *w);
 int ssh_derive_outbound_keys(const unsigned char *shared_k,const unsigned char *exchange_hash,const unsigned char *session_id,unsigned char outbound_key[16],unsigned char outbound_iv[16],unsigned char outbound_mac_key[32]);

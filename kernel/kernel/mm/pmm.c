@@ -26,15 +26,18 @@ static unsigned long pmm_total_pages = 0;
 static unsigned long pmm_bitmap_size = 0;
 
 /*
- * Funções auxiliares para manipulação de bits
+ * Funções auxiliares para manipulação de bits (Corrigidas para 8-bit reais)
  */
 static inline void bitmap_set_bit(unsigned long page_index) {
-    pmm_bitmap[page_index / 8] |= (1ULL << (page_index % 8));
+    // Usa uma máscara estrita de 8 bits para modificar apenas o byte pretendido
+    pmm_bitmap[page_index / 8] |= (unsigned char)(1U << (page_index % 8));
 }
 
 static inline void bitmap_clear_bit(unsigned long page_index) {
-    pmm_bitmap[page_index / 8] &= ~(1ULL << (page_index % 8));
+    // Inverte a máscara garantindo isolamento total do byte alvo
+    pmm_bitmap[page_index / 8] &= (unsigned char)~(1U << (page_index % 8));
 }
+
 
 void pmm_init(BOOT_INFO *boot_info) {
     MEMORY_MAP_INFO *map = &boot_info->MemoryMap;
@@ -223,7 +226,7 @@ void pmm_free_page(unsigned long phys_address)
 
 /*
  * ============================================================================
- * Aloca uma sequência contIgua de 'count' páginas de memória física (4 KB cada).
+ * Aloca uma sequência contigua de 'count' páginas de memória física (4 KB cada).
  * Varre o bitmap à procura do primeiro bloco de bits em 0 consecutivos.
  * Retorna o endereço físico do início do bloco ou 0 em caso de falha.
  * ============================================================================

@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <sys/mman.h>
 
 
 #ifndef MAX_PATH_LEN
@@ -314,4 +315,18 @@ char *getcwd(char *buf, size_t size)
     }
 
     return target_buf; // Retorna o ponteiro para a string com o caminho absoluto
+}
+
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, int64_t offset)
+{
+    uint64_t ret = syscall6(SYS_MMAP, (uint64_t)addr, length, prot, flags, fd, offset);
+
+    if(ret == -1UL) return MAP_FAILED;
+
+    return (void*)ret;
+}
+
+void munmap(void *addr, size_t length)
+{
+  syscall2(SYS_MUNMAP, (uint64_t)addr, length); 
 }

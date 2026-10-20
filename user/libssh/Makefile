@@ -3,7 +3,7 @@ ASM     := nasm
 AR      := ar
 RANLIB  := ranlib
 
-CFLAGS  := -Wall -Wextra -m64 -nostdinc -ffreestanding -I./include
+CFLAGS  := -Wall -Wextra -m64 -O2 -nostdinc -ffreestanding -I./include
 ASMFLAGS:= -f elf64
 
 TARGET  := libssh.a

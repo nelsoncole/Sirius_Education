@@ -745,7 +745,7 @@ int vfs_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
         uint64_t block_id = offset_atual / node->block_size;
         uint32_t offset_dentro_do_bloco = (uint32_t)(offset_atual % node->block_size);
 
-        // --- OTIMIZAÇÃO: BYPASS DE CACHE PARA GRANDES LEITURAS ---
+        // --- OTIMIZAÇÃO: BYPASS DE CACHE PARA GRANDES LEITURAS
         if (offset_dentro_do_bloco == 0 && (size - bytes_lidos_total) >= node->block_size) {
             if (node->ops && node->ops->read) {
                 uint32_t blocos_completos = (size - bytes_lidos_total) / node->block_size;

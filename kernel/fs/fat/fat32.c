@@ -922,6 +922,8 @@ static vfs_node_t *fat32_finddir(vfs_node_t *node, const char *name)
     if (!out_node)
         return NULL;
 
+    memset(out_node, 0, sizeof(vfs_node_t));
+
     uint32_t index = 0;
     while (fat32_readdir(node, index, out_node) == 0)
     {
@@ -1284,6 +1286,7 @@ static vfs_operations_t g_fat32_ops = {
     .close   = fat32_close,
     .read    = fat32_read,
     .write   = fat32_write,
+    .ioctl   = NULL,
     .flush   = fat32_flush,
     .finddir = fat32_finddir,
     .readdir = fat32_readdir,
