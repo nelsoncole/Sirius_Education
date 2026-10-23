@@ -99,6 +99,30 @@ void process_list_remove(process_t* proc)
     spinlock_release(&g_process_list_lock);
 }
 
+process_t* process_find_by_pid(pid_t pid) 
+{
+    process_t* target = NULL;
+
+    /* Bloqueia a lista: Garante integridade da memória durante a leitura */
+    spinlock_acquire(&g_process_list_lock);
+
+    process_t* current = g_process_list_head;
+    while (current != NULL) 
+    {
+        if (current->pid == pid) 
+        {
+            target = current;
+            break; /* Encontrado! */
+        }
+        current = current->next;
+    }
+
+    /* Liberta a região crítica para os outros Cores */
+    spinlock_release(&g_process_list_lock);
+    return target;
+}
+
+
 /**
  * process_init_standard_io - Inicializa os canais padrão (0, 1, 2) de um processo.
  * @proc:    O processo que está a ser configurado.

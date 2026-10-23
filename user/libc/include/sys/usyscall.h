@@ -91,6 +91,8 @@ enum {
     SYS_CHDIR,
     SYS_GETCWD,
 
+    SYS_ACTIVE_TTY,
+    
     /* O compilador define automaticamente MAX_SYSCALLS com o valor total correto (43) */
     MAX_SYSCALLS
 };

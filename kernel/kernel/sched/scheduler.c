@@ -210,6 +210,38 @@ void scheduler_ready_process(struct process* proc)
     kprintf("[Scheduler] Thread principal do PID %d despachada para o Core CPU %d.\n", proc->pid, cpu_id);
 }
 
+void scheduler_ready_thread(thread_t* th) 
+{
+    if (!th) return;
+
+    // Transição de estado da thread
+    // Nota: Como no seu código a thread partilha alguns estados do enum do processo, 
+    // ou usa um correspondente (ex: THREAD_READY), ajustamos para o estado pronto.
+    // Se a sua estrutura thread_t usar THREAD_READY, altere aqui:
+    th->state = THREAD_READY; 
+
+    // Captura o ID da CPU à qual esta thread está vinculada
+    uint32_t cpu_id = th->cpu_id;
+
+    // Injeta a thread na fila do Core correto (idêntico à lógica do processo)
+    cpu_data_block_t* cpu = get_cpu_data_block(cpu_id); 
+    if (cpu != NULL) {
+        enqueue_thread(cpu, th);
+    } else {
+        // Fallback de segurança: enfia na CPU atual se o ID for inválido
+        enqueue_thread(get_current_cpu(), th);
+    }
+
+    // Se a thread pertencer a um processo que ainda estava marcado como EMBRYO,
+    // atualiza também o estado do processo pai para READY.
+    if (th->owner && th->owner->state == PROCESS_EMBRYO) {
+        th->owner->state = PROCESS_READY;
+    }
+
+    kprintf("[Scheduler] Thread %p (PID %d) reativada e despachada para o Core CPU %d.\n", 
+            th, th->owner ? th->owner->pid : 0, cpu_id);
+}
+
 /**
  * Realiza a troca de contexto local do núcleo por preempção (Task Switch).
  */

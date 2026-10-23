@@ -94,7 +94,7 @@ typedef struct {
     volatile int outbound_lock;
     volatile int user_lock;
 
-}__attribute__((aligned(16))) ssh_session_t;
+}ssh_session_t;
 
 void ssh_lock_acquire(ssh_session_t* session);
 void ssh_lock_release(ssh_session_t* session);

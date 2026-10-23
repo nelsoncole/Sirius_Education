@@ -19,6 +19,7 @@
 #include <kernel/kernel/syscall/syscall.h>
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/klib.h>
+#include <kernel/lib/errno.h>
 #include <kernel/kernel/sched/process.h>
 #include <kernel/kernel/net/socket.h>
 #include <kernel/kmods/kmod.h>
@@ -111,7 +112,9 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
     [SYS_KMOD_PRINT] = sys_kmod_print,
 
     [SYS_CHDIR]     = sys_chdir,
-    [SYS_GETCWD]    = sys_getcwd
+    [SYS_GETCWD]    = sys_getcwd,
+
+    [SYS_ACTIVE_TTY] = sys_active_tty
 };
 
 static inline void wrmsr(uint32_t msr, uint64_t val) {
@@ -894,14 +897,54 @@ uint64_t sys_usleep(unsigned int usec)
     return 0;
 }
 
+
 uint64_t sys_kill(int32_t pid, int sig) 
 {
     kprintf("[SCI] sys_kill: Enviar sinal %d para pid=%d\n", sig, pid);
     
-    /* TODO: Localizar o PCB e empurrar o número do sinal na máscara pendente */
-    (void)pid; (void)sig;
-    return 0;
+    if (sig < 1 || sig > MAX_SIGNALS) 
+    {
+        kprintf("[SCI] sys_kill: Sinal invalido %d\n", sig);
+        return (uint64_t)-EINVAL;
+    }
+
+    process_t* target_proc = process_find_by_pid((pid_t)pid);
+    if (!target_proc) 
+    {
+        kprintf("[SCI] sys_kill: Processo com PID %d nao encontrado\n", pid);
+        return (uint64_t)-ESRCH;
+    }
+
+    // Se o processo já for um ZOMBIE, não faz sentido enviar sinais
+    if (target_proc->state == PROCESS_ZOMBIE)
+    {
+        kprintf("[SCI] sys_kill: Processo %d e um Zombie. Ignorando sinal.\n", pid);
+        return (uint64_t)-EINVAL; 
+    }
+
+    // Aplica o sinal na bitmask utilizando lógica bit-a-bit (1U << (sig - 1))
+    // Sinais em C/POSIX começam em 1 (ex: sig 9 vira o bit 8)
+    target_proc->pending_signals |= (1U << (sig - 1));
+    
+    kprintf("[SCI] sys_kill: Sinal %d marcado para o processo %d (Pending Mask: 0x%x)\n", 
+            sig, target_proc->pid, target_proc->pending_signals);
+
+    // Mecanismo de Wake-up da Thread Principal
+    // Se a thread principal do processo estiver congelada em I/O (ex: lendo do PTY ou Pipe),
+    // o estado dela não será THREAD_READY/RUNNING. Forçamos a sua reativação para tratar o sinal.
+    if (target_proc->main_thread) 
+    {
+        if (target_proc->main_thread->state != THREAD_READY && 
+            target_proc->main_thread->state != THREAD_RUNNING) 
+        {
+            kprintf("[SCI] sys_kill: Acordando thread principal do processo %d\n", target_proc->pid);
+            scheduler_ready_thread(target_proc->main_thread);
+        }
+    }
+
+    return (uint64_t)0;
 }
+
 
 uint64_t sys_sigaction(int signum, const void *act, void *oldact) 
 {
@@ -1207,6 +1250,30 @@ uint64_t sys_getcwd(char *buf, size_t size)
     return 0; // Sucesso (A libc receberá 0 e retornará o ponteiro do buffer ao utilizador)
 }
 
+uint64_t sys_active_tty()
+{
+     process_t* proc = get_current_process();
+    if (!proc || !proc->file_descriptor_table[0]) {
+        return (uint64_t)-1;
+    }
+
+    vfs_file_t* file = proc->file_descriptor_table[0];
+    if (!file) {
+        return (uint64_t)-1;
+    }
+
+    vfs_node_t* node = file->node;
+    if(!node && node->flags != VFS_CHAR_DEV) {
+        return (uint64_t)-1;
+    }
+    
+    pty_pair_t* pair = (pty_pair_t*) node->private_data;
+    if(!pair || !pair->replica_tty) return (uint64_t)-1;
+
+    pty_vfs_set_active_engine(pair->replica_tty);
+
+    return (uint64_t)0;
+}
 /*
  * ============================================================================
  * INTERFACE DE INICIALIZAÇÃO DE HARDWARE

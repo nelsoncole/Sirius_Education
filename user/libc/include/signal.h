@@ -1,6 +1,8 @@
 #ifndef _SIGNAL_H_
 #define _SIGNAL_H_
 
+#include <sys/types.h>
+
 #define NR_SIGNALS 23
 #define NSIG 23
 
@@ -57,5 +59,7 @@ typedef sighandler_t sig_t;
 sighandler_t signal(int signum, sighandler_t handler);
 
 int raise(int sig);
+
+int kill(pid_t pid, int sig);
 
 #endif

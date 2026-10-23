@@ -19,6 +19,8 @@
 #include <signal.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <sys/usyscall.h>
+#include <errno.h>
 
 /**
  * signal - Estabelece uma rotina de tratamento para um sinal específico.
@@ -70,4 +72,19 @@ int raise(int sig)
     _exit(sig); 
 
     return -1; // Nunca será alcançado
+}
+
+
+int kill(pid_t pid, int sig)
+{
+    long ret = syscall2(SYS_KILL, pid, sig);
+    
+    if (ret < 0) 
+    {
+        // Se o seu sys_kill retornou -EINVAL (ex: -22), a libc converte para positivo
+        errno = -ret; 
+        return -1; // Aplicações Ring 3 esperam -1 em caso de erro
+    }
+    
+    return 0;
 }

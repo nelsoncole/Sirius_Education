@@ -70,6 +70,9 @@ void scheduler_init(void);
  * @proc: O ponteiro para o PCB do processo que acabou de ser configurado.
  */
 void scheduler_ready_process(struct process* proc);
+
+void scheduler_ready_thread(thread_t* th);
+
 /**
  * Realiza a troca de contexto local do núcleo (Task Switch).
  * Chamada de dentro do handler do Timer do LAPIC (Interrupção 32).

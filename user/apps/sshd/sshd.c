@@ -26,7 +26,7 @@
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <libssh/libssh.h>
-#include <string.h>
+#include <signal.h>
 
 #define BUFFER_SIZE 1024
 
@@ -173,8 +173,8 @@ int main(int argc, char *argv[])
                     loop_ponte_criptografica(session, master_fd);
 
                     /* Limpeza após a sessão cair (ex: utilizador digitou 'exit') */
-                    //kill(pid_ponte, 9); // Encerra o processo irmão de rede
-                    //kill(pid_shell, 9); // Garante que a shell associada morre
+                    kill(pid_ponte, 9); // Encerra o processo irmão de rede
+                    kill(pid_shell, 9); // Garante que a shell associada morre
                     waitpid(pid_shell, NULL, 0);
                     waitpid(pid_ponte, NULL, 0);
 

@@ -366,26 +366,21 @@ void kernel_main(BOOT_INFO *boot_info)
         strncpy(uefi_res_str, "800x600", sizeof(uefi_res_str) - 1);
     }
 
-    // MONTAGEM DINÂMICA DOS ARGUMENTOS:
-    /*int init_argc = 5;
+    int init_argc = 5;
     char *init_argv[] = {
-        "/system/user.elf",    // argv[0]: Caminho do executável
-        g_boot_partition_name, // argv[1]: Ex: "ahci0.1" (Origem de persistência)
-        "text_mode",           // argv[2]: Modo gráfico/texto base
-        "/dev/tty0",           // argv[3]: Terminal padrão do sistema
-        uefi_res_str           // argv[4]: Resolução de tela REAL e dinâmica da UEFI!
+        "/mnt/hd0/apps/user.elf",     // argv[0]: Caminho do executável
+        g_boot_partition_name,          // argv[1]: Ex: "ahci0.1" (Origem de persistência)
+        "text_mode",                    // argv[2]: Modo gráfico/texto base
+        "/dev/tty0",                    // argv[3]: Terminal padrão do sistema
+        uefi_res_str                    // argv[4]: Resolução de tela REAL e dinâmica da UEFI!
     };
 
-    kprintf("[BOOT] Lancando o processo mestre de User Space '/system/user.elf'...\n");
-    elf_load_and_create_process("/mnt/hd0/system/user.elf", init_argc, init_argv, 0);*/
+    kprintf("[BOOT] Lancando o processo mestre de User Space '%s'...\n",init_argv[0]);
+    elf_load_and_create_process(init_argv[0], init_argc, init_argv, 0);
 
     char *argv_sshd[] = {"/mnt/hd0/apps/sshd.elf",};
     kprintf("[BOOT] Lancando o processo do user space '%s'...\n", argv_sshd[0]);
     elf_load_and_create_process(argv_sshd[0], 1, argv_sshd, 0);
-
-    char *argv[] = {"/mnt/hd0/apps/bin/sh",};
-    kprintf("[BOOT] Lancando o processo do user space '%s'...\n", argv[0]);
-    elf_load_and_create_process(argv[0], 1, argv, 0);
     
 
     //vfs_print_tree("/");

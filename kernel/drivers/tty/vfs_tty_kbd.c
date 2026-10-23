@@ -146,6 +146,8 @@ void tty_keyboard_bridge_thread(void* arg) {
                             }
                         }
                     }
+
+                    pty_vfs_get_active_engine_close(pty_ativa); 
                 }
                 else
                 {

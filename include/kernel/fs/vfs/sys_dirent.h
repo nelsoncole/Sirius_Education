@@ -19,11 +19,7 @@
 
 #include <kernel/lib/stdint.h>
 #include <kernel/kernel/sched/process.h>
-
-// Definições de erro padrão do teu Kernel
-#define EBADF   -9   // Bad file descriptor
-#define EINVAL  -22  // Invalid argument
-#define EFAULT  -14  // Bad address (ponteiros inválidos)
+#include <kernel/lib/errno.h>
 
 // Máscaras e tipos para o campo d_type da struct sys_dirent
 #define DT_UNKNOWN  0
@@ -51,23 +47,23 @@ struct sys_dirent {
 static inline uint64_t sys_getdents(int fd, struct sys_dirent *dirp, uint32_t count) {
     process_t* proc = get_current_process();
     if (!proc || fd < 0 || fd >= MAX_FILES_PER_PROCESS) {
-        return (uint64_t)EBADF;
+        return (uint64_t)-EBADF;
     }
 
     vfs_file_t* file = proc->file_descriptor_table[fd];
     if (!file || !file->node) {
-        return (uint64_t)EBADF;
+        return (uint64_t)-EBADF;
     }
 
     // Mantemos uma referência direta e constante ao nó pai original do processo
     vfs_node_t* const parent_dir_node = file->node;
 
     if ((parent_dir_node->flags & VFS_DIRECTORY) == 0) {
-        return (uint64_t)EINVAL;
+        return (uint64_t)-EINVAL;
     }
 
     if (!dirp || count < sizeof(struct sys_dirent) + 4) {
-        return (uint64_t)EFAULT;
+        return (uint64_t)-EFAULT;
     }
 
     kprintf("[SCI] sys_getdents: fd=%d, dirp=0x%lx, count=%u, current_offset=%lu\n", 
@@ -80,7 +76,7 @@ static inline uint64_t sys_getdents(int fd, struct sys_dirent *dirp, uint32_t co
     // para impedir que a pilha do Ring 0 sofra Stack Overflow no ciclo do -O2.
     vfs_node_t* temp_node = (vfs_node_t*)kmalloc(sizeof(vfs_node_t));
     if (!temp_node) {
-        return (uint64_t)-12; // -ENOMEM
+        return (uint64_t)-ENOMEM;
     }
 
     // Estrutura intermédia local para evitar corrupção por Strict Aliasing no -O2

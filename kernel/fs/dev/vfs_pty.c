@@ -74,8 +74,16 @@ struct tty_device* pty_vfs_get_active_engine(void) {
     struct tty_device* active;
     spin_lock(&g_vfs_pty_lock);
     active = g_active_pty_engine;
+    if(active) spin_lock(&active->user_lock);
     spin_unlock(&g_vfs_pty_lock);
     return active;
+}
+
+void pty_vfs_get_active_engine_close(struct tty_device* tty) {
+    if(!tty) return;
+    spin_lock(&g_vfs_pty_lock);
+    spin_unlock(&tty->user_lock);
+    spin_unlock(&g_vfs_pty_lock);
 }
 
 /**
@@ -144,8 +152,6 @@ static pty_pair_t* vfs_pty_allocate_internal(void) {
     pair->replica_node   = r_node;
     spin_unlock(&g_vfs_pty_lock);
 
-    pty_vfs_set_active_engine(pair->replica_tty);
-
     return pair;
 }
 
@@ -162,8 +168,6 @@ static int tfs_ptmx_open(vfs_node_t* node, uint32_t flags) {
     node->private_data = pair;
     pair->master_node = node;
     spin_unlock(&g_vfs_pty_lock);
-
-    pty_vfs_set_active_engine(pair->replica_tty);
 
     return 0;
 }
@@ -187,6 +191,13 @@ static int tfs_pty_close(vfs_node_t* node) {
 
     // Protege o acesso aos contadores deste par específico
     spin_lock(&pair->lock);
+
+    struct tty_device *pty_ativa = pty_vfs_get_active_engine();
+    if(pty_ativa == pair->replica_tty){
+        pty_vfs_set_active_engine(NULL);
+    }
+    pty_vfs_get_active_engine_close(pty_ativa);
+
     if (node->ops == &g_ptmx_vfs_ops) {
         pair->master_open_count--;
     } else if (node->ops == &g_pty_replica_ops) {
@@ -267,20 +278,27 @@ static int tfs_pty_replica_write(vfs_node_t* node, uint64_t offset, uint32_t siz
 
     // 1. Escreve no buffer de saída (out) para que o mestre (SSHD) possa ler via master_read
     int bytes_escritos = tty_write_to_out_queue(pair->replica_tty, (const char*)buffer, size);
+    
+    struct tty_device* tty_tmp = pty_vfs_get_active_engine();
+    if (tty_tmp == pair->replica_tty)
+    {
+        // 2. REGRA DO JOGO: Resolve a tty0 e bombeia síncronamente os dados nela
+        vfs_node_t *tty0_node = tty_vfs_get_node_by_name("tty0");
+        if (tty0_node && tty0_node->private_data)
+        {
+            struct tty_device *tty0_device = (struct tty_device *)tty0_node->private_data;
+            const char *src = (const char *)buffer;
+            // tty_write(tty0_device, (const char*)buffer, bytes_escritos);
+            for (int i = 0; i < bytes_escritos; i++)
+            {
+                tty_putc_backbuffer_X(tty0_device, src[i]);
+            }
 
-    // 2. REGRA DO JOGO: Resolve a tty0 e bombeia síncronamente os dados nela
-    vfs_node_t* tty0_node = tty_vfs_get_node_by_name("tty0");
-    if (tty0_node && tty0_node->private_data) {
-        struct tty_device* tty0_device = (struct tty_device*)tty0_node->private_data;
-        const char* src = (const char*)buffer;
-        //tty_write(tty0_device, (const char*)buffer, bytes_escritos);
-        for(int i=0; i < bytes_escritos; i++ ){
-            tty_putc_backbuffer_X(tty0_device, src[i]);
+            __sync_lock_test_and_set(&tty0_device->refresh_needed, 1);
         }
-
-        __sync_lock_test_and_set(&tty0_device->refresh_needed, 1);
-
     }
+
+    pty_vfs_get_active_engine_close(tty_tmp);
 
     return bytes_escritos;
 }

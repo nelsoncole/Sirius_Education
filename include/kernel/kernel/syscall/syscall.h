@@ -23,6 +23,7 @@
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/fs/vfs/sys_dirent.h>
 #include <kernel/sys/types.h>
+#include <kernel/fs/dev/vfs_pty.h>
 
 /*
  * CONFIGURAÇÃO DOS NÚMEROS DE CHAMADA DE SISTEMA (SYSCALL NUMBERS)
@@ -97,6 +98,7 @@ enum {
     SYS_CHDIR,
     SYS_GETCWD,
 
+    SYS_ACTIVE_TTY,
     /* O compilador define automaticamente MAX_SYSCALLS com o valor total correto (43) */
     MAX_SYSCALLS
 };
@@ -197,5 +199,7 @@ uint64_t sys_kmod_print(void);
 
 uint64_t sys_chdir(const char *path);
 uint64_t sys_getcwd(char *buf, size_t size);
+
+uint64_t sys_active_tty();
 
 #endif /* _SYSCALL_H_ */

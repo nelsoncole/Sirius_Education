@@ -52,6 +52,7 @@ typedef struct pty_pair {
 void pty_vfs_init(vfs_node_t* dev_node);
 
 struct tty_device* pty_vfs_get_active_engine(void);
+void pty_vfs_get_active_engine_close(struct tty_device* tty);
 void pty_vfs_set_active_engine(struct tty_device* pty);
 
 #endif /* _VFS_PTY_H_ */

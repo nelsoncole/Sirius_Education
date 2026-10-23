@@ -13,7 +13,6 @@
 #ifndef _TTY_H_
 #define _TTY_H_
 
-#include <kernel/lib/stddef.h>
 #include <kernel/lib/stdint.h>
 #include <kernel/kernel/core/spinlock.h>
 
@@ -45,6 +44,7 @@ struct tty_device {
 
     uint32_t c_lflag;
     spinlock_t lock;
+    spinlock_t user_lock;
 
     /* Campos para video de dedicado */
     uint32_t* video_buffer;     /* Ponteiro para o Backbuffer privado (Alocado via kmalloc) */

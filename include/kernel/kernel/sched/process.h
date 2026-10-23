@@ -27,8 +27,7 @@
 #include <kernel/sys/types.h>
 #include <kernel/kernel/core/spinlock.h>
 
-#define MAX_SHARED_REGIONS 8
-#define MAX_SIGNALS        32
+#define MAX_SHARED_REGIONS     8
 #define MAX_SIGNALS            32
 #define MAX_FILES_PER_PROCESS  32
 
@@ -150,5 +149,6 @@ void process_list_spinlock_release(void);
 void process_list_spinlock_acquire(void);
 void process_list_insert(process_t* proc);
 void process_list_remove(process_t* proc);
+process_t* process_find_by_pid(pid_t pid);
 
 #endif /* PROCESS_H */

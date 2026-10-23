@@ -26,7 +26,7 @@ SYSROOT_APP := $(BASE_DIR)../sysroot/apps/sshd.elf
 LINKER_SCR  := $(BASE_DIR)libc/user_x86_64.ld
 
 # 3. Flags de Compilação para Espaço de Utilizador Isolado com TLSe
-CFLAGS  := -Wall -Wextra -m64 -nostdinc -ffreestanding
+CFLAGS  := -Wall -Wextra -m64 -O2 -nostdinc -ffreestanding
 CFLAGS  += -I$(LIBC_INC) -I$(LIBSSH_INC)
 
 # Flags do Linkeditor para gerar o executável final em Ring 3

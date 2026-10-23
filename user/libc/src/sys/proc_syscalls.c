@@ -330,3 +330,8 @@ void munmap(void *addr, size_t length)
 {
   syscall2(SYS_MUNMAP, (uint64_t)addr, length); 
 }
+
+
+int __sys_active_tty() {
+     return(int)syscall0(SYS_ACTIVE_TTY);
+}

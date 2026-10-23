@@ -1,5 +1,4 @@
 #include "libssh.h"
-#include "tweetnacl.h"
 
 int ssh_memcmp(const void *ptr1, const void *ptr2, unsigned long len)
 {
