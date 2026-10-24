@@ -32,7 +32,8 @@ struct process;
 typedef enum {
     THREAD_READY,       // Pronta para ser executada pelo CPU
     THREAD_RUNNING,     // Em execução ativa num núcleo
-    THREAD_BLOCKED,     // Bloqueada a aguardar I/O, IPC ou Mutex
+    THREAD_BLOCKED,     // Bloqueada a aguardar waitpid/filhos
+    THREAD_WAITING,     // Bloqueada a aguardar I/O, IPC ou Mutex
     THREAD_DEAD         // Terminada, aguarda limpeza pelo coletor de lixo
 } thread_state_t;
 
@@ -48,6 +49,8 @@ typedef struct thread {
     void* kernel_stack_top;
     thread_state_t state;       // Estado atual de execução
     uint32_t cpu_id;            // ID do CPU associado (ou fixado por afinidade)
+
+    void* chan;                 // Canal de sincronização (ex: &tty->read_wait)
 
     int     exit_code;          //  Guarda o codigo de retorno
 

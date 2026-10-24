@@ -21,6 +21,8 @@
 #include <kernel/klib.h>
 #include <kernel/boot_info.h>
 #include <kernel/drivers/char/font.h>
+#include <kernel/kernel/sched/wait.h>
+#include <kernel/kernel/sched/wakeup.h>
 
 /* Códigos de Controle ASCII */
 #define CTRL(c)    ((c) & 0x1F)
@@ -56,6 +58,7 @@ static void tty_put_queue(struct tty_device *tty, char c) {
  *                      Implementação das APIs do TTY Core
  * ============================================================================ */
 
+
 /**
  * tty_init - Inicializa as tabelas do subsistema e locks nativos do driver de hardware.
  *            Chamado uma única vez durante o arranque frio do Kernel.
@@ -76,12 +79,29 @@ void tty_init(void) {
  * @id:  Índice numérico do terminal (0 a 5).
  * @tty: Endereço físico da estrutura tty_device instanciada por kmalloc.
  */
+
 void tty_register_driver_instance(uint32_t id, struct tty_device* tty) {
-    if (id >= MAX_TTY_DRV_DEVICES) return;
+    if (id >= MAX_TTY_DRV_DEVICES || !tty) return;
 
     spin_lock(&g_tty_driver_lock);
+    
+    // 1. Vincula a instância ao catálogo do driver
     g_tty_instances[id] = tty;
+
+    // 2. Garante a inicialização atómica e limpa dos canais de espera passiva
+    tty->read_wait  = NULL; 
+    tty->write_wait = NULL;
+
+    // 3. Garante que os índices dos buffers circulares desta instância começam zerados
+    tty->in_head   = 0;
+    tty->in_tail   = 0;
+    tty->out_head  = 0;
+    tty->out_tail  = 0;
+    tty->raw_count = 0;
+    tty->lines_available = 0;
+
     spin_unlock(&g_tty_driver_lock);
+    
 }
 
 /**
@@ -105,153 +125,6 @@ struct tty_device* tty_get_current(void) {
     struct tty_device* tty = (id < MAX_TTY_DRV_DEVICES) ? g_tty_instances[id] : NULL;
     spin_unlock(&g_tty_driver_lock);
     return tty;
-}
-
-/**
- * tty_push_char_isr - Processa e empurra um byte capturado pelo teclado físico (IRQ)
- *                     para dentro da disciplina de linha do terminal alvo.
- */
-void tty_push_char_isr(struct tty_device *tty, char c) {
-    if (!tty) return;
-
-    spin_lock(&tty->lock);
-
-    /* Normaliza a quebra de linha padrão Unix (Carriage Return -> Line Feed) */
-    if (c == ASCII_CR) {
-        c = ASCII_NL;
-    }
-
-    /* Disciplina de Linha: Processamento em Modo Canónico */
-    if (tty->c_lflag & TTY_ICANON) {
-        
-        /* Tratamento do Backspace Destrutivo */
-        if (c == ASCII_BS || c == ASCII_DEL) {
-            /* Impede a regressão para além do início do comando atual em buffer */
-            if (tty->in_head != tty->line_start) {
-                tty->in_head = (tty->in_head - 1 + TTY_BUF_SIZE) % TTY_BUF_SIZE;
-                tty->raw_count--;
-
-                /* ECHO: Repassa comandos ANSI puramente para a cauda de renderização do ecrã */
-                if (tty->c_lflag & TTY_ECHO) {
-                    tty_put_queue(tty, ASCII_BS); /* Recua o cursor */
-                    tty_put_queue(tty, ' ');      /* Limpa o caractere antigo */
-                    tty_put_queue(tty, ASCII_BS); /* Reajusta o cursor */
-                }
-            }
-            spin_unlock(&tty->lock);
-            return;
-        }
-
-        /* Tratamento de Interrupção Assíncrona de Processos em Primeiro Plano (Ctrl+C) */
-        if (c == CTRL('c')) {
-            if (tty->c_lflag & TTY_ECHO) {
-                tty_put_queue(tty, '^');
-                tty_put_queue(tty, 'C');
-                tty_put_queue(tty, ASCII_NL);
-            }
-            /* Aborta a linha parcial em RAM limpando o contador cru */
-            tty->in_head = tty->line_start;
-            tty->raw_count = 0;
-            
-            spin_unlock(&tty->lock);
-            /* TODO: Emitir um sinal SIGINT para o grupo de processos em primeiro plano */
-            return;
-        }
-    }
-
-    /* Insere o caractere regular na cabeça da fila circular de entrada */
-    int next = (tty->in_head + 1) % TTY_BUF_SIZE;
-
-    if (next == tty->in_tail) {
-        /* Buffer saturado. Aborta a inserção para blindar o Kernel heap */
-        spin_unlock(&tty->lock);
-        return;
-    }
-
-    tty->input_buf[tty->in_head] = c;
-    tty->in_head = next;
-    tty->raw_count++;
-
-    /* ECHO: Ecoa de volta o caractere digitado instantaneamente */
-    if (tty->c_lflag & TTY_ECHO) {
-        tty_put_queue(tty, c);
-    }
-
-    /* Validação orientada a linhas ou interações brutas */
-    if (tty->c_lflag & TTY_ICANON) {
-        if (c == ASCII_NL) {
-            tty->line_start = tty->in_head; /* Trava o ponto inicial estável da próxima instrução */
-            tty->lines_available++;         /* Desbloqueia e acorda consumidores do VFS */
-        }
-    } else {
-        /* Modo RAW: Qualquer caractere fica elegível para consumo de imediato */
-        tty->lines_available++;
-    }
-
-    spin_unlock(&tty->lock);
-}
-
-int tty_read(struct tty_device *tty, char *user_buf, unsigned long size) {
-    if (!tty || !user_buf || size == 0) return 0;
-
-    unsigned long bytes_read = 0;
-
-    /* Loop de Bloqueio Passivo: Suspende a CPU até que o hardware entregue dados */
-    while (1) {
-        spin_lock(&tty->lock);
-        
-        /* Acorda se houver linhas completas (Canónico) ou bytes soltos (Modo Raw) */
-        if (tty->lines_available > 0 || (tty->raw_count > 0 && !(tty->c_lflag & TTY_ICANON))) {
-            spin_unlock(&tty->lock);
-            break;
-        }
-        
-        spin_unlock(&tty->lock);
-        
-        /* Coloca o processador local em espera atómica segura para poupar energia */
-        __asm__ __volatile__("hlt");
-    }
-
-    /* Secção Crítica de Consumo: Retira dados do driver e descarrega na RAM do processo */
-    spin_lock(&tty->lock);
-
-    while (tty->in_tail != tty->in_head && bytes_read < size) {
-        char c = tty->input_buf[tty->in_tail];
-
-        user_buf[bytes_read++] = c;
-
-        tty->in_tail = (tty->in_tail + 1) % TTY_BUF_SIZE;
-        tty->raw_count--;
-
-        /* Condição de paragem estrita do padrão POSIX para buffers em modo canónico */
-        if ((tty->c_lflag & TTY_ICANON) && c == ASCII_NL) {
-            if (tty->lines_available > 0) {
-                tty->lines_available--;
-            }
-            break;
-        }
-    }
-
-    /* Atualiza os sinalizadores residuais do Modo RAW se os caracteres acabaram */
-    if (!(tty->c_lflag & TTY_ICANON) && tty->raw_count == 0) {
-        tty->lines_available = 0;
-    }
-
-    spin_unlock(&tty->lock);
-    return bytes_read;
-}
-
-int tty_write(struct tty_device *tty, const char *user_buf, unsigned long size) {
-    if (!tty || !user_buf || size == 0) return -1;
-
-    // 1. O spinlock protege EXCLUSIVAMENTE a inserção de caracteres na fila circular
-    spin_lock(&tty->lock);
-    for (unsigned long i = 0; i < size; i++) {
-        tty_put_queue(tty, user_buf[i]);
-    }
-    spin_unlock(&tty->lock);
-    
-    return size;
 }
 
 int tty_pop_output(struct tty_device *tty, char *out_c) {
@@ -552,6 +425,11 @@ int tty_write_to_in_queue(struct tty_device* tty, const char* buf, int size) {
             tty->lines_available++; 
         }
     }
+
+    if (escritos > 0) {
+        wakeup(&tty->read_wait);
+    }
+
     spin_unlock(&tty->lock);
     return escritos;
 }
@@ -560,24 +438,27 @@ int tty_write_to_in_queue(struct tty_device* tty, const char* buf, int size) {
 int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size) {
     if (!tty || !buf || size == 0) return 0;
 
+    spin_lock(&tty->lock);
+
     /* Loop de Bloqueio Passivo: Aguarda tráfego válido do mestre */
     while (1) {
-        spin_lock(&tty->lock);
         // Em modo canónico, só acorda se houver pelo menos uma linha inteira (\n) disponível
         if ((tty->c_lflag & TTY_ICANON) && tty->lines_available > 0) {
-            spin_unlock(&tty->lock);
             break;
         }
         // Em modo RAW, acorda se houver qualquer caractere cru
         if (!(tty->c_lflag & TTY_ICANON) && tty->raw_count > 0) {
-            spin_unlock(&tty->lock);
             break;
         }
-        spin_unlock(&tty->lock);
-        __asm__ __volatile__("pause");
+
+        /*
+         * BLOQUEIO PASSIVO REAL: Não há dados. A thread liberta o lock de forma 
+         * atómica, entra no estado THREAD_WAITING e cede a CPU. Ao ser acordada 
+         * pelo wakeup(), o wait() recupera o lock antes de retornar ao loop.
+         */
+        wait(&tty->read_wait, &tty->lock);
     }
 
-    spin_lock(&tty->lock);
     int lidos = 0;
 
     while (tty->in_tail != tty->in_head && lidos < size) {
@@ -598,8 +479,6 @@ int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size) {
             if (tty->lines_available > 0) tty->lines_available--;
         }
     }
-
-    // REMOVIDO COMPLETAMENTE: O bloco problemático de recontagem foi eliminado.
     
     spin_unlock(&tty->lock);
     return lidos;
@@ -620,6 +499,11 @@ int tty_write_to_out_queue(struct tty_device* tty, const char* buf, int size) {
         tty->out_head = next;
         escritos++;
     }
+
+    if (escritos > 0) {
+        wakeup(&tty->write_wait);
+    }
+
     spin_unlock(&tty->lock);
     return escritos;
 }
@@ -628,17 +512,17 @@ int tty_write_to_out_queue(struct tty_device* tty, const char* buf, int size) {
 int tty_read_from_out_queue(struct tty_device* tty, char* buf, int size) {
     if (!tty || !buf || size == 0) return 0;
 
-    while (1) {
-        spin_lock(&tty->lock);
-        if (tty->out_head != tty->out_tail) {
-            spin_unlock(&tty->lock);
-            break;
-        }
-        spin_unlock(&tty->lock);
-        __asm__ __volatile__("pause");
+    // Tranca o lock antes de validar a condição do buffer circular
+    spin_lock(&tty->lock);
+
+    while (tty->out_head == tty->out_tail) {
+         /*
+         * Buffer vazio. O Mestre dorme passivamente na sua própria âncora
+         * e liberta o lock para que a Réplica possa processar e escrever dados.
+         */
+        wait(&tty->write_wait, &tty->lock);
     }
 
-    spin_lock(&tty->lock);
     int lidos = 0;
 
     while (tty->out_tail != tty->out_head && lidos < size) {

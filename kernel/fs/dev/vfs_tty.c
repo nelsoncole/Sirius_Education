@@ -78,30 +78,20 @@ static int tfs_tty_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* 
     (void)offset; 
     if (!node || !buffer || size == 0) return 0;
 
-    // Extração segura do ponteiro privado
-    spin_lock(&g_vfs_tty_lock);
     struct tty_device* tty = (struct tty_device*)node->private_data;
-    spin_unlock(&g_vfs_tty_lock);
-    
     if (!tty) return -1;
 
-    // Nota: O tty_read interno já deve possuir o seu próprio tty->lock (que inicializaste)
-    return tty_read(tty, (char*)buffer, size);
+    return tty_read_from_in_queue(tty, (char*)buffer, size);
 }
 
 static int tfs_tty_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
     (void)offset; 
     if (!node || !buffer || size == 0) return 0;
 
-    // Extração segura do ponteiro privado
-    spin_lock(&g_vfs_tty_lock);
     struct tty_device* tty = (struct tty_device*)node->private_data;
-    spin_unlock(&g_vfs_tty_lock);
-    
     if (!tty) return -1;
 
-    // Nota: O tty_write interno já deve possuir o seu próprio tty->lock
-    return tty_write(tty, (const char*)buffer, size);
+    return tty_write_to_out_queue(tty, (const char*)buffer, size);
 }
 
 /**

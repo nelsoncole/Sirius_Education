@@ -71,6 +71,10 @@ struct tty_device {
 
     // Sinaliza que o buffer de vídeo privado foi alterado e precisa de ir para o ecrã físico
     volatile int refresh_needed;
+
+    /* Primitivas de Sincronização e Canais de Espera Passiva */
+    void* read_wait;            /* Âncora de memória para threads leitoras (Réplica/Shell) */
+    void* write_wait;           /* Âncora de memória para threads escritoras/controladoras (Mestre) */
 };
 
 /* ============================================================================
@@ -108,29 +112,6 @@ void tty_set_active_id(uint32_t id);
 struct tty_device* tty_get_current(void);
 
 /* ============================================================================
- *                      APIs de Entrada / Saída de Dados
- * ============================================================================ */
-
-/**
- * tty_push_char_isr - Injeta um caractere vindo do driver do teclado.
- *                     Esta função é executada no contexto de interrupção (Ring 0 / IRQ 1)
- *                     e processa os dados sem tocar diretamente no ecrã.
- */
-void tty_push_char_isr(struct tty_device *tty, char c);
-
-/**
- * tty_read - Consome dados do buffer do TTY e transfere para o espaço do utilizador.
- *            Mapeado diretamente na Syscall SYS_READ (fd = 0 / stdin).
- */
-int tty_read(struct tty_device *tty, char *user_buf, unsigned long size);
-
-/**
- * tty_write - Envia uma string de bytes direto para o buffer de saída da TTY.
- *             Mapeado diretamente na Syscall SYS_WRITE (fd = 1 ou 2 / stdout/stderr).
- */
-int tty_write(struct tty_device *tty, const char *user_buf, unsigned long size);
-
-/* ============================================================================
  *                      Interface com o Emulador de Tela
  * ============================================================================ */
 
@@ -145,6 +126,10 @@ int tty_pop_output(struct tty_device *tty, char *out_c);
 void tty_init_video_context(struct tty_device* tty, unsigned int pages);
 void tty_putc_backbuffer(struct tty_device *tty, char c);
 
+
+/* ============================================================================
+ *                      APIs de Entrada / Saída de Dados
+ * ============================================================================ */
 
 int tty_write_to_in_queue(struct tty_device* tty, const char* buf, int size);
 int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size);

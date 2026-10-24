@@ -21,6 +21,8 @@
 #include <kernel/lib/stddef.h>
 #include <kernel/lib/string.h>
 #include <kernel/klib.h>
+#include <kernel/kernel/sched/wait.h>
+#include <kernel/kernel/sched/wakeup.h>
 
 /**
  * @brief Estrutura POSIX sockaddr_ll para endereçamento físico Low-Level (Link Layer).
@@ -131,18 +133,14 @@ static long pf_packet_recvfrom(socket_t* sock, void* buf, unsigned long len, int
     spinlock_acquire(&sock->lock);
 
     /* 
-     * 1. BLOQUEIO SEGURO RAW PACKET: 
+     * 1. BLOQUEIO PASSIVO REAL RAW PACKET: 
      * Se o buffer estiver completamente vazio, a thread em Ring 3 cede o CPU 
-     * passivamente até que a 'network_rx_thread' capture um frame do cabo e avance o rx_head.
+     * transitando para THREAD_WAITING. A rotina 'packet_input', ao processar
+     * um frame vindo da rede, disparará o correspondente wakeup.
      */
     while (sock->rx_head == sock->rx_tail) 
     {
-        spinlock_release(&sock->lock);
-        
-        /* Coloca o core local em repouso passivo (ou chame scheduler_yield()) */
-        __asm__ __volatile__("hlt"); 
-        
-        spinlock_acquire(&sock->lock);
+        wait(&sock->wait_queue, &sock->lock);
     }
 
     /* 
@@ -234,6 +232,17 @@ void packet_input(socket_t* global_socket_list, const void* frame, uint32_t fram
                     curr->rx_buffer[curr->rx_head] = raw_frame_ptr[i];
                     curr->rx_head = (curr->rx_head + 1) % SOCKET_BUFFER_SIZE;
                 }
+
+                /* 
+                 * GATILHO DE DESBLOQUEIO DE FILA BRUTA:
+                 * O frame físico completo foi copiado para o ring buffer deste socket.
+                 * Acorda a thread adormecida em pf_packet_recvfrom (ex: Wireshark/Sniffer do Ring 3).
+                 */
+                wakeup(&curr->wait_queue);
+            }
+            else
+            {
+                kprintf("[PF_PACKET] Aviso: Buffer de Socket Raw saturado. Frame dropado.\n");
             }
             
             spinlock_release(&curr->lock);

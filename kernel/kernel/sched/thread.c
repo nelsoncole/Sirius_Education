@@ -72,7 +72,8 @@ static thread_t* thread_create_common(void (*entry_point)(void*), void* arg, voi
     // Guarda o topo limpo para o Syscall/TSS redefinirem a pilha do Core
     thread->kernel_stack_top = (void*)absolute_top; 
 
-    thread->next         = NULL;
+    thread->chan        = NULL;
+    thread->next        = NULL;
 
     return thread;
 }

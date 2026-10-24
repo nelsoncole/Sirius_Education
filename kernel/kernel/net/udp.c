@@ -21,6 +21,7 @@
 #include <kernel/klib.h>
 #include <kernel/lib/string.h>
 #include <kernel/arch/x86_64/kapi/timer.h>
+#include <kernel/kernel/sched/wakeup.h>
 
 /* Camada inferior do ecossistema de rede */
 extern int ip_output(uint32_t dest_ip, uint8_t protocol, const void* data, uint32_t len);
@@ -159,6 +160,13 @@ int udp_input(const void* data, uint32_t len, uint32_t src_ip)
 
     kprintf("[UDP Input] %d bytes injetados com sucesso no Ring Buffer (Porta: %d).\n", 
             user_data_len, ntohs(udp->dest_port));
+
+    /* 
+     * 6. SINALIZAÇÃO PASSIVA (Desbloqueio de dados):
+     * O datagrama e os seus respetivos metadados encontram-se totalmente organizados
+     * no buffer. Acorda de imediato a thread que aguardava na syscall sys_recvfrom.
+     */
+    wakeup(&target_sock->wait_queue);
 
     spin_unlock(&target_sock->lock);
     return 0;

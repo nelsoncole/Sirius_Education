@@ -21,6 +21,8 @@
 #include <kernel/kernel/core/spinlock.h>
 #include <kernel/klib.h>
 #include <kernel/lib/string.h>
+#include <kernel/kernel/sched/wait.h>
+#include <kernel/kernel/sched/wakeup.h>
 
 /**
  * @brief Associa uma identidade nominal (endereço/caminho) ao socket local.
@@ -54,20 +56,37 @@ static int af_local_connect(socket_t* sock, const void* addr, unsigned long addr
         return -1; // Connection refused
     }
 
+    spinlock_acquire(&sock->lock);
     /* Sinaliza que este socket cliente está a tentar conectar-se */
     sock->state = 3; // SOCKET_CONNECTING
+    spinlock_release(&sock->lock);
 
     /* Adiciona o socket cliente na fila de escuta (listen_queue) do servidor de forma atómica */
     socket_add_listen_queue(server_sock, sock);
 
-    /* Aguarda até que o processo Servidor execute o 'accept' e mude o nosso estado para CONNECTED */
+    /* 
+     * GATILHO 1 (Acorda Servidor): 
+     * Notifica o servidor (que pode estar bloqueado em af_local_accept) que há um novo
+     * cliente na listen_queue.
+     */
+    wakeup(&server_sock->wait_queue);
+
+    spinlock_acquire(&sock->lock);
+    /* 
+     * LOOP DE ESPERA PASSIVA REAL:
+     * Aguarda até que o processo Servidor execute o 'accept' e mude o nosso estado para CONNECTED.
+     */
     while (sock->state == 3) 
     {
-        __asm__ __volatile__("pause");
+        wait(&sock->wait_queue, &sock->lock);
     }
 
-    if (sock->state != 1) return -1; // Falha na conexão
+    if (sock->state != 1) {
+        spinlock_release(&sock->lock);
+        return -1; // Falha na conexão
+    }
 
+    spinlock_release(&sock->lock);
     return 0;
 }
 
@@ -80,14 +99,16 @@ static socket_t* af_local_accept(socket_t* sock)
 {
     if (!sock || sock->state != 2) return NULL;
 
-    /* Aguarda a chegada de um cliente na fila de escuta */
+    spinlock_acquire(&sock->lock);
+    /* 
+     * LOOP DE ESPERA PASSIVA REAL: 
+     * Aguarda a chegada de um cliente na fila de escuta sem desperdício de CPU.
+     */
     while (sock->listen_queue == NULL) 
     {
-        __asm__ __volatile__("pause");
+        wait(&sock->wait_queue, &sock->lock);
     }
 
-    /* Protege a extração da fila local usando o lock do próprio socket */
-    spinlock_acquire(&sock->lock);
     socket_t* client_sock = sock->listen_queue;
     if (client_sock) {
         sock->listen_queue = client_sock->next;
@@ -96,10 +117,13 @@ static socket_t* af_local_accept(socket_t* sock)
 
     if (!client_sock) return NULL;
 
-    /* CORREÇÃO ARQUITETURAL: Cria um novo socket para a conexão ativa (Session Socket) */
+    /* Cria um novo socket para a conexão ativa (Session Socket) */
     socket_t* session_sock = socket_create(AF_LOCAL, sock->type, 0);
     if (!session_sock) {
+        spinlock_acquire(&client_sock->lock);
         client_sock->state = 0; // Aborta o cliente por falta de memória no kernel
+        wakeup(&client_sock->wait_queue);
+        spinlock_release(&client_sock->lock);
         return NULL;
     }
 
@@ -108,7 +132,17 @@ static socket_t* af_local_accept(socket_t* sock)
     client_sock->peer = session_sock;
 
     session_sock->state = 1; // SOCKET_CONNECTED
+
+    spinlock_acquire(&client_sock->lock);
     client_sock->state  = 1; // SOCKET_CONNECTED
+
+    /* 
+     * GATILHO 2 (Acorda Cliente):
+     * O handshake local terminou. Acorda o processo cliente que aguardava passivamente 
+     * em af_local_connect pelo estabelecimento estável da sessão.
+     */
+    wakeup(&client_sock->wait_queue);
+    spinlock_release(&client_sock->lock);
 
     return session_sock; /* O VFS associará este novo socket ao FD retornado pelo accept */
 }
@@ -177,6 +211,16 @@ static long af_local_sendto(socket_t* sock, const void* buf, unsigned long len, 
         bytes_delivered++;
     }
 
+     /* 
+     * GATILHO 3 (Acorda Receptor Local):
+     * Se dados novos foram depositados diretamente no buffer do receptor, acorda de imediato 
+     * a thread leitora local que estava bloqueada em af_local_recvfrom.
+     */
+    if (bytes_delivered > 0) 
+    {
+        wakeup(&dest_sock->wait_queue);
+    }
+
     spinlock_release(&dest_sock->lock);
 
     return (long)bytes_delivered;
@@ -203,12 +247,7 @@ static long af_local_recvfrom(socket_t* sock, void* buf, unsigned long len, int 
      */
     while (sock->rx_head == sock->rx_tail && sock->state == 1) 
     {
-        spinlock_release(&sock->lock);
-        
-        /* Cede o CPU de forma passiva (Pode substituir por scheduler_yield() se implementado) */
-        __asm__ __volatile__("hlt"); 
-        
-        spinlock_acquire(&sock->lock);
+        wait(&sock->wait_queue, &sock->lock);
     }
 
     /* 

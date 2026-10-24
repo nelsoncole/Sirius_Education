@@ -106,6 +106,8 @@ typedef struct socket {
     struct socket* listen_queue;    // Cabeça da fila de conexões pendentes para o accept()
     struct socket* next;            // Próximo socket na fila de conexões pendentes
     struct socket* global_next;     // Gerencia o encadeamento na lista global g_bound_sockets_head
+
+    void* wait_queue;
 } socket_t;
 
 

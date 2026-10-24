@@ -21,6 +21,7 @@
 #include <kernel/kernel/net/net.h>
 #include <kernel/klib.h>
 #include <kernel/lib/string.h>
+#include <kernel/kernel/sched/wakeup.h>
 
 /* Camada inferior do protocolo de internet */
 extern int ip_output(uint32_t dest_ip, uint8_t protocol, const void* data, uint32_t len);
@@ -393,6 +394,15 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
 
             /* Transitamos o estado físico do socket para a conectividade total */
             sock->state = TCP_STATE_ESTABLISHED;
+
+            /* 
+             * ------------------------------------------------------------------
+             * GATILHO 1: DESBLOQUEIO DO CONNECT (CLIENTE)
+             * O estado mudou para ESTABLISHED. Acorda a thread que estava 
+             * bloqueada em af_inet_connect() à espera do fim do handshake.
+             * ------------------------------------------------------------------
+             */
+            wakeup(&sock->wait_queue);
             
             /* 
              * FECHO DO THREE-WAY HANDSHAKE:
@@ -426,9 +436,10 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                 
                 kprintf("[TCP] A enviar ACK final (Seq: %u, Ack: %u) para estabelecer ligacao.\n", 
                         sock->local_seq, sock->remote_ack);
-                
+
                 /* Dispara o pacote final para descer a pilha de rede */
                 spin_unlock(&sock->lock); /* Solta temporariamente o lock antes de invocar o IP */
+                
                 ip_output(src_ip, IPPROTO_TCP, ack_buffer, ack_packet_size);
                 kfree(ack_buffer);
                 
@@ -495,6 +506,11 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
 
                 kprintf("[TCP] SYN-ACK enviado de volta. Adicionado a listen_queue.\n");
 
+                /* 
+                 * NOTA: Aqui NÃO chamamos wakeup porque a conexão ainda é parcial (SYN_RECV).
+                 * O accept() do Ring 3 só deve acordar quando o handshake terminar (ESTABLISHED).
+                 */
+
                 spin_unlock(&sock->lock);
 
                 ip_output(src_ip, IPPROTO_TCP, synack_buf, synack_size);
@@ -553,12 +569,20 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                     g_bound_sockets_head = session_sock;
                     spin_unlock(&g_socket_list_lock);
 
-                    /* 7. Eliminar o nó temporário dummy (curr) com segurança */
+                    /* 7. Libertamos o nó temporário dummy que foi substituído */
                     kfree(curr);
+
+                    /* 
+                     * ------------------------------------------------------------------
+                     * GATILHO 2: DESBLOQUEIO DO ACCEPT (SERVIDOR)
+                     * Um novo socket real e ESTABLISHED entrou na listen_queue do Pai.
+                     * Acorda imediatamente o processo servidor bloqueado em af_inet_accept()!
+                     * ------------------------------------------------------------------
+                     */
+                    wakeup(&sock->wait_queue);
 
                     /* 8. SINALIZAR/ACORDAR O ACCEPT */
                     kprintf("[TCP] Sessão estável criada com sucesso. Acordando accept().\n");
-                    // wakeup(&sock->wait_queue);
 
                     spin_unlock(&sock->lock);
                     return 0;
@@ -566,7 +590,6 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
                 prev = curr;
                 curr = curr->next;
             }
-            spin_unlock(&sock->lock);
         }
     }
     else if (sock->state == TCP_STATE_FIN_WAIT_1)
@@ -716,6 +739,15 @@ int tcp_input(const void* data, uint32_t len, uint32_t src_ip)
             /* 4. ATUALIZAÇÃO ATÓMICA DOS CONTADORES DO SOCKET (Substituindo g_tcp_) */
             sock->remote_ack = ntohl(tcp->seq_num) + payload_len; /* Avança o ACK com o tamanho do payload */
             sock->local_seq  = ntohl(tcp->ack_num);              /* Avança a nossa sequência com o ACK recebido */
+
+            /* 
+             * ------------------------------------------------------------------
+             * GATILHO DE DESBLOQUEIO DE DADOS (RECEPCAO)
+             * Novos dados de rede acabam de ser acomodados estavelmente no rx_buffer.
+             * Acorda a thread (Ring 3 App) adormecida em wait(&sock->wait_queue, &sock->lock).
+             * ------------------------------------------------------------------
+             */
+            wakeup(&sock->wait_queue);
 
             /* 5. ENVIO DO ACK DE CONFIRMAÇÃO DE DADOS */
             uint32_t ack_reply_size = sizeof(tcp_header_t);

@@ -10,7 +10,7 @@
  *   Created Date: 17/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 21/09/2026
+ *  Modified Date: 24/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -20,6 +20,8 @@
 #include <kernel/lib/stddef.h>
 #include <kernel/lib/string.h>
 #include <kernel/klib.h>
+
+#include <kernel/kernel/sched/wait.h>
 
 
 /* Declarações das rotinas externas e nativas da pilha TCP/UDP */
@@ -87,12 +89,11 @@ static int af_inet_connect(socket_t* sock, const void* addr, unsigned long addrl
             while (sock->state == 4) /* 4 = TCP_STATE_SYN_SENT */
             {
                 /* 
-                 * Função hipotética de sincronização do Sirius_Education:
-                 * Liberta temporariamente o lock do socket e coloca a thread atual em 
-                 * estado de espera passiva (SLEEP). O Scheduler assume o controlo.
-                 * Ao acordar, o lock é readequado automaticamente.
+                 * BLOQUEIO PASSIVO REAL: Liberta o lock do socket de forma atómica,
+                 * coloca a thread em THREAD_WAITING ancorada no canal de espera do socket.
+                 * Ao acordar por uma resposta de rede (SYN+ACK), readquire o lock automaticamente.
                  */
-                //scheduler_sleep_on(&sock->wait_queue, &sock->lock);
+                wait(&sock->wait_queue, &sock->lock);
             }
 
             /* Ao acordar, avalia qual foi o desfecho do Handshake */
@@ -136,15 +137,12 @@ static socket_t* af_inet_accept(socket_t* sock)
         spinlock_release(&sock->lock);
         return NULL;
     }
-    spinlock_release(&sock->lock);
 
     socket_t* ready_socket = NULL;
 
     /* Aguarda até que o tcp_input insira um socket ESTABLISHED na fila */
     while (1) 
     {
-        spinlock_acquire(&sock->lock);
-        
         socket_t* prev = NULL;
         socket_t* curr = sock->listen_queue;
         
@@ -167,17 +165,20 @@ static socket_t* af_inet_accept(socket_t* sock)
             prev = curr;
             curr = curr->next;
         }
-        
-        spinlock_release(&sock->lock);
 
         if (ready_socket != NULL) {
-            break;
+            break; /* Elemento encontrado! Sai do loop principal com o lock ainda retido */
         }
 
-        /* Bloqueia/Cede tempo até o handshake terminar na pilha de rede */
-        __asm__ __volatile__("pause"); 
-        // sys_yield(); 
+        /* 
+         * BLOQUEIO PASSIVO (Removido o loop assembly "pause"):
+         * A fila de escuta está vazia. Dorme na fila do socket pai esperando que o 
+         * manipulador de pacotes de rede (IP/TCP) faça o processamento e o correspondente wakeup.
+         */
+        wait(&sock->wait_queue, &sock->lock);
     }
+
+    spinlock_release(&sock->lock);
 
     kprintf("[ACCEPT] Retornando o socket de sessão já instanciado e alimentado!\n");
     return ready_socket; 
@@ -249,6 +250,7 @@ static long af_inet_recvfrom(socket_t* sock, void* buf, unsigned long len, int f
     /* Extração exclusiva e protegida do buffer circular do socket */
     spinlock_acquire(&sock->lock);
 
+    
     if (sock->type == SOCK_DGRAM)
     {
         /* 
@@ -258,12 +260,7 @@ static long af_inet_recvfrom(socket_t* sock, void* buf, unsigned long len, int f
          */
         while (sock->rx_head == sock->rx_tail) 
         {
-            spinlock_release(&sock->lock);
-            
-            /* Coloca o core local em repouso passivo (ou chame scheduler_yield()) */
-            __asm__ __volatile__("hlt"); 
-            
-            spinlock_acquire(&sock->lock);
+            wait(&sock->wait_queue, &sock->lock);
         }
 
         /* Passo A: Extrai o tamanho real do datagrama (4 bytes) */
@@ -307,9 +304,7 @@ static long af_inet_recvfrom(socket_t* sock, void* buf, unsigned long len, int f
         /* BLOQUEIO SEGURO TCP */
         while (sock->rx_head == sock->rx_tail && sock->state == TCP_STATE_ESTABLISHED) 
         {
-            spinlock_release(&sock->lock);
-            __asm__ __volatile__("hlt"); 
-            spinlock_acquire(&sock->lock);
+            wait(&sock->wait_queue, &sock->lock);
         }
 
         if (sock->rx_head == sock->rx_tail && sock->state != TCP_STATE_ESTABLISHED)

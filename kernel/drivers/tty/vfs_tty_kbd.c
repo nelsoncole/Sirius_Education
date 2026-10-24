@@ -125,8 +125,11 @@ void tty_keyboard_bridge_thread(void* arg) {
                 /* EXECUÇÃO DO DESVIO DIRETO PARA A PTY ATIVA */
                 if (pty_ativa)
                 {
-                    // 1. Injeta o caractere diretamente na entrada (in_buf) da PTY ativa (O Bash lê na hora!)
-                    tty_push_char_isr(pty_ativa, ascii_char);
+                    // Prepara o caractere num buffer local (visto que a API aceita const char*)
+                    char c_buf = ascii_char;
+
+                    // Injeta os dados de forma assíncrona e segura. O Bash é acordado de imediato pelo wakeup interno!
+                    tty_write_to_in_queue(pty_ativa, &c_buf, 1);
 
                     // 2. Se o eco local estiver ativo na PTY, replica o caractere na tty0 fixa de texto
                     // para que o utilizador veja no ecrã F1 o comando a ser digitado
@@ -137,7 +140,7 @@ void tty_keyboard_bridge_thread(void* arg) {
                         {
                             struct tty_device *tty0_dev = (struct tty_device *)tty0_node->private_data;
 
-                            tty_push_char_isr(tty0_dev, ascii_char);
+                            tty_write_to_in_queue(tty0_dev, &c_buf, 1);
 
                             char echo_c;
                             while (tty_pop_output(tty0_dev, &echo_c))
@@ -152,7 +155,8 @@ void tty_keyboard_bridge_thread(void* arg) {
                 else
                 {
                     // Se nenhuma PTY estiver ativa no sistema, mantém o comportamento original do hardware
-                    tty_push_char_isr(tty_focado, ascii_char);
+                    char c_buf = ascii_char;
+                    tty_write_to_in_queue(tty_focado, &c_buf, 1);
 
                     char echo_c;
                     while (tty_pop_output(tty_focado, &echo_c))

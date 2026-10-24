@@ -83,6 +83,8 @@ C_OBJ := \
 	$(BUILD_DIR)/scheduler.o \
 	$(BUILD_DIR)/thread.o \
 	$(BUILD_DIR)/process.o \
+	$(BUILD_DIR)/wait.o \
+	$(BUILD_DIR)/wakeup.o \
 	$(BUILD_DIR)/clone.o \
 	$(BUILD_DIR)/fork.o \
 	$(BUILD_DIR)/process_loader.o \
@@ -343,6 +345,12 @@ $(BUILD_DIR)/thread.o: $(KERNEL_DIR)/sched/thread.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/process.o: $(KERNEL_DIR)/sched/process.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/wait.o: $(KERNEL_DIR)/sched/wait.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/wakeup.o: $(KERNEL_DIR)/sched/wakeup.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/clone.o: $(KERNEL_DIR)/sched/clone.c | $(BUILD_DIR)
