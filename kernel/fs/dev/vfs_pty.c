@@ -12,7 +12,7 @@
  *   Created Date: 24/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 22/09/2026
+ *  Modified Date: 25/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -251,7 +251,6 @@ static int tfs_pty_master_write(vfs_node_t* node, uint64_t offset, uint32_t size
     pty_pair_t* pair = (pty_pair_t*)node->private_data;
     if (!pair || !pair->replica_tty) return -1;
 
-
      // REGRA DO JOGO: O Mestre injeta dados da rede no canal de entrada (in) da Réplica
     return tty_write_to_in_queue(pair->replica_tty, (const char*)buffer, size);
 }
@@ -276,16 +275,27 @@ static int tfs_pty_replica_write(vfs_node_t* node, uint64_t offset, uint32_t siz
     pty_pair_t* pair = (pty_pair_t*)node->private_data;
     if (!pair || !pair->replica_tty) return -1;
 
-    // 1. Escreve no buffer de saída (out) para que o mestre (SSHD) possa ler via master_read
-    int bytes_escritos = tty_write_to_out_queue(pair->replica_tty, (const char*)buffer, size);
-    
+    int bytes_escritos;
+
+    // Só gasta espaço no buffer se houver um Master ativo a ler!
+    if (pair->master_present)
+    {
+         // 1. Escreve no buffer de saída (out) para que o mestre (SSHD) possa ler via master_read
+        bytes_escritos = tty_write_to_out_queue(pair->replica_tty, (const char *)buffer, size);
+    }
+    else
+    {
+        // Modo Consola Direta: Ignora o buffer circular e assume que processou tudo
+        bytes_escritos = size;
+    }
+
     struct tty_device* tty_tmp = pty_vfs_get_active_engine();
     if (tty_tmp == pair->replica_tty)
     {
         // 2. REGRA DO JOGO: Resolve a tty0 e bombeia síncronamente os dados nela
         vfs_node_t *tty0_node = tty_vfs_get_node_by_name("tty0");
         if (tty0_node && tty0_node->private_data)
-        {
+        { 
             struct tty_device *tty0_device = (struct tty_device *)tty0_node->private_data;
             const char *src = (const char *)buffer;
             // tty_write(tty0_device, (const char*)buffer, bytes_escritos);
@@ -314,6 +324,11 @@ static int tfs_ptmx_ioctl(vfs_node_t* node, uint32_t cmd, unsigned long arg) {
         if (!user_pty_num) return -1;
         
         *user_pty_num = pair->id;
+
+        // ATIVAÇÃO DO MASTER: O Espaço de Utilizador (ex: SSHD) requisitou o ID.
+        // Isto indica que existe um processo Master ativo que vai ler a out_queue.
+        pair->master_present = 1; 
+
         return 0;
     }
 

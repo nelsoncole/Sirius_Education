@@ -20,12 +20,14 @@
 #include <kernel/drivers/tty/tty.h>
 #include <kernel/drivers/char/keyboard.h>
 #include <kernel/klib.h>
+#include <kernel/kernel/sched/scheduler.h>
 
 /* Definições de Scancodes padrão IBM Set 1 para Teclas de Função F1-F4 */
 #define SCANCODE_F1 0x3B
 #define SCANCODE_F4 0x3E
 
 extern void tty_putc_backbuffer(struct tty_device *tty, char c);
+extern void* thread_kbd;
 
 /* Tabela base: Minúsculas e números normais */
 static const char g_kbd_us_keymap[128] = {
@@ -49,6 +51,11 @@ static const char g_kbd_us_shift_keymap[128] = {
  */
 void tty_keyboard_bridge_thread(void* arg) {
     (void)arg;
+
+    __asm__ __volatile__("cli");
+    cpu_data_block_t* cpu = get_current_cpu();
+    thread_kbd = (void*) cpu->current_thread;
+    __asm__ __volatile__("sti");
 
     while (1)
     {

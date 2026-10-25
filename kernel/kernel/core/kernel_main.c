@@ -368,7 +368,7 @@ void kernel_main(BOOT_INFO *boot_info)
 
     int init_argc = 5;
     char *init_argv[] = {
-        "/mnt/hd0/apps/user.elf",     // argv[0]: Caminho do executável
+        "/mnt/hd0/apps/user.elf",       // argv[0]: Caminho do executável
         g_boot_partition_name,          // argv[1]: Ex: "ahci0.1" (Origem de persistência)
         "text_mode",                    // argv[2]: Modo gráfico/texto base
         "/dev/tty0",                    // argv[3]: Terminal padrão do sistema

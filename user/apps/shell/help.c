@@ -15,7 +15,7 @@
 #include <string.h>
 
 void menu_geral(void) {
-    printf("SiriusOS Shell Avançada v1.0\n");
+    printf("SiriusOS shell, version 1.1\n");
     printf("Comandos suportados nativamente:\n");
     printf("  help     - Exibe este menu de ajuda.\n");
     printf("  ls / dir - Lista os ficheiros da diretoria atual.\n");

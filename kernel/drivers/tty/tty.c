@@ -88,11 +88,9 @@ void tty_register_driver_instance(uint32_t id, struct tty_device* tty) {
     // 1. Vincula a instância ao catálogo do driver
     g_tty_instances[id] = tty;
 
-    // 2. Garante a inicialização atómica e limpa dos canais de espera passiva
     tty->read_wait  = NULL; 
     tty->write_wait = NULL;
 
-    // 3. Garante que os índices dos buffers circulares desta instância começam zerados
     tty->in_head   = 0;
     tty->in_tail   = 0;
     tty->out_head  = 0;
@@ -406,7 +404,9 @@ int tty_write_to_in_queue(struct tty_device* tty, const char* buf, int size) {
         if (c == ASCII_CR) c = ASCII_NL;
 
         int next = (tty->in_head + 1) % TTY_BUF_SIZE;
-        if (next == tty->in_tail) break; // Fila cheia
+        
+        // Se a fila estiver cheia, sai. (Idealmente aqui colocarias um wait se quisesses bloquear)
+        if (next == tty->in_tail) break; 
         
         tty->input_buf[tty->in_head] = c;
         tty->in_head = next;
@@ -419,13 +419,12 @@ int tty_write_to_in_queue(struct tty_device* tty, const char* buf, int size) {
 
         if (tty->c_lflag & TTY_ICANON) {
             if (c == ASCII_NL) {
-                tty->lines_available++; // Incrementa estritamente por cada \n real que entra
+                tty->lines_available++; 
             }
-        } else {
-            tty->lines_available++; 
         }
     }
 
+    // Acorda a Réplica/Shell que está à espera de ler dados na entrada
     if (escritos > 0) {
         wakeup(&tty->read_wait);
     }
@@ -440,22 +439,13 @@ int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size) {
 
     spin_lock(&tty->lock);
 
-    /* Loop de Bloqueio Passivo: Aguarda tráfego válido do mestre */
     while (1) {
-        // Em modo canónico, só acorda se houver pelo menos uma linha inteira (\n) disponível
         if ((tty->c_lflag & TTY_ICANON) && tty->lines_available > 0) {
             break;
         }
-        // Em modo RAW, acorda se houver qualquer caractere cru
         if (!(tty->c_lflag & TTY_ICANON) && tty->raw_count > 0) {
             break;
         }
-
-        /*
-         * BLOQUEIO PASSIVO REAL: Não há dados. A thread liberta o lock de forma 
-         * atómica, entra no estado THREAD_WAITING e cede a CPU. Ao ser acordada 
-         * pelo wakeup(), o wait() recupera o lock antes de retornar ao loop.
-         */
         wait(&tty->read_wait, &tty->lock);
     }
 
@@ -471,19 +461,16 @@ int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size) {
         if (tty->c_lflag & TTY_ICANON) {
             if (c == ASCII_NL) {
                 if (tty->lines_available > 0) {
-                    tty->lines_available--; // Consumiu exatamente uma linha completa
+                    tty->lines_available--; 
                 }
-                break; // POSIX determina paragem estrita no fim da linha atual
+                break; 
             }
-        } else {
-            if (tty->lines_available > 0) tty->lines_available--;
         }
     }
     
     spin_unlock(&tty->lock);
     return lidos;
 }
-
 
 /* Injeta dados no buffer de Saída (Réplica/Shell escreve -> Mestre vai ler) */
 int tty_write_to_out_queue(struct tty_device* tty, const char* buf, int size) {
@@ -500,8 +487,9 @@ int tty_write_to_out_queue(struct tty_device* tty, const char* buf, int size) {
         escritos++;
     }
 
+    // Acorda o Mestre que estava a dormir porque a out_queue estava vazia
     if (escritos > 0) {
-        wakeup(&tty->write_wait);
+        wakeup(&tty->write_wait); 
     }
 
     spin_unlock(&tty->lock);
@@ -512,14 +500,9 @@ int tty_write_to_out_queue(struct tty_device* tty, const char* buf, int size) {
 int tty_read_from_out_queue(struct tty_device* tty, char* buf, int size) {
     if (!tty || !buf || size == 0) return 0;
 
-    // Tranca o lock antes de validar a condição do buffer circular
     spin_lock(&tty->lock);
 
     while (tty->out_head == tty->out_tail) {
-         /*
-         * Buffer vazio. O Mestre dorme passivamente na sua própria âncora
-         * e liberta o lock para que a Réplica possa processar e escrever dados.
-         */
         wait(&tty->write_wait, &tty->lock);
     }
 
@@ -529,6 +512,7 @@ int tty_read_from_out_queue(struct tty_device* tty, char* buf, int size) {
         buf[lidos++] = tty->output_buf[tty->out_tail];
         tty->out_tail = (tty->out_tail + 1) % TTY_BUF_SIZE;
     }
+
     spin_unlock(&tty->lock);
     return lidos;
 }

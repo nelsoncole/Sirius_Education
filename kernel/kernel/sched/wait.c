@@ -16,10 +16,10 @@
  *         Return:  None (Retorna apenas quando a thread for reativada por um wakeup).
  * 
  *         Author: Nelson Cole
- *   Created Date: 05/09/2026
+ *   Created Date: 24/10/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 06/09/2026
+ *  Modified Date: 25/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -47,5 +47,25 @@ void wait(void *chan, spinlock_t *lk) {
     // e precisa de recuperar o lock antes de voltar para o loop do TTY
 
     if(lk != NULL) spin_lock(lk);
+}
+
+void wait_flag(void *chan, spinlock_t *lk, unsigned long flags) {
+    if(!chan) return;
+    
+    cpu_data_block_t *cpu = get_current_cpu();
+    thread_t *current = cpu->current_thread;
+    
+    current->state = THREAD_WAITING;
+    current->chan = chan; // Guarda a âncora (ex: &tty->read_wait)
+    
+    // Liberta o lock do TTY para que o Mestre possa escrever no buffer
+    if(lk != NULL) spinlock_unlock_irqrestore(lk, flags);
+    
+    schedule();
+    
+    // Quando a thread for acordada pelo wakeup, ela retoma aqui
+    // e precisa de recuperar o lock antes de voltar para o loop do TTY
+
+    if(lk != NULL) spinlock_lock_irqsave(lk);
 }
 

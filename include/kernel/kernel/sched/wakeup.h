@@ -8,7 +8,7 @@
  *   Created Date: 24/10/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 24/10/2026
+ *  Modified Date: 25/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -18,5 +18,6 @@
 #define _WAKEUP_H_
 
 void wakeup(void *chan);
+void wakeup_thread(void *chan, void *th);
 
 #endif

@@ -15,10 +15,10 @@
  *         Return:      None.
  * 
  *         Author: Nelson Cole
- *   Created Date: 05/09/2026
+ *   Created Date: 24/10/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 06/09/2026
+ *  Modified Date: 25/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -60,4 +60,22 @@ void wakeup(void *chan) {
     }
 
     process_list_spinlock_release();
+}
+
+void wakeup_thread(void *chan, void *th) {
+    if (!chan || !th ) return;
+
+    thread_t *thread = (thread_t*)th;
+     if (thread != NULL && 
+            thread->state == THREAD_WAITING && 
+            thread->chan == chan) 
+        {
+            
+            thread->chan = NULL;
+
+            thread->state = THREAD_READY;
+            
+            cpu_data_block_t *cpu = get_cpu_data_block(thread->cpu_id);
+            enqueue_thread(cpu, thread);
+        }
 }

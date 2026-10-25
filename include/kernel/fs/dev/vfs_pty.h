@@ -36,6 +36,8 @@ typedef struct pty_pair {
     int master_open_count;
     int replica_open_count;
 
+    int master_present;
+
     spinlock_t lock;                 // Lock privado da instância [SMP FINE-GRAINED]
 } pty_pair_t;
 

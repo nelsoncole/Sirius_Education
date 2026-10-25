@@ -8,7 +8,7 @@
  *   Created Date: 24/10/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 24/10/2026
+ *  Modified Date: 25/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -19,5 +19,6 @@
 
 #include <kernel/kernel/core/spinlock.h>
 void wait(void *chan, spinlock_t *lk);
+void wait_flag(void *chan, spinlock_t *lk, unsigned long flags);
 
 #endif

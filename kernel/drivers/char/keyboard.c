@@ -19,6 +19,8 @@
 #include <kernel/drivers/char/keyboard.h>
 #include <kernel/arch/x86_64/kapi/irq.h>
 #include <kernel/klib.h>
+#include <kernel/kernel/sched/wait.h>
+#include <kernel/kernel/sched/wakeup.h>
 
 #define IRQ_KEYBOARD 1
 
@@ -35,6 +37,8 @@ static uint8_t g_current_modifiers = 0; // Guarda o estado vivo do Shift/Caps
 static kbd_event_t g_kbd_raw_buffer[KBD_BUFFER_SIZE];
 static int g_kbd_head = 0;
 static int g_kbd_tail = 0;
+static void* g_kbd_wait = NULL;
+void* thread_kbd = NULL;
 
 static inline uint8_t inb(uint16_t port)
 {
@@ -50,6 +54,8 @@ void keyboard_ps2_init(void)
     g_current_modifiers = 0;
     g_kbd_head = 0;
     g_kbd_tail = 0;
+    g_kbd_wait = NULL;
+    thread_kbd = NULL;
 
     /* Limpa resíduos de boot */
     while (inb(KEYBOARD_STATUS_PORT) & KEYBOARD_STATUS_OUT_BUFFER_FULL)
@@ -111,6 +117,8 @@ void keyboard_handler(void)
         g_kbd_raw_buffer[g_kbd_head].scancode = byte;
         g_kbd_raw_buffer[g_kbd_head].modifiers_state = packet_modifiers;
         g_kbd_head = next;
+
+        wakeup_thread(&g_kbd_wait, thread_kbd);
     }
 }
 
@@ -120,7 +128,8 @@ void keyboard_handler(void)
 kbd_event_t keyboard_get_event(void)
 {
     while (g_kbd_tail == g_kbd_head) {
-        __asm__ __volatile__("pause");
+        //__asm__ __volatile__("pause");
+        wait(&g_kbd_wait, NULL);
     }
 
     kbd_event_t event = g_kbd_raw_buffer[g_kbd_tail];
