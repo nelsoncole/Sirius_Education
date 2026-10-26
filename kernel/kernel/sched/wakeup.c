@@ -18,7 +18,7 @@
  *   Created Date: 24/10/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 25/10/2026
+ *  Modified Date: 26/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -27,11 +27,13 @@
 #include <kernel/kernel/sched/wakeup.h>
 #include <kernel/klib.h>
 
+extern spinlock_t g_wait_lock;
+
 void wakeup(void *chan) {
     if (chan == NULL) return;
-
-    cpu_data_block_t *cpu = get_current_cpu();
-    process_list_spinlock_acquire();
+    
+    unsigned long flags_local = spinlock_lock_irqsave(&g_wait_lock);
+    unsigned long flags = process_list_spinlock_acquire();
 
     // Varre todos os processos registados no sistema
     for (process_t* p = g_process_list_head; p != NULL; p = p->next) 
@@ -55,21 +57,29 @@ void wakeup(void *chan) {
             p->main_thread->state = THREAD_READY;
 
             /* 3. Insere a thread de volta na Runqueue do Core para voltar a executar */
+            cpu_data_block_t *cpu = get_cpu_data_block(p->main_thread->cpu_id);
             enqueue_thread(cpu, p->main_thread);
         }
     }
 
-    process_list_spinlock_release();
+    process_list_spinlock_release(flags);
+
+    spinlock_unlock_irqrestore(&g_wait_lock , flags_local);
 }
 
 void wakeup_thread(void *chan, void *th) {
     if (!chan || !th ) return;
+
+    unsigned long flags_local = spinlock_lock_irqsave(&g_wait_lock );
 
     thread_t *thread = (thread_t*)th;
      if (thread != NULL && 
             thread->state == THREAD_WAITING && 
             thread->chan == chan) 
         {
+
+            /*kprintf("[SCHED] wakeup: Acordando a Thread TID %d bloqueada no canal %p...\n", 
+                    thread->tid, chan);*/
             
             thread->chan = NULL;
 
@@ -78,4 +88,5 @@ void wakeup_thread(void *chan, void *th) {
             cpu_data_block_t *cpu = get_cpu_data_block(thread->cpu_id);
             enqueue_thread(cpu, thread);
         }
+    spinlock_unlock_irqrestore(&g_wait_lock , flags_local);
 }

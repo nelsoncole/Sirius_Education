@@ -16,6 +16,7 @@
  */
 
 #include <kernel/arch/x86_64/cpu/cpu.h>
+#include <kernel/klib.h>
 
 /**
  * @brief Thread Idle do Kernel (Por núcleo).
@@ -26,11 +27,12 @@ void cpu_idle(void)
 {
     for (;;) 
     {
+        kprintf("INDLER\n");
         /* 
          * Ativa as interrupções locais para permitir que o núcleo 
          * acorde do estado de suspensão quando um evento disparar.
          */
-        __asm__ volatile("sti"); 
+        //__asm__ volatile("sti"); 
 
         /* 
          * Coloca o processador em estado de baixo consumo (Halt).

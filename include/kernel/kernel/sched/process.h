@@ -145,8 +145,8 @@ void process_exit(int code);
  */
 process_t* get_current_process(void);
 
-void process_list_spinlock_release(void);
-void process_list_spinlock_acquire(void);
+unsigned long process_list_spinlock_acquire(void);
+void process_list_spinlock_release(unsigned long flags);
 void process_list_insert(process_t* proc);
 void process_list_remove(process_t* proc);
 process_t* process_find_by_pid(pid_t pid);

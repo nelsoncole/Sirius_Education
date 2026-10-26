@@ -12,7 +12,7 @@
  *   Created Date: 24/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 25/09/2026
+ *  Modified Date: 26/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -23,6 +23,7 @@
 #include <kernel/fs/dev/vfs_pty.h>
 #include <kernel/fs/dev/vfs_tty.h>
 #include <kernel/klib.h>
+#include <kernel/kernel/core/panic.h>
 
 /* Protótipos das operações em conformidade estrita com vfs_operations_t */
 static int tfs_ptmx_open(vfs_node_t* node, uint32_t flags);
@@ -134,6 +135,11 @@ static pty_pair_t* vfs_pty_allocate_internal(void) {
 
     char replica_name[16];
     ksprintf(replica_name, "%d", pair->id);
+
+    if(!g_pts_root_node->ops || !g_pts_root_node->ops->create || !g_pts_root_node->ops->finddir)
+    { 
+        kernel_panic("[pty] error\n");
+    }
 
     g_pts_root_node->ops->create(g_pts_root_node, replica_name, 0620);
     vfs_node_t* r_node = g_pts_root_node->ops->finddir(g_pts_root_node, replica_name);

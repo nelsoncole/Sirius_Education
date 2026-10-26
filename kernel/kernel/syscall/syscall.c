@@ -797,7 +797,7 @@ uint64_t sys_waitpid(int32_t pid, int *wstatus, int options)
         int tem_filhos_vivos = 0;
         process_t* zombie_encontrado = NULL;
 
-        process_list_spinlock_acquire();
+        unsigned long flags = process_list_spinlock_acquire();
 
         // 2. VARREDURA COMPLETA: Registamos o estado real de toda a descendência
         for (process_t* p = g_process_list_head; p != NULL; p = p->next) 
@@ -818,8 +818,6 @@ uint64_t sys_waitpid(int32_t pid, int *wstatus, int options)
             }
         }
 
-        process_list_spinlock_release();
-
         // Se encontrámos um zombie estável, elegemo-lo para destruição e coleta
         if (zombie_encontrado != NULL) {
             child_proc = zombie_encontrado;
@@ -839,7 +837,7 @@ uint64_t sys_waitpid(int32_t pid, int *wstatus, int options)
             }
 
             kprintf("[SCI] sys_waitpid: Filho PID %d recolhido. Removendo...\n", child_pid);
-
+            process_list_spinlock_release(flags);
             process_list_remove(child_proc);
             kfree(child_proc);    
             return (uint64_t)child_pid; 
@@ -848,6 +846,7 @@ uint64_t sys_waitpid(int32_t pid, int *wstatus, int options)
         // 4. PROTEÇÃO DEFENSIVA: Evita loops infinitos se o PID pedido não existir
         if (!child_proc && !tem_filhos_vivos) 
         {
+            process_list_spinlock_release(flags);
             kprintf("[SCI ERROR] sys_waitpid: PID %d nao e um filho valido ou nao possui descendentes ativos.\n", pid);
             return (uint64_t)-1; 
         }
@@ -857,7 +856,7 @@ uint64_t sys_waitpid(int32_t pid, int *wstatus, int options)
         
         thread_t* current_thread = cpu->current_thread;
         current_thread->state = THREAD_BLOCKED;
-
+        process_list_spinlock_release(flags);
         schedule(); // O Pai adormece e cede os ciclos de CPU de forma limpa.
         
     }

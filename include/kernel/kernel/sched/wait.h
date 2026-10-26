@@ -19,6 +19,6 @@
 
 #include <kernel/kernel/core/spinlock.h>
 void wait(void *chan, spinlock_t *lk);
-void wait_flag(void *chan, spinlock_t *lk, unsigned long flags);
+unsigned long wait_flag(void *chan, spinlock_t *lk, unsigned long flags);
 
 #endif

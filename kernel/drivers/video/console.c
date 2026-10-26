@@ -10,7 +10,7 @@
  *   Created Date: 15/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 23/09/2026
+ *  Modified Date: 26/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -100,13 +100,12 @@ void tty_emulator_thread(void* arg) {
         if (!active_node) {
             active_node = tty_vfs_get_node_by_index(0); // Fallback tty0
         }
-
+        
         if (active_node && active_node->private_data) {
             struct tty_device* active_tty = (struct tty_device*)active_node->private_data;
             
             int mudou_foco = (active_node != last_active_node);
             int precisa_refresh = __sync_lock_test_and_set(&active_tty->refresh_needed, 0);
-
             if (precisa_refresh || mudou_foco) {
                 tty_flush_to_screen(active_tty);
                 // Garante a atualização imediata do ponteiro para travar loops infinitos
@@ -121,8 +120,7 @@ void tty_emulator_thread(void* arg) {
              * Use a função de yield (ex: scheduler_yield(), thread_yield()).
              * Isto permite que as threads do teclado e das aplicações Ring 3 rodem imediatamente.
              */
-            scheduler_yield(); 
-            __asm__ __volatile__("pause");
+            scheduler_yield();
             
         }
     }

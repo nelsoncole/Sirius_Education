@@ -117,7 +117,6 @@ void keyboard_handler(void)
         g_kbd_raw_buffer[g_kbd_head].scancode = byte;
         g_kbd_raw_buffer[g_kbd_head].modifiers_state = packet_modifiers;
         g_kbd_head = next;
-
         wakeup_thread(&g_kbd_wait, thread_kbd);
     }
 }
@@ -128,10 +127,9 @@ void keyboard_handler(void)
 kbd_event_t keyboard_get_event(void)
 {
     while (g_kbd_tail == g_kbd_head) {
-        //__asm__ __volatile__("pause");
         wait(&g_kbd_wait, NULL);
     }
-
+    
     kbd_event_t event = g_kbd_raw_buffer[g_kbd_tail];
     g_kbd_tail = (g_kbd_tail + 1) % KBD_BUFFER_SIZE;
     return event;

@@ -12,7 +12,7 @@
  *   Created Date: 15/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 22/09/2026
+ *  Modified Date: 26/09/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -188,6 +188,16 @@ void tty_vfs_init(vfs_node_t* dev_node) {
             kprintf("[VFS TTY] Terminal '/dev/%s' injetado em seguranca [SMP READY].\n", tty_name);
         }
     }
+
+    /**
+     * Nelson, aqui nos iniciamos o modo do display
+     * tty0 -> shell do kernel
+     * tty1 -> depuração do kernel
+     * tty2 -> Modo gráfico 
+     * tty3 -> Modo gráfico 
+     * 
+     * */
+    g_active_tty_index = 0;
 }
 
 /**

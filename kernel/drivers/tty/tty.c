@@ -10,7 +10,7 @@
  *   Created Date: 14/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 24/10/2026
+ *  Modified Date: 26/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -128,11 +128,11 @@ struct tty_device* tty_get_current(void) {
 int tty_pop_output(struct tty_device *tty, char *out_c) {
     if (!tty || !out_c) return 0;
 
-    spin_lock(&tty->lock);
+    unsigned long flags = spinlock_lock_irqsave(&tty->lock);
 
     /* Se a fila de saída assíncrona estiver vazia, retorna imediatamente falso */
     if (tty->out_tail == tty->out_head) {
-        spin_unlock(&tty->lock);
+        spinlock_unlock_irqrestore(&tty->lock, flags);
         return 0;
     }
 
@@ -140,7 +140,7 @@ int tty_pop_output(struct tty_device *tty, char *out_c) {
     *out_c = tty->output_buf[tty->out_tail];
     tty->out_tail = (tty->out_tail + 1) % TTY_BUF_SIZE;
 
-    spin_unlock(&tty->lock);
+    spinlock_unlock_irqrestore(&tty->lock, flags);
     return 1; /* Sucesso */
 }
 
@@ -394,8 +394,8 @@ void tty_putc_backbuffer_X(struct tty_device *tty, char c) {
 
 /* Injeta dados no buffer de Entrada (Mestre escreve -> Réplica vai ler) */
 int tty_write_to_in_queue(struct tty_device* tty, const char* buf, int size) {
-    if (!tty || !buf || size == 0) return 0;
-    
+    if (!tty || !buf || size == 0) return 0;\
+
     spin_lock(&tty->lock);
     int escritos = 0;
     for (int i = 0; i < size; i++) {
@@ -437,8 +437,6 @@ int tty_write_to_in_queue(struct tty_device* tty, const char* buf, int size) {
 int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size) {
     if (!tty || !buf || size == 0) return 0;
 
-    spin_lock(&tty->lock);
-
     while (1) {
         if ((tty->c_lflag & TTY_ICANON) && tty->lines_available > 0) {
             break;
@@ -446,9 +444,11 @@ int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size) {
         if (!(tty->c_lflag & TTY_ICANON) && tty->raw_count > 0) {
             break;
         }
-        wait(&tty->read_wait, &tty->lock);
+        
+        wait(&tty->read_wait, NULL);
     }
 
+    spin_lock(&tty->lock);
     int lidos = 0;
 
     while (tty->in_tail != tty->in_head && lidos < size) {
@@ -467,7 +467,7 @@ int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size) {
             }
         }
     }
-    
+
     spin_unlock(&tty->lock);
     return lidos;
 }
@@ -475,7 +475,7 @@ int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size) {
 /* Injeta dados no buffer de Saída (Réplica/Shell escreve -> Mestre vai ler) */
 int tty_write_to_out_queue(struct tty_device* tty, const char* buf, int size) {
     if (!tty || !buf || size == 0) return 0;
-    
+
     spin_lock(&tty->lock);
     int escritos = 0;
     for (int i = 0; i < size; i++) {
@@ -500,11 +500,11 @@ int tty_write_to_out_queue(struct tty_device* tty, const char* buf, int size) {
 int tty_read_from_out_queue(struct tty_device* tty, char* buf, int size) {
     if (!tty || !buf || size == 0) return 0;
 
-    spin_lock(&tty->lock);
-
     while (tty->out_head == tty->out_tail) {
-        wait(&tty->write_wait, &tty->lock);
+        wait(&tty->write_wait, NULL);
     }
+
+    spin_lock(&tty->lock);
 
     int lidos = 0;
 

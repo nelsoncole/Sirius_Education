@@ -36,12 +36,12 @@ process_t* g_process_list_head = NULL;
 /* Spinlock central para proteção da lista em ambiente SMP */
 spinlock_t g_process_list_lock = {0};
 
-void process_list_spinlock_acquire(void) {
-    spinlock_acquire(&g_process_list_lock);
+unsigned long process_list_spinlock_acquire(void) {
+    return spinlock_lock_irqsave(&g_process_list_lock);
 }
 
-void process_list_spinlock_release(void) {
-    spinlock_release(&g_process_list_lock);
+void process_list_spinlock_release(unsigned long flags) {
+    spinlock_unlock_irqrestore(&g_process_list_lock, flags);
 }
 
 /**

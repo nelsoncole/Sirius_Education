@@ -11,7 +11,7 @@
  *   Created Date: 18/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 25/10/2026
+ *  Modified Date: 26/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -345,19 +345,15 @@ int net_driver_receive(const void* buffer, uint32_t packet_size)
         return -1;
     }
 
-    spinlock_acquire(&g_net_rx_lock);
-
     uint32_t next_head = (g_net_rx_head + 1) % NET_RX_QUEUE_SIZE;
     if (next_head == g_net_rx_tail) 
     {
-        spinlock_release(&g_net_rx_lock);
         return -2; 
     }
 
     uint8_t* packet_copy = (uint8_t*)kmalloc(packet_size);
     if (!packet_copy) 
     {
-        spinlock_release(&g_net_rx_lock);
         return -3;
     }
     memcpy(packet_copy, buffer, packet_size);
@@ -368,19 +364,16 @@ int net_driver_receive(const void* buffer, uint32_t packet_size)
 
     wakeup_thread(&g_net_rx_wait, thread_rx);
 
-    spinlock_release(&g_net_rx_lock);
     return 0; 
 }
 
 void net_set_link_event(net_event_t event)
-{
-    unsigned long flags;
-    
+{   
     /* Protege a escrita contra concorrência e preempção na IRQ */
-    flags = spinlock_lock_irqsave(&g_net_rx_lock);
+    spinlock_acquire(&g_net_rx_lock);
     g_net_link_event = event;
     wakeup_thread(&g_net_rx_wait, thread_rx);
-    spinlock_unlock_irqrestore(&g_net_rx_lock, flags);
+    spinlock_release(&g_net_rx_lock);
 }
 
 net_event_t net_consume_link_event(void)
@@ -390,15 +383,10 @@ net_event_t net_consume_link_event(void)
         return NET_EVENT_NONE;
     }
 
-    unsigned long flags;
     net_event_t event;
-
-    flags = spinlock_lock_irqsave(&g_net_rx_lock);
     
     event = g_net_link_event;
     g_net_link_event = NET_EVENT_NONE; /* Consome o evento (Reset) */
-    
-    spinlock_unlock_irqrestore(&g_net_rx_lock, flags);
 
     return event;
 }
@@ -407,10 +395,8 @@ void network_rx_thread(void* arg) {
     (void)arg;
     kprintf("[NET CORE] Thread de processamento de pacotes (RX) ativa em Ring 0.\n");
 
-    unsigned long flags = spinlock_lock_irqsave(&g_net_rx_lock);
     cpu_data_block_t* cpu = get_current_cpu();
     thread_rx = (void*) cpu->current_thread;
-    spinlock_unlock_irqrestore(&g_net_rx_lock, flags);
 
     while (1)
     {
@@ -427,16 +413,10 @@ void network_rx_thread(void* arg) {
         uint8_t* packet_data = NULL;
         uint32_t packet_len  = 0;
 
-        /* CRÍTICO FIX: Desativa as interrupções antes de prender o Lock em contexto de Thread!
-           Isto impede que a IRQ da placa de rede interrompa esta linha e cause o Deadlock. */
-        flags = spinlock_lock_irqsave(&g_net_rx_lock);
 
         // BLOQUEIO PASSIVO: Enquanto a fila circular estiver vazia, a thread dorme!
         while (g_net_rx_head == g_net_rx_tail)
         {
-            // O wait liberta o lock de forma atómica e adormece a thread.
-            wait_flag(&g_net_rx_wait, &g_net_rx_lock, flags);
-
             if (g_net_rx_head == g_net_rx_tail)
             {
                 // o wakeup e do evento
@@ -446,7 +426,6 @@ void network_rx_thread(void* arg) {
 
         if (g_net_rx_head == g_net_rx_tail)
         {
-            spinlock_unlock_irqrestore(&g_net_rx_lock, flags);
             continue;
         }
 
@@ -454,8 +433,6 @@ void network_rx_thread(void* arg) {
         packet_len  = g_net_rx_queue[g_net_rx_tail].len;
         g_net_rx_tail = (g_net_rx_tail + 1) % NET_RX_QUEUE_SIZE;
         
-        /* Restaura as interrupções imediatamente após ler da fila circular */
-        spinlock_unlock_irqrestore(&g_net_rx_lock, flags);
 
         /* Guarda o momento exato em que o pacote começou a ser tratado */
         uint64_t tsc_start = read_tsc();

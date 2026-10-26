@@ -78,6 +78,52 @@ static thread_t* thread_create_common(void (*entry_point)(void*), void* arg, voi
     return thread;
 }
 
+thread_t* thread_create_init(uint32_t cpu_id)
+{
+    thread_t* thread = (thread_t*)kmalloc(sizeof(thread_t));
+    void* kernel_stack_raw = (void*)kmalloc(8192);
+
+    if (!thread || !kernel_stack_raw) 
+    {
+        if (thread) kfree(thread);
+        if (kernel_stack_raw) kfree(kernel_stack_raw);
+        return NULL;
+    }
+
+    memset(thread, 0, sizeof(thread_t));
+
+    uint64_t absolute_top = (uint64_t)kernel_stack_raw + 8192;
+
+    uint64_t stack_top = absolute_top - sizeof(stack_frame_t);
+    stack_frame_t* frame = (stack_frame_t*)stack_top;
+
+    memset(frame, 0, sizeof(stack_frame_t));
+
+    frame->rip          = 0;
+    frame->rdi          = 0; 
+    frame->cs           = 0x8;
+    frame->rflags       = 0x202;
+    frame->int_no       = 32;
+    frame->error_code   = 0;
+    
+    frame->rsp          = 0; 
+    frame->ss           = 0x10;
+
+    thread->tid          = 0;
+    thread->state        = THREAD_RUNNING;
+    thread->cpu_id       = cpu_id;
+   
+    thread->context_frame     = (void*)stack_top;
+    thread->context_frame_top = (void*)absolute_top; 
+
+    thread->kernel_stack_top = (void*)absolute_top; 
+
+    thread->chan        = NULL;
+    thread->next        = NULL;
+
+    return thread;
+}
+
 /**
  * Cria e configura uma nova thread de Kernel, forjando o seu stack inicial.
  */

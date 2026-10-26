@@ -73,6 +73,9 @@ typedef struct thread {
  */
 typedef registers_t stack_frame_t;
 
+
+thread_t* thread_create_init(uint32_t cpu_id);
+
 /**
  * Cria e configura uma nova thread de Kernel, forjando o seu stack inicial.
  * @param entry_point Ponteiro para a função C que a thread vai executar.

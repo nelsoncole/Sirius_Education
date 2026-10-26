@@ -323,11 +323,11 @@ void kernel_main(BOOT_INFO *boot_info)
      * 1. A do Emulador (que consome o tty_pop_output e faz kprintf)
      * 2. A do Teclado (que consome o scancode bruto, traduz e injeta na TTY)
      */
-    thread_create(tty_emulator_thread,NULL, 1);
+    thread_create(tty_emulator_thread,NULL, 0);
     thread_create(tty_keyboard_bridge_thread, NULL, 0);
     thread_create(network_rx_thread, NULL, 0);
 
-    // thread_create(test, 0);
+    //thread_create(test, NULL, 0);
     /*
      * ============================================================================
      * ARRANQUE DO PROCESSO INICIAL DO ESPAÇO DE UTILIZADOR (INIT / USER.ELF)

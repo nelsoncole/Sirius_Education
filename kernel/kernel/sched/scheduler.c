@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 06/09/2026
+ *  Modified Date: 26/10/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -123,21 +123,6 @@ void scheduler_reclaim_dead_threads(void)
  */
 
 /**
- * Rotina da Thread Ociosa (Idle Thread).
- */
-void idle_thread_routine(void) 
-{
-    while (1) 
-    {
-        /* Limpa a memória das threads mortas acumuladas neste núcleo */
-        //scheduler_reclaim_dead_threads();
-
-        /* Coloca o núcleo do CPU em suspensão segura até à próxima interrupção */
-        __asm__ __volatile__("hlt");
-    }
-}
-
-/**
  * Inicializa o agendador local para o núcleo de processamento atual.
  */
 void scheduler_init(void)
@@ -151,30 +136,7 @@ void scheduler_init(void)
     cpu->current_thread   = NULL;
     cpu->fpu_owner_thread = NULL;
 
-    // 1. Aloca o bloco TCB da Idle Thread
-    cpu->idle_thread = (thread_t*)kmalloc(sizeof(thread_t));
-    // 2. Aloca a pilha de kernel dedicada para a rotina da Idle Task
-    void* idle_stack_raw = (void*)kmalloc(4096);
-    
-    if (!cpu->idle_thread || !idle_stack_raw) {
-        kprintf("[Scheduler] ERRO FATAL: Falha ao alocar recursos para o Idle!\n");
-        while(1);
-    }
-    
-    memset(cpu->idle_thread, 0, sizeof(thread_t));
-    memset(idle_stack_raw, 0, 4096);
-
-    // 3. Define os limites da pilha dedicada da Idle Task
-    uint64_t absolute_top = (uint64_t)idle_stack_raw + 4096;
-    cpu->idle_thread->kernel_stack_top = (void*)absolute_top;
-    cpu->idle_thread->context_frame     = (void*)absolute_top; // Inicia vazia no topo
-
-    // 4. Configura as propriedades do TCB
-    cpu->idle_thread->tid     = 0;
-    cpu->idle_thread->state   = THREAD_RUNNING;
-    cpu->idle_thread->cpu_id  = cpu->cpu_id;
-    cpu->idle_thread->next    = NULL;
-    cpu->idle_thread->owner   = NULL; // A Idle pertence ao espaço de Kernel puro
+    cpu->idle_thread = thread_create_init(cpu->cpu_id);
 
     // O Core arranca a executar diretamente esta Idle Task
     cpu->current_thread = cpu->idle_thread;
@@ -278,30 +240,7 @@ void* task_switch(void* regs)
         else
         {
             next = cpu->idle_thread;
-            next->state = THREAD_RUNNING;
-            cpu->current_thread = next;
-
-            /* Configurações físicas do Core para a Idle Task */
-            cpu->tss.rsp0         = (uint64_t)next->kernel_stack_top;
-            cpu->kernel_stack_top = (uint64_t)next->kernel_stack_top;
-            
-            if (next != cpu->fpu_owner_thread) {
-                arch_fpu_set_ts();
-            }
-
-            /* Força o retorno ao espaço de paginação limpo do Kernel */
-            vmm_switch_pml4(cpu->cr3);
-
-            /* Salta de forma destrutiva para o loop 'hlt' em Ring 0 */
-            __asm__ __volatile__(
-                "mov %0, %%rsp\n"         
-                "sti\n"                   
-                "jmp *%1\n"               
-                :
-                : "r"(cpu->tss.rsp0), "r"(idle_thread_routine)
-                : "memory"
-            );
-            while (1); 
+ 
         }
     }
 
@@ -407,6 +346,8 @@ void schedule(void)
         :
         : "rax", "rdi", "memory"
     );
+
+    __asm__ __volatile__("sti");
 }
 
 
@@ -416,12 +357,12 @@ void schedule(void)
  */ 
 void scheduler_yield(void)
 {
-    asm volatile("cli");
+    __asm__ __volatile__("cli");
     cpu_data_block_t *cpu = get_current_cpu();
     thread_t *current = cpu->current_thread;
     if (!current || current->tid == 0 || current->state != THREAD_RUNNING)
     {
-        asm volatile("sti");
+        __asm__ __volatile__("sti");
         return;
     } /* Reaproveita o motor completo de desvio atómico */
     schedule();
@@ -488,7 +429,7 @@ void scheduler_exit(int exit_code)
          * Varre a lista global à procura do Pai legítimo. 
          * Se ele estiver bloqueado no waitpid, devolvemo-lo à vida ativa.
          */
-        process_list_spinlock_acquire();
+        unsigned long flags = process_list_spinlock_acquire();
         for (process_t* p = g_process_list_head; p != NULL; p = p->next) 
         {
             if (p->pid == current_proc->ppid) 
@@ -507,7 +448,7 @@ void scheduler_exit(int exit_code)
                 break;
             }
         }
-        process_list_spinlock_release();
+        process_list_spinlock_release(flags);
     }
     else 
     {
