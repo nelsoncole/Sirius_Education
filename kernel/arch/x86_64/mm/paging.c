@@ -31,6 +31,7 @@
  * evitando sobreposições e garantindo alocações contíguas na Higher-Half.
  */
 unsigned long g_next_pt_number = 0;
+unsigned long g_kernel_pml4_phys = 0;
 
 /*
  * ============================================================================
@@ -117,6 +118,9 @@ setup_paging(
     PD_IDENTITY_PHYSICAL = boot_info->KernelAddress + PD_IDENTITY_PHYSICAL_OFFSET;  
     PD_VIDEO_PHYSICAL = boot_info->KernelAddress + PD_VIDEO_PHYSICAL_OFFSET;
     PT_PHYSICAL = boot_info->KernelAddress + PT_PHYSICAL_OFFSET;
+
+
+    g_kernel_pml4_phys = PML4_PHYSICAL;
 
 
     /*

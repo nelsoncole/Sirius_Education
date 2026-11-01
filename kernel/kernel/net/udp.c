@@ -45,10 +45,9 @@ long udp_send_datagram(socket_t* sock, const void* buf, unsigned long len, struc
     if (!udp_buffer) return -3;
 
     struct sockaddr_in* local = (struct sockaddr_in*)sock->local_addr;
-    uint16_t src_port = local ? local->sin_port : htons(5000);
 
     udp_header_t* udp = (udp_header_t*)udp_buffer;
-    udp->src_port  = src_port;
+    udp->src_port  = local->sin_port;
     udp->dest_port = dest->sin_port;
     udp->length    = htons(udp_payload_size);
     udp->checksum  = 0x0000; 

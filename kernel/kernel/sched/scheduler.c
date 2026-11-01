@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 26/10/2026
+ *  Modified Date: 01/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -29,41 +29,46 @@
 /**
  * Adiciona uma thread ao fim da fila de prontos de um CPU específico.
  */
-void enqueue_thread(cpu_data_block_t* cpu, thread_t* thread) 
+void enqueue_thread(cpu_data_block_t* cpu, thread_t* thread)
 {
+    if (!cpu || !thread)
+        return;
+
     thread->next = NULL;
 
-    if (cpu->ready_queue_tail == NULL) 
+    if (cpu->ready_queue_tail == NULL)
     {
         cpu->ready_queue_head = thread;
         cpu->ready_queue_tail = thread;
-    } 
-    else 
+    }
+    else
     {
         cpu->ready_queue_tail->next = thread;
         cpu->ready_queue_tail = thread;
     }
+
 }
 
 /**
  * Remove e retorna a próxima thread do início da fila de prontos de um CPU.
  */
-thread_t* dequeue_thread(cpu_data_block_t* cpu) 
+thread_t* dequeue_thread(cpu_data_block_t* cpu)
 {
-    if (cpu->ready_queue_head == NULL) 
-    {
+    if (!cpu)
         return NULL;
-    }
 
     thread_t* thread = cpu->ready_queue_head;
-    cpu->ready_queue_head = cpu->ready_queue_head->next;
 
-    if (cpu->ready_queue_head == NULL) 
+    if (thread != NULL)
     {
-        cpu->ready_queue_tail = NULL;
+        cpu->ready_queue_head = thread->next;
+
+        if (cpu->ready_queue_head == NULL)
+            cpu->ready_queue_tail = NULL;
+
+        thread->next = NULL;
     }
 
-    thread->next = NULL;
     return thread;
 }
 
@@ -72,14 +77,17 @@ thread_t* dequeue_thread(cpu_data_block_t* cpu)
  */
 void enqueue_dead_thread(cpu_data_block_t* cpu, thread_t* thread)
 {
+    if (!cpu || !thread)
+        return;
+
     thread->next = NULL;
 
-    if (cpu->dead_queue_tail == NULL) 
+    if (cpu->dead_queue_tail == NULL)
     {
         cpu->dead_queue_head = thread;
         cpu->dead_queue_tail = thread;
-    } 
-    else 
+    }
+    else
     {
         cpu->dead_queue_tail->next = thread;
         cpu->dead_queue_tail = thread;
@@ -91,29 +99,7 @@ void enqueue_dead_thread(cpu_data_block_t* cpu, thread_t* thread)
  */
 void scheduler_reclaim_dead_threads(void)
 {
-    cpu_data_block_t* cpu = get_current_cpu();
-
-    if (cpu->dead_queue_head == NULL) return;
-
-    /* Proteção atómica simples para extrair a lista de descarte */
-    __asm__ __volatile__("cli");
-    thread_t* current_dead = cpu->dead_queue_head;
-    cpu->dead_queue_head = NULL;
-    cpu->dead_queue_tail = NULL;
-    __asm__ __volatile__("sti");
-
-    while (current_dead != NULL)
-    {
-        thread_t* next_dead = current_dead->next;
-
-        /* Liberar os recursos da thread morta */
-        /*if (current_dead->kernel_stack) {
-            kfree(current_dead->kernel_stack);
-        }
-        kfree(current_dead);*/
-
-        current_dead = next_dead;
-    }
+    
 }
 
 /*
@@ -340,14 +326,13 @@ void schedule(void)
         "popq %%rdi\n"
         "popq %%rbp\n"
         "addq $16, %%rsp\n" // Limpa int_no e error_code
+        "sti\n"             // Força activação de interrupção
         "iretq\n"           // Salto supersónico para a nova tarefa
         "1:\n"              // PONTO DE ATERRAGEM CRUCIAL QUANDO ESTA THREAD ACORDAR
         :
         :
         : "rax", "rdi", "memory"
     );
-
-    __asm__ __volatile__("sti");
 }
 
 
@@ -410,8 +395,22 @@ void scheduler_exit(int exit_code)
     __asm__ __volatile__("cli");
 
     cpu_data_block_t *cpu = get_current_cpu();
+    if(!cpu) return;
+
     thread_t *current = cpu->current_thread;
     process_t* current_proc = (current != NULL) ? current->owner : NULL;
+
+    if (current)
+    {
+        /* Congela o estado físico da Thread na perspetiva do Core */
+        current->state = THREAD_DEAD;
+        current->exit_code = exit_code;
+        /*
+         * Move a tarefa atual para a fila de descarte assíncrono.
+         * A 'idle_thread' irá desalocar o TCB e a Kernel Stack desta thread mais tarde.
+         */
+        //enqueue_dead_thread(cpu, current);
+    }
 
     /*
      * CORREÇÃO CRÍTICA: Eliminação da recursão infinita.
@@ -420,9 +419,15 @@ void scheduler_exit(int exit_code)
      */
     if (current_proc != NULL) 
     {
+        process_file_destroy(current_proc);
+
         /* 2. REGISTO DE ESTADO (Transforma o processo em Zombie para o Pai ler) */
         current_proc->exit_code = exit_code;
-        current_proc->state     = PROCESS_ZOMBIE; 
+        current_proc->state     = PROCESS_ZOMBIE;
+        
+        
+        // Nelson, aqui devemos mandar o processo na lista de zumbies
+        //process_destroy(current_proc);
 
         /* 
          * 3. SINALIZAÇÃO E ACORDAR O PAI:
@@ -441,9 +446,9 @@ void scheduler_exit(int exit_code)
                     
                     /* A. Altera a flag de controle de fluxo do Pai */
                     p->main_thread->state = THREAD_READY;
-
+                    cpu_data_block_t *parent_cpu = get_cpu_data_block(p->main_thread->cpu_id);
                     /* B. Insere fisicamente a thread do Pai de volta na fila de execução do Core */
-                    enqueue_thread(cpu, p->main_thread); 
+                    enqueue_thread(parent_cpu, p->main_thread); 
                 }
                 break;
             }
@@ -453,22 +458,6 @@ void scheduler_exit(int exit_code)
     else 
     {
         kprintf("[SCHED] scheduler_exit: Encerrando fluxo puro de Kernel (TID: %d).\n", (current != NULL) ? current->tid : 0);
-    }
-
-    // 4. LIMPEZA DA THREAD FÍSICA
-    if (cpu && current)
-    {
-        /* Congela o estado físico da Thread na perspetiva do Core */
-        current->state = THREAD_DEAD;
-        current->exit_code = exit_code;
-
-        if(current_proc) process_destroy(current_proc);
-
-        /* 
-         * Move a tarefa atual para a fila de descarte assíncrono.
-         * A 'idle_thread' irá desalocar o TCB e a Kernel Stack desta thread mais tarde.
-         */
-        enqueue_dead_thread(cpu, current);
 
     }
 
@@ -529,6 +518,7 @@ void scheduler_exit(int exit_code)
         "popq %%rdi\n"
         "popq %%rbp\n"
         "addq $16, %%rsp\n"         // Limpa int_no e error_code
+        "sti\n"
         "iretq\n"                   // Executa o retorno de hardware para a nova tarefa
         :
         : "r"(next->context_frame)

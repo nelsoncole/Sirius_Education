@@ -20,6 +20,7 @@
 
 #include <kernel/lib/stdint.h>
 #include <kernel/kernel/sched/thread.h>
+#include <kernel/kernel/core/spinlock.h>
 
 #include "gdt.h"
 #include "tss.h"
@@ -75,6 +76,7 @@ typedef struct cpu_data_block {
     thread_t* dead_queue_tail;  /* Ponteiro para o fim da fila (Tail) de threads mortas para este CPU. */
     thread_t* idle_thread;      /* Thread de emergência/ociosa, executada quando não há tarefas na fila. */
     thread_t* fpu_owner_thread; /* Controla quem é o dono do FPU neste Core */
+    
 } __attribute__((aligned(16))) cpu_data_block_t;
 
 /*
@@ -135,6 +137,9 @@ cpu_data_block_t* get_cpu_data_block(uint32_t cpu_id);
 
 void arch_fpu_set_ts(void);
 void arch_fpu_clear_ts(void);
+
+cpu_data_block_t* get_cpu_with_fewest_threads(void);
+uint32_t get_cpu_id_with_fewest_threads(void);
 
 
 /**

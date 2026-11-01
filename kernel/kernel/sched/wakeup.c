@@ -63,7 +63,6 @@ void wakeup(void *chan) {
     }
 
     process_list_spinlock_release(flags);
-
     spinlock_unlock_irqrestore(&g_wait_lock , flags_local);
 }
 

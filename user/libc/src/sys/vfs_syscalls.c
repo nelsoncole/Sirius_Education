@@ -22,6 +22,8 @@
 #include <string.h>
 #include <sys/ioctl.h>
 
+extern int errno;
+
 
 #ifndef MAX_PATH_LEN
 #define MAX_PATH_LEN 4096
@@ -69,6 +71,8 @@ int open(const char *pathname, int flags, ...)
 
     char absolute_path[MAX_PATH_LEN];
     if (_resolve_absolute_path(absolute_path, pathname) < 0) {
+
+        errno = -1;
         return -1;
     }
 
@@ -85,7 +89,9 @@ int open(const char *pathname, int flags, ...)
         va_end(args);
     }
 
-    return (int)syscall3(SYS_OPEN, (uint64_t)absolute_path, (uint64_t)flags, mode);
+    int ret = syscall3(SYS_OPEN, (uint64_t)absolute_path, (uint64_t)flags, mode);
+    errno = -ret;
+    return ret;
 }
 
 int creat(const char *pathname, mode_t mode) {
@@ -104,17 +110,23 @@ int fcntl(int fd, int cmd, ...) {
     va_end(args);
 
     // Invoca a stub física do assembly mapeada na unistd.h do Sirius
-    return (int)syscall3(SYS_FCNTL, (uint64_t)fd, (uint64_t)cmd, (uint64_t)arg);
+    int ret = syscall3(SYS_FCNTL, (uint64_t)fd, (uint64_t)cmd, (uint64_t)arg);
+    errno = -ret;
+    return ret;
 }
 
 ssize_t read(int fd, void *buf, size_t count) 
 {
-    return (ssize_t)syscall3(SYS_READ, (uint64_t)fd, (uint64_t)buf, (uint64_t)count);
+    int ret = syscall3(SYS_READ, (uint64_t)fd, (uint64_t)buf, (uint64_t)count);
+    errno = -ret;
+    return (ssize_t)ret;
 }
 
 ssize_t write(int fd, const void *buf, size_t count) 
 {
-    return (ssize_t)syscall3(SYS_WRITE, (uint64_t)fd, (uint64_t)buf, (uint64_t)count);
+    int ret = syscall3(SYS_WRITE, (uint64_t)fd, (uint64_t)buf, (uint64_t)count);
+    errno = -ret;
+    return (ssize_t)ret;
 }
 
 int ioctl(int fd, unsigned long request, ...)
@@ -127,12 +139,16 @@ int ioctl(int fd, unsigned long request, ...)
     arg = va_arg(args, void *);
     va_end(args);
 
-    return (int)syscall3(SYS_IOCTL, (uint64_t)fd, (uint64_t)request, (uint64_t)arg);
+    int ret = syscall3(SYS_IOCTL, (uint64_t)fd, (uint64_t)request, (uint64_t)arg);
+    errno = -ret;
+    return ret;
 }
 
 int close(int fd) 
 {
-    return (int)syscall1(SYS_CLOSE, (uint64_t)fd);
+    int ret = syscall1(SYS_CLOSE, (uint64_t)fd);
+    errno = -ret;
+    return ret;
 }
 
 int dup(int oldfd) 
@@ -142,22 +158,30 @@ int dup(int oldfd)
      * clássico forçando o Kernel a escolher o próximo FD livre ou chamando a SYS_DUP2.
      * Caso o teu kernel não tenha a SYS_DUP nativa, podes usar a SYS_DUP2 com -1.
      */
-    return (int)syscall2(SYS_DUP2, (uint64_t)oldfd, (uint64_t)-1);
+    int ret = syscall2(SYS_DUP2, (uint64_t)oldfd, (uint64_t)-1);
+    errno = -ret;
+    return ret;
 }
 
 int dup2(int oldfd, int newfd) 
 {
-    return (int)syscall2(SYS_DUP2, (uint64_t)oldfd, (uint64_t)newfd);
+    int ret = syscall2(SYS_DUP2, (uint64_t)oldfd, (uint64_t)newfd);
+    errno = -ret;
+    return ret;
 }
 
 off_t lseek(int fd, off_t offset, int whence) 
 {
-    return (off_t)syscall3(SYS_SEEK, (uint64_t)fd, (uint64_t)offset, (uint64_t)whence);
+    int ret = syscall3(SYS_SEEK, (uint64_t)fd, (uint64_t)offset, (uint64_t)whence);
+    errno = -ret;
+    return (off_t)ret;
 }
 
 int pipe(int pipefd[2]) 
 {
-    return (int)syscall1(SYS_IOCTL, (uint64_t)pipefd);
+    int ret = syscall1(SYS_IOCTL, (uint64_t)pipefd);
+    errno = -ret;
+    return ret;
 }
 
 /*
@@ -171,10 +195,13 @@ int unlink(const char *pathname)
 
     char absolute_path[MAX_PATH_LEN];
     if (_resolve_absolute_path(absolute_path, pathname) < 0) {
+        errno = -1;
         return -1;
     }
 
-    return (int)syscall1(SYS_UNLINK, (uint64_t)absolute_path);
+    int ret = syscall1(SYS_UNLINK, (uint64_t)absolute_path);
+    errno = -ret;
+    return ret;
 }
 
 int rmdir(const char *pathname) 
@@ -183,10 +210,13 @@ int rmdir(const char *pathname)
 
     char absolute_path[MAX_PATH_LEN];
     if (_resolve_absolute_path(absolute_path, pathname) < 0) {
+        errno = -1;
         return -1;
     }
 
-    return (int)syscall1(SYS_RMDIR, (uint64_t)absolute_path);
+    int ret = syscall1(SYS_RMDIR, (uint64_t)absolute_path);
+    errno = -ret;
+    return ret;
 }
 
 int access(const char *pathname, int mode) 
@@ -195,10 +225,13 @@ int access(const char *pathname, int mode)
 
     char absolute_path[MAX_PATH_LEN];
     if (_resolve_absolute_path(absolute_path, pathname) < 0) {
+        errno = -1;
         return -1;
     }
 
-    return (int)syscall2(SYS_STAT, (uint64_t)absolute_path, (uint64_t)mode);
+    int ret = syscall2(SYS_STAT, (uint64_t)absolute_path, (uint64_t)mode);
+    errno = -ret;
+    return ret;
 }
 
 int isatty(int fd) 
@@ -214,15 +247,19 @@ int isatty(int fd)
 int stat(const char *pathname, struct stat *statbuf)
 {
     if (!pathname || !statbuf) {
+        errno = -1;
         return -1; /* Retorna erro de argumento inválido (EINVAL / EFAULT) */
     }
 
     char absolute_path[MAX_PATH_LEN];
     if (_resolve_absolute_path(absolute_path, pathname) < 0) {
+        errno = -1;
         return -1; /* Falha ao tentar resolver o PWD do processo */
     }
 
-    return (int)syscall2(SYS_STAT, (uint64_t)absolute_path, (uint64_t)statbuf);
+    int ret = syscall2(SYS_STAT, (uint64_t)absolute_path, (uint64_t)statbuf);
+    errno = -ret;
+    return ret;
 }
 
 
@@ -230,8 +267,11 @@ int stat(const char *pathname, struct stat *statbuf)
 int fstat(int fd, struct stat *statbuf)
 {
     if (fd < 0 || !statbuf) {
+        errno = -1;
         return -1;
     }
 
-    return (int)syscall2(SYS_FSTAT, (uint64_t)fd, (uint64_t)statbuf);
+    int ret = syscall2(SYS_FSTAT, (uint64_t)fd, (uint64_t)statbuf);
+    errno = -ret;
+    return ret;
 }

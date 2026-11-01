@@ -201,6 +201,8 @@ void loop_ponte_criptografica(ssh_session_t *session, int master_fd)
         if (nbytes > 0)
         {
             ssh_channel_write(session, buffer, nbytes);
+        }else{
+            break;
         }
     }
 }

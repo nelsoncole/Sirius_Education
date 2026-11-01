@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 22/09/2026
+ *  Modified Date: 01/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -24,6 +24,8 @@
 #include <kernel/kvmm.h>
 #include <kernel/klib.h>
 #include <kernel/kernel/core/spinlock.h>
+
+extern unsigned long g_kernel_pml4_phys;
 
 /* Flags x86_64: Presente (0x1) | Read-Write (0x2) | User-Supervisor (0x4) */
 #define PAGE_USER_FLAGS         (0x1 | 0x2 | 0x4)
@@ -53,14 +55,14 @@ void process_list_insert(process_t* proc)
     if (!proc) return;
 
     /* Bloqueia o Spinlock: Se outra CPU estiver a mexer na lista, este núcleo espera aqui */
-    spinlock_acquire(&g_process_list_lock);
+    unsigned long flags = process_list_spinlock_acquire();
 
     /* Insere na cabeça da lista ligada */
     proc->next = g_process_list_head;
     g_process_list_head = proc;
 
     /* Liberta o Spinlock para as restantes CPUs poderem aceder */
-    spinlock_release(&g_process_list_lock);
+    process_list_spinlock_release(flags);
 }
 
 /**
@@ -72,13 +74,13 @@ void process_list_remove(process_t* proc)
     if (!proc || !g_process_list_head) return;
 
     /* Garante exclusão mútua em ambiente SMP */
-    spinlock_acquire(&g_process_list_lock);
+    unsigned long flags = process_list_spinlock_acquire();
 
     /* Caso especial: O processo a remover é o primeiro da lista */
     if (g_process_list_head == proc) 
     {
         g_process_list_head = g_process_list_head->next;
-        spinlock_release(&g_process_list_lock);
+        process_list_spinlock_release(flags);
         return;
     }
 
@@ -96,7 +98,7 @@ void process_list_remove(process_t* proc)
     }
 
     /* Liberta a região crítica */
-    spinlock_release(&g_process_list_lock);
+    process_list_spinlock_release(flags);
 }
 
 process_t* process_find_by_pid(pid_t pid) 
@@ -104,7 +106,7 @@ process_t* process_find_by_pid(pid_t pid)
     process_t* target = NULL;
 
     /* Bloqueia a lista: Garante integridade da memória durante a leitura */
-    spinlock_acquire(&g_process_list_lock);
+    unsigned long flags = process_list_spinlock_acquire();
 
     process_t* current = g_process_list_head;
     while (current != NULL) 
@@ -118,7 +120,7 @@ process_t* process_find_by_pid(pid_t pid)
     }
 
     /* Liberta a região crítica para os outros Cores */
-    spinlock_release(&g_process_list_lock);
+    process_list_spinlock_release(flags);
     return target;
 }
 
@@ -565,11 +567,12 @@ void process_destroy(process_t* proc)
 
     kprintf("[Process] A destruir e libertar recursos do processo %d com janelas fixas...\n", proc->pid);
 
-    if (proc->cr3 != 0) 
+    if (proc->cr3 != 0 && proc->cr3 != g_kernel_pml4_phys) 
     {
-        unsigned long pml4_phys = proc->cr3;
-        process_flush_user_space(pml4_phys);
 
+        unsigned long pml4_phys = proc->cr3;
+
+        process_flush_user_space(pml4_phys);
         /* Liberta a raíz PML4 */
         pmm_free_page(pml4_phys);
     }
@@ -623,6 +626,50 @@ void process_destroy(process_t* proc)
     }
 
     kprintf("[Process] Processo %d destruido com sucesso total.\n", proc->pid);
+}
+
+void process_file_destroy(process_t *proc)
+{
+    if (!proc) return;
+
+    kprintf("[Process] A destruir e libertar arquivos do processo %d ...\n", proc->pid);
+
+    // LIMPEZA DO VFS: Fecho regulamentar baseado em Contagem de Referências
+    for (int i = 0; i < MAX_FILES_PER_PROCESS; i++)
+    {
+        if (proc->file_descriptor_table[i] != NULL)
+        {
+            /* 1. Decrementa a referência já que este processo está a largar o ficheiro */
+            proc->file_descriptor_table[i]->ref_count--;
+
+            /*
+             * 2. DECISÃO DE DESTRUIÇÃO:
+             * O recurso só é destruído se mais NINGUÉM no sistema o estiver a usar.
+             */
+            if (proc->file_descriptor_table[i]->ref_count == 0)
+            {
+                kprintf("[VFS] ref_count == %d A fechar recurso partilhado globalmente: %s\n",
+                        proc->file_descriptor_table[i]->ref_count,
+                        proc->file_descriptor_table[i]->node->name);
+
+                /* Fecha o nó no sistema de ficheiros virtual */
+                vfs_close(proc->file_descriptor_table[i]->node);
+
+                /* Liberta a estrutura do descritor de ficheiro da RAM */
+                kfree(proc->file_descriptor_table[i]);
+            }
+            else
+            {
+                kprintf("[VFS] Ficheiro mantido ativo. Outros processos ainda o utilizam (ref_count: %d).\n",
+                        proc->file_descriptor_table[i]->ref_count);
+            }
+
+            /* 3. Desvincula o ponteiro local deste processo morto por segurança */
+            proc->file_descriptor_table[i] = NULL;
+        }
+    }
+
+    kprintf("[Process] Arquivos do processo %d destruido com sucesso total.\n", proc->pid);
 }
 
 void process_exit(int code) {

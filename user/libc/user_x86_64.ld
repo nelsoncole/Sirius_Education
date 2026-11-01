@@ -6,117 +6,124 @@
  *
  */
 
+
 OUTPUT_FORMAT("elf64-x86-64")
 OUTPUT_ARCH(i386:x86-64)
-
-/* O ponto de entrada padrão da aplicação Ring 3 (Definido no crt0.asm) */
 ENTRY(_start)
 
-/*
- * ============================================================
- * Program Headers (Mapeados nativamente para o process_create)
- * ============================================================
- */
 PHDRS
 {
-    text   PT_LOAD FLAGS(5);   /* Read + Execute */
-    rodata PT_LOAD FLAGS(4);   /* Read Only */
-    data   PT_LOAD FLAGS(6);   /* Read + Write */
+    text   PT_LOAD FLAGS(5);
+    rodata PT_LOAD FLAGS(4);
+    data   PT_LOAD FLAGS(6);
 }
 
 SECTIONS
 {
-    /*
-     * ========================================================
-     * User Space Canonical Base Address (Ring 3)
-     * ========================================================
-     */
     . = 0x00400000;
 
-    /*
-     * Primeira página reservada.
-     * Alinha a entrada do código principal na fronteira limpa 
-     * da página seguinte (0x401000).
-     */
     . += 0x1000;
 
-    /* Define o símbolo do Entry Point virtual da aplicação utilizadora */
     _start = .;
 
-    /*
-     * ========================================================
-     * TEXT (Código Executável da Aplicação)
-     * ========================================================
-     */
-    .text : ALIGN(0x1000)
+    /* Executable code */
+    .text ALIGN(0x1000) :
     {
         _code = .;
-        
-        /* 
-         * Força o código de inicialização do crt0.asm (.text.boot) 
-         * a ficar no topo absoluto do binário utilizador.
-         */
+
         KEEP(*(.text.boot))
-        
-        *(.text)
-        *(.text.*)
-        
+        KEEP(*(.text.boot.*))
+
+        *(.text .text.*)
+
         . = ALIGN(0x1000);
+        _etext = .;
     } :text
 
-    /*
-     * ========================================================
-     * READ ONLY DATA (Constantes, tabelas e strings literais)
-     * ========================================================
-     */
-    .rodata : ALIGN(0x1000)
+    /* Read-only data */
+    .rodata ALIGN(0x1000) :
     {
         _rodata = .;
-        
-        *(.rodata)
-        *(.rodata.*)
-        
-        /* Informações de deswind/frames da libc do utilizador */
-        *(.eh_frame)
-        *(.eh_frame.*)
-        
+
+        *(.rodata .rodata.*)
+        *(.srodata .srodata.*)
+
+        *(.eh_frame_hdr)
+        *(.eh_frame .eh_frame.*)
+
         . = ALIGN(0x1000);
+        _erodata = .;
     } :rodata
 
-    /*
-     * ========================================================
-     * DATA (Variáveis Globais Inicializadas)
-     * ========================================================
-     */
-    .data : ALIGN(0x1000)
+    /* Writable initialized data */
+    .data ALIGN(0x1000) :
     {
         _data = .;
-        
-        *(.data)
-        *(.data.*)
-        
+
+        *(.data .data.*)
+        *(.sdata .sdata.*)
+
+        *(.got)
+        *(.got.*)
+        *(.got.plt)
+
+        *(.data.rel.ro .data.rel.ro.*)
+
         . = ALIGN(0x1000);
+        _edata = .;
     } :data
 
-    /*
-     * ========================================================
-     * BSS (Variáveis Globais Não Inicializadas)
-     * ========================================================
-     * Nota: O seu process_create lerá o p_memsz e preencherá 
-     * esta cauda com zeros na memória de forma automática.
-     */
-    .bss : ALIGN(0x1000)
+    /* Constructor arrays */
+    .preinit_array ALIGN(8) :
+    {
+        __preinit_array_start = .;
+        KEEP(*(.preinit_array))
+        KEEP(*(.preinit_array.*))
+        __preinit_array_end = .;
+    } :data
+
+    .init_array ALIGN(8) :
+    {
+        __init_array_start = .;
+        KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+        KEEP(*(.init_array))
+        __init_array_end = .;
+    } :data
+
+    .fini_array ALIGN(8) :
+    {
+        __fini_array_start = .;
+        KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*)))
+        KEEP(*(.fini_array))
+        __fini_array_end = .;
+    } :data
+
+    /* Uninitialized data */
+    .bss ALIGN(0x1000) (NOLOAD) :
     {
         _bss = .;
-        
-        *(.bss)
-        *(.bss.*)
+
+        *(.bss .bss.*)
+        *(.sbss .sbss.*)
         *(COMMON)
-        
+
         . = ALIGN(0x1000);
+
+        _ebss = .;
     } :data
 
-    /* Símbolos lógicos de encerramento da imagem virtual do processo */
+    /* End of process image */
+    . = ALIGN(0x1000);
+
     _end = .;
     __end = .;
+    _end_of_image = .;
+
+    /* Discard unnecessary sections */
+    /DISCARD/ :
+    {
+        *(.comment)
+        *(.note)
+        *(.note.*)
+    }
 }

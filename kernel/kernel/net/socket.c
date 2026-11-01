@@ -11,7 +11,7 @@
  *   Created Date: 17/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 24/10/2026
+ *  Modified Date: 01/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -36,6 +36,8 @@ extern protocol_operations_t g_pf_packet_ops;
 // Spinlock global para a consistência da árvore de portas/caminhos locais
 spinlock_t g_socket_list_lock = { SPINLOCK_RELEASED };
 
+static int socket_auto_bind_inet(socket_t* sock);
+
 /**
  * @brief Inicializa as estruturas globais e o subsistema de sockets do Kernel.
  */
@@ -51,30 +53,117 @@ void init_socket(void)
  */
 int socket_bind_address(socket_t* sock, const void* addr, unsigned long addrlen)
 {
+    if (!sock) return -9; //-EBADF;
+    if (!addr) return -14; //-EFAULT;
+    if (addrlen == 0 || addrlen > sizeof(sock->local_addr)) return -22; //-EINVAL
+
     spin_lock(&g_socket_list_lock);
 
-    socket_t* check = g_bound_sockets_head;
-    while (check != NULL) 
-    {
-        if (check->family == sock->family && check->local_addr_len == addrlen && 
-            memcmp(check->local_addr, addr, addrlen) == 0) 
-        {
-            spin_unlock(&g_socket_list_lock);
-            return -2; /* EADDRINUSE */
-        }
-        check = check->next;
+    if (sock->local_addr_len != 0) {
+        spin_unlock(&g_socket_list_lock);
+        return -22;
     }
 
-    /* Grava os dados na estrutura física */
-    memcpy(sock->local_addr, addr, addrlen);
-    sock->local_addr_len = addrlen;
+    if (sock->family == AF_INET) {
+        if (addrlen < sizeof(struct sockaddr_in)) {
+            spin_unlock(&g_socket_list_lock);
+            return -22;
+        }
 
-    /* Encadeia na árvore global do sistema */
-    sock->next = g_bound_sockets_head;
+        struct sockaddr_in sin;
+        memcpy(&sin, addr, sizeof(sin));
+
+        if (sin.sin_port == 0) {
+            int found = 0;
+
+            for (uint32_t port = EPHEMERAL_PORT_START;
+                 port <= EPHEMERAL_PORT_END; port++) {
+
+                uint16_t net_port =
+                    (uint16_t)(((port & 0xFF) << 8) |
+                               ((port & 0xFF00) >> 8));
+
+                int in_use = 0;
+                socket_t* check = g_bound_sockets_head;
+
+                while (check) {
+                    if (check->family == AF_INET &&
+                        check->type == sock->type &&
+                        check->local_addr_len >= sizeof(struct sockaddr_in)) {
+
+                        struct sockaddr_in* current =
+                            (struct sockaddr_in*)check->local_addr;
+
+                        if (current->sin_port == net_port) {
+                            in_use = 1;
+                            break;
+                        }
+                    }
+
+                    check = check->global_next;
+                }
+
+                if (!in_use) {
+                    sin.sin_port = net_port;
+                    found = 1;
+                    break;
+                }
+            }
+
+            if (!found) {
+                spin_unlock(&g_socket_list_lock);
+                return -2;
+            }
+        }
+
+        socket_t* check = g_bound_sockets_head;
+
+        while (check) {
+            if (check->family == AF_INET &&
+                check->local_addr_len >= sizeof(struct sockaddr_in)) {
+
+                struct sockaddr_in* current =
+                    (struct sockaddr_in*)check->local_addr;
+
+                if (current->sin_port == sin.sin_port &&
+                    (current->sin_addr.s_addr == sin.sin_addr.s_addr ||
+                     current->sin_addr.s_addr == 0 ||
+                     sin.sin_addr.s_addr == 0)) {
+                    spin_unlock(&g_socket_list_lock);
+                    return -2;
+                }
+            }
+
+            check = check->global_next;
+        }
+
+        memcpy(sock->local_addr, &sin, sizeof(sin));
+        sock->local_addr_len = sizeof(sin);
+    }
+    else {
+        socket_t* check = g_bound_sockets_head;
+
+        while (check) {
+            if (check->family == sock->family &&
+                check->local_addr_len == addrlen &&
+                memcmp(check->local_addr, addr, addrlen) == 0) {
+                spin_unlock(&g_socket_list_lock);
+                return -2;
+            }
+
+            check = check->global_next;
+        }
+
+        memcpy(sock->local_addr, addr, addrlen);
+        sock->local_addr_len = addrlen;
+    }
+
+    sock->global_next = g_bound_sockets_head;
     g_bound_sockets_head = sock;
 
     spin_unlock(&g_socket_list_lock);
-    return 0; /* Sucesso */
+
+    return 0;
 }
 
 /**
@@ -82,18 +171,22 @@ int socket_bind_address(socket_t* sock, const void* addr, unsigned long addrlen)
  */
 socket_t* socket_find_by_address(const void* addr, unsigned long addrlen, int family)
 {
+    if (!addr || addrlen == 0 || addrlen > 256)
+        return NULL;
+
     spin_lock(&g_socket_list_lock);
 
     socket_t* curr = g_bound_sockets_head;
-    while (curr != NULL) 
-    {
-        if (curr->family == family && curr->local_addr_len == addrlen && 
-            memcmp(curr->local_addr, addr, addrlen) == 0) 
-        {
+
+    while (curr != NULL) {
+        if (curr->family == family &&
+            curr->local_addr_len == addrlen &&
+            memcmp(curr->local_addr, addr, addrlen) == 0) {
             spin_unlock(&g_socket_list_lock);
             return curr;
         }
-        curr = curr->next;
+
+        curr = curr->global_next;
     }
 
     spin_unlock(&g_socket_list_lock);
@@ -127,7 +220,8 @@ socket_t* socket_find_by_port(uint16_t port, int protocol_type)
                 return curr; /* Retorna a sessão ativa do socket */
             }
         }
-        curr = curr->next; /* Avança na lista encadeada */
+
+        curr = curr->global_next;
     }
 
     spin_unlock(&g_socket_list_lock);
@@ -190,12 +284,21 @@ socket_t* tcp_input_lookup(uint32_t src_ip, tcp_header_t* tcp)
  */
 int socket_add_listen_queue(socket_t* server, socket_t* client)
 {
+    if (!server || !client)
+        return -1;
+
     spin_lock(&server->lock);
+
+    if (server->state != 2 || client->next != NULL) {
+        spin_unlock(&server->lock);
+        return -1;
+    }
 
     client->next = server->listen_queue;
     server->listen_queue = client;
 
     spin_unlock(&server->lock);
+
     return 0;
 }
 
@@ -203,7 +306,6 @@ int socket_add_listen_queue(socket_t* server, socket_t* client)
  * PONTE POLIMÓRFICA DE OPERAÇÕES DO VFS (Alinhada com vfs_operations_t)
  * ============================================================================
  */
-static int socket_auto_bind_inet(socket_t* sock);
 static int socket_vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) 
 {
     /* Silencia o parâmetro nativo exigido pelo VFS */
@@ -215,11 +317,17 @@ static int socket_vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, vo
     if(!sock) return -1;
 
     /* AUTO-BIND AUTOMÁTICO PARA IPV4 */
-    if (sock->family == AF_INET && sock->local_addr_len == 0) 
+    if (sock->family == AF_INET)
     {
-        if (socket_auto_bind_inet(sock) < 0) 
+        struct sockaddr_in *sin = (struct sockaddr_in *)sock->local_addr;
+
+        if (sock->local_addr_len == 0 ||
+            sin->sin_port == 0)
         {
-            return -2; /* Falha ao alocar porta efêmera */
+            if (socket_auto_bind_inet(sock) < 0)
+            {
+                return -2; /* Falha ao alocar porta efêmera */
+            }
         }
     }
 
@@ -253,55 +361,69 @@ static int socket_vfs_read(vfs_node_t* node, uint64_t offset, uint32_t size, voi
 }
 
 
-static int socket_vfs_close(vfs_node_t* node) 
+static int socket_vfs_close(vfs_node_t* node)
 {
-    if (!node || !node->private_data) return -1;
+    if (!node || !node->private_data)
+        return -1;
 
     socket_t* sock = (socket_t*)node->private_data;
 
-    if(!sock) return -1;
+    node->private_data = NULL;
 
-    if (sock->proto_ops && sock->proto_ops->release) {
-        sock->proto_ops->release(sock);
-    }
-    
-    if (sock->type == SOCK_STREAM) 
+    if (sock->family == AF_INET &&
+        sock->type == SOCK_STREAM &&
+        sock->state != TCP_STATE_CLOSED)
     {
-        if (sock->state != TCP_STATE_CLOSED) 
-        {
-            spin_lock(&sock->lock);
-            node->private_data = NULL;
-            spin_unlock(&sock->lock);
+        if (sock->proto_ops && sock->proto_ops->release)
+            sock->proto_ops->release(sock);
 
-            kprintf("[VFS] Socket mantido na lista como orfao para aguardar pacotes finais.\n");
-            return 0; 
-        }
+        kprintf("[VFS] Socket mantido na lista como orfao para aguardar pacotes finais.\n");
+        return 0;
     }
 
-    // SE FOR UDP OU SE O TCP JÁ ESTIVER CLOSED, FAZ A LIMPEZA TOTAL IMEDIATA
     spin_lock(&g_socket_list_lock);
+
     socket_t* curr = g_bound_sockets_head;
     socket_t* prev = NULL;
-    while (curr != NULL) {
-        if (curr == sock) {
-            if (prev == NULL) g_bound_sockets_head = curr->next;
-            else prev->next = curr->next;
+    int removed = 0;
+
+    while (curr != NULL)
+    {
+        if (curr == sock)
+        {
+            if (prev == NULL)
+                g_bound_sockets_head = curr->global_next;
+            else
+                prev->global_next = curr->global_next;
+
+            curr->global_next = NULL;
+            removed = 1;
             break;
         }
+
         prev = curr;
-        curr = curr->next;
+        curr = curr->global_next;
     }
 
     spin_unlock(&g_socket_list_lock);
 
-    // 3. Libertar os recursos de memória do socket VFS
-    if (sock->rx_buffer) kfree(sock->rx_buffer);
-    if (sock->tx_buffer) kfree(sock->tx_buffer);
+    if (removed)
+        kprintf("[VFS] Socket removido da lista global: %p\n", sock);
+    else
+        kprintf("[VFS] Socket nao estava registado na lista de binds: %p\n", sock);
+
+    if (sock->proto_ops && sock->proto_ops->release)
+        sock->proto_ops->release(sock);
+
+    if (sock->rx_buffer)
+        kfree(sock->rx_buffer);
+
+    if (sock->tx_buffer)
+        kfree(sock->tx_buffer);
 
     kfree(sock);
-    node->private_data = NULL;
-    
-    return 0; 
+
+    return 0;
 }
 
 static vfs_operations_t g_socket_vfs_ops = {
@@ -374,14 +496,21 @@ int socket_close(socket_t* sock)
     spin_lock(&g_socket_list_lock);
     socket_t* curr = g_bound_sockets_head;
     socket_t* prev = NULL;
-    while (curr != NULL) {
-        if (curr == sock) {
-            if (prev == NULL) g_bound_sockets_head = curr->next;
-            else prev->next = curr->next;
+    while (curr != NULL)
+    {
+        if (curr == sock)
+        {
+            if (prev == NULL)
+                g_bound_sockets_head = curr->global_next;
+            else
+                prev->global_next = curr->global_next;
+
+            curr->global_next = NULL;
             break;
         }
+
         prev = curr;
-        curr = curr->next;
+        curr = curr->global_next;
     }
     spin_unlock(&g_socket_list_lock);
 
@@ -435,6 +564,8 @@ int socket(int family, int type, int protocol)
                 kfree(vnode);
                 return -1;
             }
+            memset(file, 0, sizeof(vfs_file_t));
+
             file->node = vnode;
             file->flags = VFS_MODE_READ | VFS_MODE_WRITE;
             file->offset = 0;
@@ -465,9 +596,15 @@ static int socket_auto_bind_inet(socket_t* sock)
     int port_found = 0;
 
     memset(&auto_sin, 0, sizeof(struct sockaddr_in));
-    auto_sin.sin_family = AF_INET;
     // Vincula explicitamente a qualquer interface (INADDR_ANY)
-    auto_sin.sin_addr.s_addr = 0; 
+    auto_sin.sin_addr.s_addr = 0;
+
+    if (sock->local_addr_len >= sizeof(struct sockaddr_in))
+    {
+        memcpy(&auto_sin, sock->local_addr, sizeof(struct sockaddr_in));
+    }
+
+    auto_sin.sin_family = AF_INET;
 
     spin_lock(&g_socket_list_lock);
 
@@ -490,7 +627,7 @@ static int socket_auto_bind_inet(socket_t* sock)
                     break;
                 }
             }
-            check = check->next;
+            check = check->global_next;
         }
 
         if (!in_use) 
@@ -510,7 +647,7 @@ static int socket_auto_bind_inet(socket_t* sock)
     memcpy(sock->local_addr, &auto_sin, sizeof(struct sockaddr_in));
     sock->local_addr_len = sizeof(struct sockaddr_in);
 
-    sock->next = g_bound_sockets_head;
+    sock->global_next = g_bound_sockets_head;
     g_bound_sockets_head = sock;
 
     spin_unlock(&g_socket_list_lock);
@@ -651,11 +788,17 @@ int connect(int fd, const void* addr, unsigned long addrlen)
     if (!sock) return -1;
 
     /* AUTO-BIND AUTOMÁTICO PARA IPV4 */
-    if (sock->family == AF_INET && sock->local_addr_len == 0) 
+    if (sock->family == AF_INET)
     {
-        if (socket_auto_bind_inet(sock) < 0) 
+        struct sockaddr_in *sin = (struct sockaddr_in *)sock->local_addr;
+
+        if (sock->local_addr_len == 0 ||
+            sin->sin_port == 0)
         {
-            return -2; /* Falha ao alocar porta efêmera */
+            if (socket_auto_bind_inet(sock) < 0)
+            {
+                return -2; /* Falha ao alocar porta efêmera */
+            }
         }
     }
 
@@ -678,11 +821,17 @@ long sendto(int fd, const void* buf, unsigned long len, int flags, const void* d
     if (!sock) return -1;
 
     /* AUTO-BIND AUTOMÁTICO PARA IPV4 */
-    if (sock->family == AF_INET && sock->local_addr_len == 0) 
+    if (sock->family == AF_INET)
     {
-        if (socket_auto_bind_inet(sock) < 0) 
+        struct sockaddr_in *sin = (struct sockaddr_in *)sock->local_addr;
+
+        if (sock->local_addr_len == 0 ||
+            sin->sin_port == 0)
         {
-            return -2; /* Falha ao alocar porta efêmera */
+            if (socket_auto_bind_inet(sock) < 0)
+            {
+                return -2; /* Falha ao alocar porta efêmera */
+            }
         }
     }
 

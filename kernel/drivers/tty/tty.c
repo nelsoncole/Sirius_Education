@@ -437,6 +437,7 @@ int tty_write_to_in_queue(struct tty_device* tty, const char* buf, int size) {
 int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size) {
     if (!tty || !buf || size == 0) return 0;
 
+    spin_lock(&tty->lock);
     while (1) {
         if ((tty->c_lflag & TTY_ICANON) && tty->lines_available > 0) {
             break;
@@ -445,10 +446,9 @@ int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size) {
             break;
         }
         
-        wait(&tty->read_wait, NULL);
+        wait(&tty->read_wait, &tty->lock);
     }
 
-    spin_lock(&tty->lock);
     int lidos = 0;
 
     while (tty->in_tail != tty->in_head && lidos < size) {
@@ -500,11 +500,11 @@ int tty_write_to_out_queue(struct tty_device* tty, const char* buf, int size) {
 int tty_read_from_out_queue(struct tty_device* tty, char* buf, int size) {
     if (!tty || !buf || size == 0) return 0;
 
-    while (tty->out_head == tty->out_tail) {
-        wait(&tty->write_wait, NULL);
-    }
-
     spin_lock(&tty->lock);
+
+    while (tty->out_head == tty->out_tail) {
+        wait(&tty->write_wait, &tty->lock);
+    }
 
     int lidos = 0;
 

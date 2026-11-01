@@ -96,6 +96,7 @@ pid_t clone(stack_frame_t* frame)
                 if (parent_proc->file_descriptor_table[i] != NULL) {
                     child_proc->file_descriptor_table[i] = parent_proc->file_descriptor_table[i];
                     child_proc->file_descriptor_table[i]->ref_count++;
+
                 }
             }
         }
@@ -106,7 +107,8 @@ pid_t clone(stack_frame_t* frame)
         (void(*)(void*))frame->rip, 
         NULL, 
         (void*)frame->rsp, 
-        parent_thread->cpu_id
+        /*parent_thread->cpu_id*/
+        get_cpu_id_with_fewest_threads()
     );
 
     

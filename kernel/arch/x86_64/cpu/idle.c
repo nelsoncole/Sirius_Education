@@ -16,7 +16,8 @@
  */
 
 #include <kernel/arch/x86_64/cpu/cpu.h>
-#include <kernel/klib.h>
+
+spinlock_t wait_kernel_init = {0};
 
 /**
  * @brief Thread Idle do Kernel (Por núcleo).

@@ -42,7 +42,8 @@ typedef enum {
     PROCESS_EMBRYO,
     PROCESS_READY,
     PROCESS_RUNNING,
-    PROCESS_ZOMBIE
+    PROCESS_ZOMBIE,
+    PROCESS_DEAD
 } process_state_t;
 
 typedef struct process {
@@ -90,7 +91,6 @@ typedef struct process {
 } process_t;
 
 extern process_t* g_process_list_head;
-extern spinlock_t g_process_list_lock;
 
 /**
  * process_init_standard_io - Inicializa os canais padrão (0, 1, 2) de um processo.
@@ -136,6 +136,8 @@ int process_flush_user_space(uint64_t pml4_phys);
  * @param proc Ponteiro para o Bloco de Controlo do Processo (PCB) a eliminar.
  */
 void process_destroy(process_t* proc);
+
+void process_file_destroy(process_t *proc);
 
 void process_exit(int code);
 

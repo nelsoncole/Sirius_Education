@@ -309,10 +309,9 @@ long tcp_send_stream(socket_t* sock, const void* buf, unsigned long len)
     memset(tcp_buffer, 0, tcp_packet_size);
 
     struct sockaddr_in* local = (struct sockaddr_in*)sock->local_addr;
-    uint16_t src_port = local ? local->sin_port : htons(6000);
-
+    
     tcp_header_t* tcp = (tcp_header_t*)tcp_buffer;
-    tcp->src_port   = src_port;
+    tcp->src_port   = local->sin_port;
     tcp->dest_port  = dest->sin_port;
     tcp->seq_num    = htonl(sock->local_seq);
     tcp->ack_num    = htonl(sock->remote_ack);
@@ -328,7 +327,7 @@ long tcp_send_stream(socket_t* sock, const void* buf, unsigned long len)
     /* MOLDAGEM DO PSEUDO-CABEÇALHO IP ATÓMICO */
     tcp_pseudo_header_t pseudo;
     //Puxa o IP de origem em Network Byte Order direto da global provisória.
-    uint32_t my_ip = 0x10101010;
+    uint32_t my_ip = 0;
     net_get_interface_ip(0, &my_ip);
     pseudo.src_ip   = my_ip; 
     pseudo.dest_ip  = dest->sin_addr.s_addr;

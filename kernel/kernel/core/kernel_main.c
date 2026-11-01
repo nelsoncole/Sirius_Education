@@ -323,7 +323,7 @@ void kernel_main(BOOT_INFO *boot_info)
      * 1. A do Emulador (que consome o tty_pop_output e faz kprintf)
      * 2. A do Teclado (que consome o scancode bruto, traduz e injeta na TTY)
      */
-    thread_create(tty_emulator_thread,NULL, 1);
+    thread_create(tty_emulator_thread,NULL, 0);
     thread_create(tty_keyboard_bridge_thread, NULL, 0);
     thread_create(network_rx_thread, NULL, 0);
 
@@ -376,11 +376,12 @@ void kernel_main(BOOT_INFO *boot_info)
     };
 
     kprintf("[BOOT] Lancando o processo mestre de User Space '%s'...\n",init_argv[0]);
-    elf_load_and_create_process(init_argv[0], init_argc, init_argv, 0);
+    
+    elf_load_and_create_process(init_argv[0], init_argc, init_argv, get_cpu_id_with_fewest_threads());
 
     char *argv_sshd[] = {"/mnt/hd0/apps/sshd.elf",};
     kprintf("[BOOT] Lancando o processo do user space '%s'...\n", argv_sshd[0]);
-    elf_load_and_create_process(argv_sshd[0], 1, argv_sshd, 0);
+    elf_load_and_create_process(argv_sshd[0], 1, argv_sshd, get_cpu_id_with_fewest_threads());
     
 
     //vfs_print_tree("/");

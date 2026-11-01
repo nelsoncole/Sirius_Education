@@ -309,3 +309,45 @@ cpu_data_block_t* get_cpu_data_block(uint32_t cpu_id)
     
     return cpu_blocks[cpu_id];
 }
+
+cpu_data_block_t* get_cpu_with_fewest_threads(void)
+{
+    cpu_data_block_t *best_cpu = NULL;
+    uint32_t best_count = 4294967295U; //UINT32_MAX;
+
+    for (uint32_t i = 0; i < MAX_CPUS; i++)
+    {
+        cpu_data_block_t *cpu = cpu_blocks[i];
+
+        if (cpu == NULL)
+            continue;
+
+        uint32_t count = 0;
+        thread_t *thread = cpu->ready_queue_head;
+
+        while (thread != NULL)
+        {
+            count++;
+            thread = thread->next;
+        }
+
+        if (cpu->current_thread != NULL &&
+            cpu->current_thread != cpu->idle_thread)
+        {
+            count++;
+        }
+
+        if (count < best_count)
+        {
+            best_count = count;
+            best_cpu = cpu;
+        }
+    }
+
+    return best_cpu;
+}
+
+uint32_t get_cpu_id_with_fewest_threads(void) {
+    cpu_data_block_t* cpu = get_cpu_with_fewest_threads();
+    return cpu->cpu_id;
+}

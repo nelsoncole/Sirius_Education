@@ -166,6 +166,8 @@ void runcmd(struct cmd *cmd)
     ecmd = (struct execcmd*)cmd;
     if(ecmd->argv[0] == 0)
       exit(0);
+
+    char* save_argv0 = ecmd->argv[0];
     
     /* --- INJEÇÃO SEGURA DO CAMINHO ABSOLUTO --- */
     char caminho_absoluto[MAX_PATH];
@@ -187,6 +189,10 @@ void runcmd(struct cmd *cmd)
     /* ------------------------------------------- */
     
     /* Executa o binário através da chamada de sistema nativa */
+    execve(ecmd->argv[0], ecmd->argv, NULL);
+
+    ecmd->argv[0] = save_argv0;
+    /* Execute no directorio local */
     execve(ecmd->argv[0], ecmd->argv, NULL);
     
     // Se o execve falhar e retornar, exibe o erro

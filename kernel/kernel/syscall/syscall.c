@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  *
  *    Modified By: Nelson Cole / AI Collaborator
- *  Modified Date: 25/10/2026
+ *  Modified Date: 01/11/2026
  *
  *        License: MIT
  * ============================================================================
@@ -263,6 +263,8 @@ uint64_t sys_open(const char* path, uint32_t flags) {
         return (uint64_t)-3;
     }
 
+    memset(file, 0, sizeof(vfs_file_t));
+    
     file->node = node;
     file->offset = 0;
     file->flags = flags;
@@ -797,9 +799,8 @@ uint64_t sys_waitpid(int32_t pid, int *wstatus, int options)
         int tem_filhos_vivos = 0;
         process_t* zombie_encontrado = NULL;
 
-        unsigned long flags = process_list_spinlock_acquire();
-
         // 2. VARREDURA COMPLETA: Registamos o estado real de toda a descendência
+        unsigned long flags = process_list_spinlock_acquire();
         for (process_t* p = g_process_list_head; p != NULL; p = p->next) 
         {
             if (p->ppid == parent_proc->pid) 
@@ -817,6 +818,7 @@ uint64_t sys_waitpid(int32_t pid, int *wstatus, int options)
                 }
             }
         }
+        process_list_spinlock_release(flags);
 
         // Se encontrámos um zombie estável, elegemo-lo para destruição e coleta
         if (zombie_encontrado != NULL) {
@@ -836,17 +838,15 @@ uint64_t sys_waitpid(int32_t pid, int *wstatus, int options)
                 }
             }
 
+            // Nelson, aqui devemos mandar o processo na lista de mortos
+            child_proc->state = PROCESS_DEAD;
             kprintf("[SCI] sys_waitpid: Filho PID %d recolhido. Removendo...\n", child_pid);
-            process_list_spinlock_release(flags);
-            process_list_remove(child_proc);
-            kfree(child_proc);    
             return (uint64_t)child_pid; 
         }
 
         // 4. PROTEÇÃO DEFENSIVA: Evita loops infinitos se o PID pedido não existir
         if (!child_proc && !tem_filhos_vivos) 
         {
-            process_list_spinlock_release(flags);
             kprintf("[SCI ERROR] sys_waitpid: PID %d nao e um filho valido ou nao possui descendentes ativos.\n", pid);
             return (uint64_t)-1; 
         }
@@ -856,7 +856,6 @@ uint64_t sys_waitpid(int32_t pid, int *wstatus, int options)
         
         thread_t* current_thread = cpu->current_thread;
         current_thread->state = THREAD_BLOCKED;
-        process_list_spinlock_release(flags);
         schedule(); // O Pai adormece e cede os ciclos de CPU de forma limpa.
         
     }
