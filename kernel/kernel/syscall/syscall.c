@@ -27,6 +27,7 @@
 #include <kernel/kernel/sched/fork.h>
 #include <kernel/arch/x86_64/kapi/timer.h>
 #include <kernel/kernel/mm/memory_map.h>
+#include <kernel/kernel/sched/process_loader.h>
 
 /*
  * REGS DE HARDWARE ESPECÍFICOS DA ARQUITETURA (x86_64 MSRs)
@@ -114,7 +115,9 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
     [SYS_CHDIR]     = sys_chdir,
     [SYS_GETCWD]    = sys_getcwd,
 
-    [SYS_ACTIVE_TTY] = sys_active_tty
+    [SYS_ACTIVE_TTY] = sys_active_tty,
+
+    [SYS_PROCESS_SPAWN] = sys_process_spawn
 };
 
 static inline void wrmsr(uint32_t msr, uint64_t val) {
@@ -147,6 +150,7 @@ static inline int syscall_is_blocking(uint64_t syscall_num) {
         case SYS_EXIT:
         case SYS_GETPID:
         case SYS_GETPPID:
+        case SYS_PROCESS_SPAWN:
             return 0; // GRUPO: CLI ESTRITO
 
         default:
@@ -1271,6 +1275,45 @@ uint64_t sys_active_tty()
     pty_vfs_set_active_engine(pair->replica_tty);
 
     return (uint64_t)0;
+}
+
+uint64_t sys_process_spawn(pid_t * pid, const char *path,
+                const void *file_actions,
+                const void *attrp,
+                char *const argv[], char *const envp[]) 
+{
+
+    (void)file_actions;
+    (void)attrp;
+
+    char *const *argv_p = argv;
+    char *init_argv[] = {
+        ".",
+        NULL
+    };
+
+    int argc = 0; 
+    if (argv) { while (argv[argc] != NULL) argc++; }
+    else {argc = 1; argv_p = init_argv;}
+
+    int envc = 0; 
+    if (envp) { while (envp[envc] != NULL) envc++; }
+
+    cpu_data_block_t* cpu = get_current_cpu();
+    process_t* parent_proc = cpu->current_thread->owner;
+    if (!parent_proc) return -1;
+                    
+    process_t*  proc = elf_load_and_create_process(path, argc, (char**)argv_p, get_cpu_id_with_fewest_threads());
+
+    if (!proc) return (uint64_t)-1;
+
+    ksprintf(proc->pwd, "%s", parent_proc->pwd);
+
+    if (pid) {
+        *pid = proc->pid;
+    }
+
+    return (uint64_t)0;   
 }
 /*
  * ============================================================================

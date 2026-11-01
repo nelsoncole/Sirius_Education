@@ -99,6 +99,9 @@ enum {
     SYS_GETCWD,
 
     SYS_ACTIVE_TTY,
+
+    SYS_PROCESS_SPAWN,
+
     /* O compilador define automaticamente MAX_SYSCALLS com o valor total correto (43) */
     MAX_SYSCALLS
 };
@@ -201,5 +204,10 @@ uint64_t sys_chdir(const char *path);
 uint64_t sys_getcwd(char *buf, size_t size);
 
 uint64_t sys_active_tty();
+
+uint64_t sys_process_spawn(pid_t * pid, const char *path,
+                const void *file_actions,
+                const void *attrp,
+                char *const argv[], char *const envp[]);
 
 #endif /* _SYSCALL_H_ */

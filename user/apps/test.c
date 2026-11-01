@@ -1,11 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
-#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #define SOCKET_PATH "/tmp/sirius_socket"
 
@@ -17,7 +16,7 @@ int main(void)
 
     struct sockaddr_un addr;
 
-    //unlink(SOCKET_PATH);
+    unlink(SOCKET_PATH);
 
     server_fd = socket(AF_LOCAL, SOCK_STREAM, 0);
 
@@ -45,7 +44,7 @@ int main(void)
     {
         perror("listen");
         close(server_fd);
-        //unlink(SOCKET_PATH);
+        unlink(SOCKET_PATH);
         return 1;
     }
 
@@ -55,7 +54,7 @@ int main(void)
     {
         perror("fork");
         close(server_fd);
-        //unlink(SOCKET_PATH);
+        unlink(SOCKET_PATH);
         return 1;
     }
 
@@ -72,7 +71,6 @@ int main(void)
 
         //sleep(1);
         
-
         client_socket = socket(AF_LOCAL, SOCK_STREAM, 0);
 
         if (client_socket < 0)
@@ -123,7 +121,7 @@ int main(void)
     {
         perror("accept");
         close(server_fd);
-        //unlink(SOCKET_PATH);
+        unlink(SOCKET_PATH);
         return 1;
     }
 
@@ -149,7 +147,7 @@ int main(void)
 
     close(server_fd);
 
-    //unlink(SOCKET_PATH);
+    unlink(SOCKET_PATH);
 
     return 0;
 }

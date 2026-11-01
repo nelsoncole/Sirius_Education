@@ -419,15 +419,12 @@ void scheduler_exit(int exit_code)
      */
     if (current_proc != NULL) 
     {
+        process_flush_user_space(current_proc->cr3);
         process_file_destroy(current_proc);
 
         /* 2. REGISTO DE ESTADO (Transforma o processo em Zombie para o Pai ler) */
         current_proc->exit_code = exit_code;
         current_proc->state     = PROCESS_ZOMBIE;
-        
-        
-        // Nelson, aqui devemos mandar o processo na lista de zumbies
-        //process_destroy(current_proc);
 
         /* 
          * 3. SINALIZAÇÃO E ACORDAR O PAI:

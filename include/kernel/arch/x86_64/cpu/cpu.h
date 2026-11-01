@@ -148,6 +148,11 @@ uint32_t get_cpu_id_with_fewest_threads(void);
  */
 void cpu_idle(void);
 
+static inline void cpu_relax(void)
+{
+    __asm__ __volatile__("pause" ::: "memory");
+}
+
 static inline void interrupts_disable(void) {
     __asm__ __volatile__("cli" : : : "memory");
 }

@@ -19,6 +19,9 @@
 /* Comando Mágico customizado do Sirius OS para diagnóstico do VFS */
 #define VFS_CMD_PRINT_TREE    0x1001
 
+#define TTY_IOCTL_VIDEO_WRITE  0x2001
+#define TTY_IOCTL_VIDEO_INFO   0x2002
+
 /* Comandos de controlo para Pseudo-Terminais (PTY) e Terminais (TTY) */
 #define TIOCGPTN              0x5430  /* Obtém o número/ID da PTY escrava (Get PTY Number) */
 #define TIOCSPTLCK            0x40045431 /* Tranca/Destranca o nó da PTY escrava (Set PTY Lock) */

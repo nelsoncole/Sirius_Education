@@ -10,7 +10,7 @@
  *   Created Date: 14/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 26/10/2026
+ *  Modified Date: 01/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -23,6 +23,10 @@
 #include <kernel/drivers/char/font.h>
 #include <kernel/kernel/sched/wait.h>
 #include <kernel/kernel/sched/wakeup.h>
+#include <kernel/arch/x86_64/cpu/cpu.h>
+
+extern void *optimized_memcpy(void *dst, const void *src, size_t bytes);
+extern void *optimized_memset_dword(void *dst, uint32_t value, size_t count);
 
 /* Códigos de Controle ASCII */
 #define CTRL(c)    ((c) & 0x1F)
@@ -35,8 +39,6 @@
 static struct tty_device* g_tty_instances[MAX_TTY_DRV_DEVICES];
 static uint32_t           g_current_active_id = 0;
 static spinlock_t         g_tty_driver_lock;
-
-extern void *optimized_memset_dword(void *dst, uint32_t value, size_t count);
 
 /* ============================================================================
  *               Função Auxiliar Interna da Fila de Saída
@@ -154,6 +156,7 @@ void tty_init_video_context(struct tty_device* tty, unsigned int pages) {
     tty->width = g_boot_info->Graphics.Width;
     tty->height = g_boot_info->Graphics.Height;
     tty->pixels_per_scanLine = g_boot_info->Graphics.PixelsPerScanLine;
+    tty->bpp = g_boot_info->Graphics.BitsPerPixel;
     
     // Guarda o número de páginas configurado para esta TTY
     tty->total_pages = (pages > 0) ? pages : 1; 
@@ -515,4 +518,97 @@ int tty_read_from_out_queue(struct tty_device* tty, char* buf, int size) {
 
     spin_unlock(&tty->lock);
     return lidos;
+}
+
+/*
+size_t tty_video_write(struct tty_device* tty, struct tty_user* user)
+{
+    if (!tty || !tty->video_buffer || !user || !user->user_buffer || user->size == 0)
+        return -1;
+
+    size_t pitch = tty->pixels_per_scanLine * tty->bpp;
+    size_t max_size = tty->height * pitch;
+
+    size_t size = user->size;
+
+    if (size > max_size)
+        size = max_size;
+        
+    if (size > tty->buffer_size)
+        size = tty->buffer_size;
+
+    while (__atomic_load_n(&tty->refresh_needed, __ATOMIC_ACQUIRE))
+        cpu_relax();
+
+    size_t offset = 0;
+
+    while (offset < size)
+    {
+        size_t remaining = size - offset;
+        size_t line_size = remaining < pitch ? remaining : pitch;
+
+        optimized_memcpy(
+            (uint8_t *)tty->video_buffer + offset,
+            (const uint8_t *)user->user_buffer + offset,
+            line_size);
+
+        offset += line_size;
+    }
+
+    __sync_lock_test_and_set(&tty->refresh_needed, 1);
+
+    return size;
+}
+*/
+
+size_t tty_video_write(struct tty_device *tty, struct tty_user *user)
+{
+    if (!tty || !tty->video_buffer || !user || !user->user_buffer)
+        return 0;
+
+    if (!user->width || !user->height || !user->ppsl)
+        return 0;
+
+    if (user->bpp != 32 || tty->bpp != 32)
+        return 0;
+
+    if (user->ppsl < user->width)
+        return 0;
+
+    if (tty->pixels_per_scanLine < tty->width)
+        return 0;
+
+    size_t bytes_per_pixel = user->bpp / 8;
+
+    size_t src_pitch = user->ppsl * bytes_per_pixel;
+    size_t dst_pitch = tty->pixels_per_scanLine * bytes_per_pixel;
+
+    size_t copy_width = user->width < tty->width
+                      ? user->width : tty->width;
+
+    size_t copy_height = user->height < tty->height
+                       ? user->height : tty->height;
+
+    size_t line_size = copy_width * bytes_per_pixel;
+
+    if (user->size < src_pitch * copy_height)
+        return 0;
+
+    while (__atomic_load_n(&tty->refresh_needed, __ATOMIC_ACQUIRE))
+        cpu_relax();
+
+    for (size_t y = 0; y < copy_height; y++)
+    {
+        const uint8_t *src =
+            (const uint8_t *)user->user_buffer + y * src_pitch;
+
+        uint8_t *dst =
+            (uint8_t *)tty->video_buffer + y * dst_pitch;
+
+        optimized_memcpy(dst, src, line_size);
+    }
+
+    __atomic_store_n(&tty->refresh_needed, 1, __ATOMIC_RELEASE);
+
+    return line_size * copy_height;
 }

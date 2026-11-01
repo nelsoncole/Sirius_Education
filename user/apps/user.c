@@ -12,16 +12,37 @@
  */
 
 #include <unistd.h>
-#include <fcntl.h>
 #include <sys/wait.h>
+#include <spawn.h>
+#include <stdio.h>
+
+extern char **environ;
 
 extern int __sys_active_tty();
+
 int main(int argc, char *argv[])
 {
     (void)argc;
     (void)argv;
 
+    sleep(1);
+    
     __sys_active_tty(); // define o foco em tty0
+
+    pid_t pid;
+    char *argv_s[] = {
+        "apps/procyon.elf",
+        "--background",
+        NULL
+    };
+
+    int ret = posix_spawn(&pid, "apps/procyon.elf", NULL, NULL, argv_s, environ);
+
+    if (ret != 0) {
+        printf("[Procyon] Erro ao executar processo: %d\n", ret);
+    }else {
+        printf("[Procyon] Processo criado: PID %d\n", pid);
+    }
 
     while (1)
     {

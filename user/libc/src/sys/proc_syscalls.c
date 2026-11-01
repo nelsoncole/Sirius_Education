@@ -9,6 +9,9 @@
  *        Author:  Nelson Cole
  *   Created Date: 24/09/2026
  * 
+ *    Modified By: Nelson Cole
+ *  Modified Date: 01/11/2026
+ * 
  *        License: MIT
  * ============================================================================
  */
@@ -23,6 +26,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <sys/mman.h>
+#include <spawn.h>
+#include <errno.h>
 
 
 #ifndef MAX_PATH_LEN
@@ -126,6 +131,163 @@ int execl(const char *pathname, const char *arg, ...)
     /* 3. Desvia a execução para o ponto nativo */
     return execve(pathname, argv, NULL);
 }
+
+/**
+ * posix_spawn - Cria um novo processo e executa um programa especificado,
+ *               sem substituir a imagem do processo chamador.
+ *
+ *               Cria um processo filho através de fork() e executa o novo
+ *               binário através de execve(). Caso a execução falhe, o
+ *               processo filho termina com código de saída 127.
+ *
+ * @pid:          Ponteiro para receber o PID do processo criado.
+ * @pathname:     Caminho do executável a ser iniciado.
+ * @file_actions: Operações de ficheiros a executar antes do execve().
+ * @attrp:        Atributos de criação e execução do processo.
+ * @argv:         Argumentos da linha de comandos.
+ * @envp:         Variáveis de ambiente do novo processo.
+ *
+ * @return:       0 em caso de sucesso ou código de erro POSIX.
+ */
+int posix_spawn(pid_t *pid, const char *path,
+                const posix_spawn_file_actions_t *file_actions,
+                const posix_spawnattr_t *attrp,
+                char *const argv[], char *const envp[])
+{
+    // 1. Validação básica de segurança
+    if (path == NULL /*|| argv == NULL || envp == NULL*/) {
+        return EINVAL; // Código de erro POSIX para argumento inválido
+    }
+
+    char new_pathname[MAX_PATH_LEN];
+    
+    // 2. Resolução do caminho (Absoluto vs Relativo)
+    if (path[0] == '/')
+    {
+        // Garante que o caminho não ultrapassa o limite do buffer
+        if (strlen(path) >= MAX_PATH_LEN) return ENAMETOOLONG;
+        strcpy(new_pathname, path);
+    }
+    else
+    {
+        char pwd[MAX_PATH_LEN];
+        if (getcwd(pwd, MAX_PATH_LEN) == NULL)
+        {
+            return errno; // Devolve o erro gerado pelo getcwd
+        }
+        
+        // Verifica se o tamanho combinado cabe no buffer (incluindo a '/' e o '\0')
+        if ((strlen(pwd) + strlen(path) + 2) > MAX_PATH_LEN) {
+            return ENAMETOOLONG;
+        }
+        sprintf(new_pathname, "%s/%s", pwd, path);
+    }
+
+    int ret = (int)syscall6(SYS_PROCESS_SPAWN, 
+                            (uint64_t)pid, 
+                            (uint64_t)new_pathname, 
+                            (uint64_t)file_actions, 
+                            (uint64_t)attrp, 
+                            (uint64_t)argv, 
+                            (uint64_t)envp);
+
+    // Se o retorno do kernel for negativo, transforma no erro POSIX positivo correspondente
+    if (ret < 0) {
+        return -ret; 
+    }
+
+    return 0; // Sucesso
+}
+
+int posix_spawnp(pid_t *restrict pid, const char *file,
+                 const posix_spawn_file_actions_t *file_actions,
+                 const posix_spawnattr_t *attrp,
+                 char *const argv[], char *const envp[])
+{
+    // 1. Validação básica de segurança
+    if (file == NULL || argv == NULL || envp == NULL) {
+        return EINVAL;
+    }
+
+    // 2. Se o nome do ficheiro contiver uma barra '/', ignora o PATH
+    // e chama diretamente a posix_spawn padrão.
+    if (strchr(file, '/') != NULL) {
+        return posix_spawn(pid, file, file_actions, attrp, argv, envp);
+    }
+
+    // 3. Procurar a variável de ambiente "PATH=" dentro do array envp
+    const char *path_env = NULL;
+    for (int i = 0; envp[i] != NULL; i++) {
+        if (strncmp(envp[i], "PATH=", 5) == 0) {
+            path_env = envp[i] + 5; // Salta o "PATH=" para obter os diretórios
+            break;
+        }
+    }
+
+    // Se o PATH não for encontrado no ambiente fornecido, usa um caminho padrão fallback
+    if (path_env == NULL) {
+        path_env = "/bin:/usr/bin"; 
+    }
+
+    // 4. Fazer o parsing da string PATH (separada por ':')
+    char path_buffer[MAX_PATH_LEN];
+    const char *start = path_env;
+    const char *end;
+    int last_error = ENOENT; // Erro padrão caso não encontre em lado nenhum
+
+    while (1) {
+        end = strchr(start, ':');
+        size_t dir_len = end ? (size_t)(end - start) : strlen(start);
+
+        // Se o diretório for vazio (ex: :: ou PATH começando com :), representa a pasta atual "."
+        if (dir_len == 0) {
+            path_buffer[0] = '.';
+            path_buffer[1] = '\0';
+            dir_len = 1;
+        } else {
+            if (dir_len >= MAX_PATH_LEN) {
+                // Salta este diretório se for longo demais para o buffer
+                if (!end) break;
+                start = end + 1;
+                continue;
+            }
+            strncpy(path_buffer, start, dir_len);
+            path_buffer[dir_len] = '\0';
+        }
+
+        // Construir o caminho completo: "diretorio/ficheiro"
+        char candidate_path[MAX_PATH_LEN];
+        if ((dir_len + strlen(file) + 2) <= MAX_PATH_LEN) {
+            // Se o diretório já terminar em barra, não adiciona outra (evita de //)
+            if (path_buffer[dir_len - 1] == '/') {
+                sprintf(candidate_path, "%s%s", path_buffer, file);
+            } else {
+                sprintf(candidate_path, "%s/%s", path_buffer, file);
+            }
+
+            // Tenta fazer o spawn com este caminho candidato
+            int status = posix_spawn(pid, candidate_path, file_actions, attrp, argv, envp);
+            
+            // Se o erro for de ficheiro inexistente (ENOENT) ou diretório inválido (ENOTDIR),
+            // continua a procurar nos próximos diretórios do PATH.
+            if (status == ENOENT || status == ENOTDIR) {
+                last_error = status;
+            } else {
+                // Se teve sucesso (0) ou falhou por outro motivo crítico (ex: falta de memória ENOMEM,
+                // formato executável inválido ENOEXEC), interrompe e devolve o erro imediatamente.
+                return status;
+            }
+        }
+
+        if (!end) {
+            break; // Processou o último elemento do PATH
+        }
+        start = end + 1;
+    }
+
+    return last_error; // Retorna ENOENT se varreu todo o PATH e não achou o executável
+}
+
 
 // Dentro de proc_syscalls.c (Ring 3):
 pid_t waitpid(pid_t pid, int *wstatus, int options)
@@ -310,7 +472,7 @@ char *getcwd(char *buf, size_t size)
     if (ret < 0) {
         // Se alocámos a memória nesta chamada e o kernel falhou, libertamos para evitar memory leak
         if (allocated) free(target_buf);
-        // errno = -ret;
+        errno = -ret;
         return NULL;
     }
 

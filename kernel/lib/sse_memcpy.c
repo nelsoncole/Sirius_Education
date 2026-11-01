@@ -257,9 +257,9 @@ void *optimized_memcpy(void *dst, const void *src, size_t bytes) {
      * capacidade real reportada pelo CPUID no arranque do Sirius OS.
      */
     if (g_cpu_has_avx2) {
-        avx2_memcpy(dst, src, bytes);
+        return avx2_memcpy(dst, src, bytes);
     } else {
-        sse_memcpy(dst, src, bytes);
+        return sse_memcpy(dst, src, bytes);
     }
 
     return dst;

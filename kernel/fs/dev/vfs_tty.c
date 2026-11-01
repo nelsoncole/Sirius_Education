@@ -12,7 +12,7 @@
  *   Created Date: 15/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 26/09/2026
+ *  Modified Date: 01/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -28,6 +28,7 @@ static int tfs_tty_open(vfs_node_t* node, uint32_t flags);
 static int tfs_tty_close(vfs_node_t* node);
 static int tfs_tty_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
 static int tfs_tty_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
+static int tfs_tty_ioctl(vfs_node_t* node, uint32_t cmd, unsigned long arg);
 
 /* A única tabela polimórfica para os dispositivos de caracteres TTY */
 static vfs_operations_t g_tty_vfs_ops = {
@@ -35,7 +36,7 @@ static vfs_operations_t g_tty_vfs_ops = {
     .close   = tfs_tty_close,
     .read    = tfs_tty_read,
     .write   = tfs_tty_write,
-    .ioctl   = NULL,
+    .ioctl   = tfs_tty_ioctl,
     .flush   = NULL,
     .finddir = NULL,
     .readdir = NULL,
@@ -64,6 +65,7 @@ static int tfs_tty_open(vfs_node_t* node, uint32_t flags) {
     spin_lock(&g_vfs_tty_lock);
     if (node->flags == VFS_CHAR_DEV && !node->private_data) {
         node->private_data = tty_get_current();
+        return 0;
     }
     spin_unlock(&g_vfs_tty_lock);
     return 0;
@@ -76,7 +78,7 @@ static int tfs_tty_close(vfs_node_t* node) {
 
 static int tfs_tty_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
     (void)offset; 
-    if (!node || !buffer || size == 0) return 0;
+    if (!node || !buffer || size == 0) return -1;
 
     struct tty_device* tty = (struct tty_device*)node->private_data;
     if (!tty) return -1;
@@ -86,12 +88,38 @@ static int tfs_tty_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* 
 
 static int tfs_tty_write(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer) {
     (void)offset; 
-    if (!node || !buffer || size == 0) return 0;
+    if (!node || !buffer || size == 0) return -1;
 
     struct tty_device* tty = (struct tty_device*)node->private_data;
     if (!tty) return -1;
 
     return tty_write_to_out_queue(tty, (const char*)buffer, size);
+}
+
+static int tfs_tty_ioctl(vfs_node_t* node, uint32_t cmd, unsigned long arg) {
+    if (!node || !node->private_data) return -1;
+
+    struct tty_device* tty = (struct tty_device*)node->private_data;
+    if (!tty) return -1;
+
+    if (cmd == TTY_IOCTL_VIDEO_WRITE) {
+        return (int)tty_video_write(tty, (struct tty_user*)arg); 
+    }
+    else if (cmd == TTY_IOCTL_VIDEO_INFO) {
+        struct tty_user* user = (struct tty_user*)arg;
+        if (!user) return -1;
+
+        user->width = tty->width;
+        user->height = tty->height;
+        user->ppsl = tty->pixels_per_scanLine;
+        user->bpp = tty->bpp;
+
+        return 0; 
+
+    }
+
+
+    return -1; // Comando não implementado/suportado
 }
 
 /**

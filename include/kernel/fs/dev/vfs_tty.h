@@ -20,6 +20,9 @@
 
 #include <kernel/fs/vfs/vfs.h>
 
+#define TTY_IOCTL_VIDEO_WRITE  0x2001
+#define TTY_IOCTL_VIDEO_INFO   0x2002
+
 /**
  * tty_vfs_init - Instancia os múltiplos terminais e vincula-os dentro do nó /dev.
  *                Associa as tabelas de operações polimórficas (vfs_operations_t)

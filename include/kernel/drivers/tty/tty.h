@@ -14,6 +14,7 @@
 #define _TTY_H_
 
 #include <kernel/lib/stdint.h>
+#include <kernel/lib/stddef.h>
 #include <kernel/kernel/core/spinlock.h>
 
 /* Tamanho do Buffer Circular do TTY (Deve ser potência de 2 para otimização) */
@@ -51,9 +52,10 @@ struct tty_device {
     uint32_t  buffer_size;      /* Tamanho total em bytes deste buffer (Width * Height * 4) */
 
     /* Geometria Virtual da TTY (Agnóstica ao modo gráfico global) */
-    uint32_t width;            /* Largura virtual em pixéis (ex: 1024) */
-    uint32_t height;           /* Altura virtual em pixéis (ex: 768) */
-    uint32_t pixels_per_scanLine; /* Pixéis por linha no buffer virtual */
+    uint32_t width;                 /* Largura virtual em pixéis (ex: 1024) */
+    uint32_t height;                /* Altura virtual em pixéis (ex: 768) */
+    uint32_t pixels_per_scanLine;   /* Pixéis por linha no buffer virtual */
+    uint8_t  bpp;                   /* Byte por pixel*/
 
     // Cada TTY define quantas páginas de memória quer usar
     uint32_t total_pages;      /* 1 para sem scroll, 2 ou 3 para com scroll */
@@ -75,6 +77,15 @@ struct tty_device {
     /* Primitivas de Sincronização e Canais de Espera Passiva */
     void* read_wait;            /* Âncora de memória para threads leitoras (Réplica/Shell) */
     void* write_wait;           /* Âncora de memória para threads escritoras/controladoras (Mestre) */
+};
+
+struct tty_user {
+    uint64_t user_buffer;
+    uint64_t size;
+    uint32_t width;                 /* Largura virtual em pixéis (ex: 1024) */
+    uint32_t height;                /* Altura virtual em pixéis (ex: 768) */
+    uint32_t ppsl;                  /* Pixéis por linha no buffer virtual */
+    uint32_t bpp;   
 };
 
 /* ============================================================================
@@ -135,5 +146,7 @@ int tty_write_to_in_queue(struct tty_device* tty, const char* buf, int size);
 int tty_read_from_in_queue(struct tty_device* tty, char* buf, int size);
 int tty_write_to_out_queue(struct tty_device* tty, const char* buf, int size);
 int tty_read_from_out_queue(struct tty_device* tty, char* buf, int size);
+
+size_t tty_video_write(struct tty_device* tty, struct tty_user *user);
 
 #endif /* _TTY_H_ */

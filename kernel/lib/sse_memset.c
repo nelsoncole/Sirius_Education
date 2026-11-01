@@ -366,9 +366,9 @@ void *optimized_memset_dword(void *dst, uint32_t value, size_t count) {
      * ou o teu sse_memset_dword (XMM - 128 bits) que usa escrita não-temporal.
      */
     if (g_cpu_has_avx2) {
-        avx2_memset_dword(dst, value, count);
+        return avx2_memset_dword(dst, value, count);
     } else {
-        sse_memset_dword(dst, value, count);
+        return sse_memset_dword(dst, value, count);
     }
 
     return dst;

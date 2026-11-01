@@ -376,7 +376,6 @@ void kernel_main(BOOT_INFO *boot_info)
     };
 
     kprintf("[BOOT] Lancando o processo mestre de User Space '%s'...\n",init_argv[0]);
-    
     elf_load_and_create_process(init_argv[0], init_argc, init_argv, get_cpu_id_with_fewest_threads());
 
     char *argv_sshd[] = {"/mnt/hd0/apps/sshd.elf",};
