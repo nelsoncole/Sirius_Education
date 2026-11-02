@@ -21,6 +21,9 @@
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/fs/dev/vfs_pty.h>
 #include <kernel/klib.h>
+#include <kernel/kernel/core/spinlock.h>
+
+spinlock_t g_process_loader_lock = {0};
 
 /**
  * Lê um binário executável do disco para um buffer alinhado via pool_alloc,

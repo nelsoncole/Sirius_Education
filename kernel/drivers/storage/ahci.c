@@ -12,7 +12,7 @@
  *   Created Date: 08/09/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 13/09/2026
+ *  Modified Date: 02/11/2026
  *
  *        License: MIT
  * ============================================================================
@@ -26,6 +26,8 @@
 
 #include <kernel/arch/x86_64/kapi/irq.h>
 #include <kernel/arch/x86_64/kapi/msi.h>
+
+#include <kernel/kernel/core/spinlock.h>
 
 /* Estados e Limites Críticos */
 #define AHCI_MAX_DEVICES 32
@@ -42,6 +44,9 @@ typedef struct
 {
     int port_id;
     int present;
+
+    spinlock_t lock;
+
     uint64_t total_sectors;
     hba_port_t *regs;
 
@@ -64,6 +69,20 @@ typedef struct
 
 static ahci_device_t g_storage_devices[AHCI_MAX_DEVICES];
 static int g_storage_device_count = 0;
+
+static void ahci_spinlock_init(spinlock_t *lock) {
+    if (!lock) return;
+    
+    lock->lock = 0;
+}
+
+static void ahci_spinlock_lock_irqsave(spinlock_t *lock, unsigned long *flags) {
+    *flags = spinlock_lock_irqsave(lock);
+
+}
+static void ahci_spinlock_unlock_irqrestore(spinlock_t *lock, unsigned long flags) {
+    spinlock_unlock_irqrestore(lock, flags);
+}
 
 /* Declarações locais antecipadas */
 void ahci_interrupt_handler(void);
@@ -216,9 +235,14 @@ static int ahci_dma_io(ahci_device_t *dev, uint64_t lba, uint32_t sector_count, 
 {
     hba_port_t *port = dev->regs;
 
+    unsigned long flags;
+    ahci_spinlock_lock_irqsave(&dev->lock, &flags);
+
     int slot = ahci_find_free_slot(port);
-    if (slot == -1)
+    if (slot == -1) {
+        ahci_spinlock_unlock_irqrestore(&dev->lock, flags);
         return -1;
+    }
 
     hba_cmd_header_t *cmdhdr = (hba_cmd_header_t *)(dev->clb_virt + (slot * sizeof(hba_cmd_header_t)));
     cmdhdr->cfl = sizeof(h2d_register_fis_t) / sizeof(uint32_t);
@@ -251,6 +275,7 @@ static int ahci_dma_io(ahci_device_t *dev, uint64_t lba, uint32_t sector_count, 
 
     // Se o tamanho do I/O ultrapassar o suporte de PRDTs alocados nesta arquitetura
     if (bytes_left > 0) {
+        ahci_spinlock_unlock_irqrestore(&dev->lock, flags);
         return -2; // Erro: Tamanho de I/O demasiado grande para o limite atual de PRDTs
     }
 
@@ -280,6 +305,8 @@ static int ahci_dma_io(ahci_device_t *dev, uint64_t lba, uint32_t sector_count, 
 
     /* Dispara o comando elétrico no hardware */
     port->ci = (1 << slot);
+
+    ahci_spinlock_unlock_irqrestore(&dev->lock, flags);
 
     /* LOOP DE ESPERA ASYNC */
     while (dev->slot_busy[slot] == 1)
@@ -588,6 +615,7 @@ int ahci_init(pci_device_t *dev)
                     break;
 
                 ahci_device_t *sata_dev = &g_storage_devices[g_storage_device_count];
+                ahci_spinlock_init(&sata_dev->lock);
                 sata_dev->port_id = g_storage_device_count; //i;
                 sata_dev->regs = port;
                 sata_dev->hba_base_virt = hba_mem;

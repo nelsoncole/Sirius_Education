@@ -38,13 +38,10 @@ int elf_load_and_execve(const char* path, int argc, char** argv, process_t* proc
 
     kprintf("[Process] Execve: A carregar binário do disco: '%s'...\n", path);
 
-    interrupts_enable();
-
     // 1. Abre o ficheiro através do VFS
     vfs_node_t* file = vfs_open(path, VFS_MODE_READ);
     if (!file) {
         kprintf("[Process] Erro: Ficheiro '%s' não encontrado no VFS.\n", path);
-        interrupts_disable();
         return -1;
     }
 
@@ -52,7 +49,6 @@ int elf_load_and_execve(const char* path, int argc, char** argv, process_t* proc
     if (binary_size == 0) {
         kprintf("[Process] Erro: Ficheiro binário está vazio (0 bytes).\n");
         vfs_close(file);
-        interrupts_disable();
         return -1;
     }
 
@@ -62,7 +58,6 @@ int elf_load_and_execve(const char* path, int argc, char** argv, process_t* proc
     if (!binary_buffer) {
         kprintf("[Process] Erro: Falha ao alocar buffer de %llu bytes na Pool DMA.\n", alloc_size);
         vfs_close(file);
-        interrupts_disable();
         return -1;
     }
 
@@ -73,11 +68,9 @@ int elf_load_and_execve(const char* path, int argc, char** argv, process_t* proc
     if (bytes_lidos != (int)binary_size) {
         kprintf("[Process] Erro crítico: Falha de leitura síncrona no hardware.\n");
         pool_free(binary_buffer, alloc_size);
-        interrupts_disable();
         return -1;
     }
 
-    interrupts_disable();
 
     kprintf("[Process] Transferência concluída (%d bytes). Expurgando User Space antigo...\n", bytes_lidos);
     uint64_t cr3 = proc->cr3;

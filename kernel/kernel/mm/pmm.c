@@ -9,7 +9,7 @@
  *   Created Date: 29/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 30/08/2026
+ *  Modified Date: 02/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -19,11 +19,14 @@
 #include <kernel/lib/stdio.h>
 #include <kernel/lib/string.h>
 #include <kernel/kernel.h>
+#include <kernel/kernel/core/spinlock.h>
 
 // Variáveis internas do PMM
 static unsigned char *pmm_bitmap = 0;
 static unsigned long pmm_total_pages = 0;
 static unsigned long pmm_bitmap_size = 0;
+
+spinlock_t g_pmm_lock = {0};
 
 /*
  * Funções auxiliares para manipulação de bits (Corrigidas para 8-bit reais)
@@ -41,6 +44,8 @@ static inline void bitmap_clear_bit(unsigned long page_index) {
 
 void pmm_init(BOOT_INFO *boot_info) {
     MEMORY_MAP_INFO *map = &boot_info->MemoryMap;
+
+    spinlock_release(&g_pmm_lock);
 
     if(map->MemoryRegionCount < 1) {
         kprintf("[PMM ERRO CRITICO] Nao foi encontrada nenhuma regiao de memoria!\n");
@@ -161,6 +166,8 @@ void pmm_init(BOOT_INFO *boot_info) {
  */
 unsigned long pmm_alloc_page(void)
 {
+    unsigned long flags=  spinlock_lock_irqsave(&g_pmm_lock);
+
     // Varre o bitmap byte a byte
     for (unsigned long i = 0; i < pmm_bitmap_size; i++)
     {
@@ -180,6 +187,7 @@ unsigned long pmm_alloc_page(void)
 
                 // Proteção de segurança contra estouro do limite físico da RAM detectada
                 if (page_index >= pmm_total_pages) {
+                    spinlock_unlock_irqrestore(&g_pmm_lock, flags);
                     return 0; 
                 }
 
@@ -188,12 +196,14 @@ unsigned long pmm_alloc_page(void)
 
                 // CORREÇÃO 2: Garante que a multiplicação usa aritmética estrita de 64 bits (PAGE_SIZE forçado a ULL)
                 unsigned long phys_address = page_index * (unsigned long)PAGE_SIZE;
+                spinlock_unlock_irqrestore(&g_pmm_lock, flags);
                 return phys_address;
             }
         }
     }
 
     kprintf("[PMM ERRO] Memoria fIsica esgotada! ImpossIvel alocar pagina.\n");
+    spinlock_unlock_irqrestore(&g_pmm_lock, flags);
     return 0; // Out of memory
 }
 
@@ -219,8 +229,10 @@ void pmm_free_page(unsigned long phys_address)
         return;
     }
 
+    unsigned long flags=  spinlock_lock_irqsave(&g_pmm_lock);
     // Liberta a página no bitmap resetando o bit correspondente
     bitmap_clear_bit(page_index);
+    spinlock_unlock_irqrestore(&g_pmm_lock, flags);
 }
 
 
@@ -238,6 +250,8 @@ unsigned long pmm_alloc_pages(unsigned long count)
 
     unsigned long consecutive_free = 0;
     unsigned long start_page = 0;
+
+    unsigned long flags=  spinlock_lock_irqsave(&g_pmm_lock);
 
     // Varre todas as páginas gerenciadas pelo bitmap
     for (unsigned long i = 0; i < pmm_total_pages; i++)
@@ -258,6 +272,7 @@ unsigned long pmm_alloc_pages(unsigned long count)
                     bitmap_set_bit(start_page + p);
                 }
                 
+                spinlock_unlock_irqrestore(&g_pmm_lock, flags);
                 // Retorna o endereço físico de partida (primeira página do bloco)
                 return start_page * PAGE_SIZE;
             }
@@ -271,6 +286,7 @@ unsigned long pmm_alloc_pages(unsigned long count)
     }
 
     kprintf("[PMM ERRO] MemOria insuficiente para alocar %du paginas contIguas.\n", count);
+    spinlock_unlock_irqrestore(&g_pmm_lock, flags);
     return 0; // Falha por fragmentação ou falta de memória RAM
 }
 
@@ -300,9 +316,11 @@ void pmm_free_pages(unsigned long phys_address, unsigned long count)
     if ((start_page + count) > pmm_total_pages) {
         return;
     }
-
+    
+    unsigned long flags=  spinlock_lock_irqsave(&g_pmm_lock);
     // Varre o bloco marcando todos os bits de volta para 0 (Livre)
     for (unsigned long p = 0; p < count; p++) {
         bitmap_clear_bit(start_page + p);
     }
+    spinlock_unlock_irqrestore(&g_pmm_lock, flags);
 }

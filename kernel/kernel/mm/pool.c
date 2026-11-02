@@ -10,7 +10,7 @@
  *   Created Date: 09/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 10/09/2026
+ *  Modified Date: 02/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -21,6 +21,7 @@
 #include <kernel/kvmm.h>
 #include <kernel/kernel/mm/pool.h>
 #include <kernel/klib.h>
+#include <kernel/kernel/core/spinlock.h>
 
 // Definição dos bits de paginação padrão para x86_64 caso não estejam no header
 #define PAGE_PRESENT  (1ULL << 0) // Bit 0: Página presente na RAM
@@ -29,10 +30,14 @@
 // Um bitmap simples para gerir os endereços virtuais desta janela
 uint32_t pool_bitmap[KERNEL_POOL_MAX_PAGES / 32] = {0};
 
+spinlock_t g_pool_lock = {0};
+
 /*
  * INICIALIZAÇÃO DO POOL DE MEMÓRIA VIRTUAL DO KERNEL
  */
 void pool_init(void) {
+    
+    spinlock_release(&g_pool_lock);
     // Garante que cada slot de 32-bits do bitmap é zerado explicitamente
     for (size_t i = 0; i < (KERNEL_POOL_MAX_PAGES / 32); i++) {
         pool_bitmap[i] = 0;
@@ -96,16 +101,21 @@ void* pool_alloc(size_t size) {
         return NULL;
     }
 
+    unsigned long flags = spinlock_lock_irqsave(&g_pool_lock);
+
     // 1. CORREÇÃO: Cálculo exato e seguro do número de páginas (arredondado para cima)
     size_t num_pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
 
     PML4_TABLE* pml4 = (PML4_TABLE*)PML4_ADDRESS;
     if (num_pages == 0 || num_pages > KERNEL_POOL_MAX_PAGES) {
+        spinlock_unlock_irqrestore(&g_pool_lock, flags);
         return NULL;
     }
+
     // 1. Procura espaço virtual contíguo livre no Pool
     long start_bit = pool_find_free_region(num_pages);
     if (start_bit == -1) {
+        spinlock_unlock_irqrestore(&g_pool_lock, flags);
         kprintf("[VMM Pool] Erro: Falha ao encontrar %d páginas virtuais contíguas.\n", num_pages);
         return NULL;
     }
@@ -115,6 +125,7 @@ void* pool_alloc(size_t size) {
     uintptr_t phys = pmm_alloc_pages(num_pages);
     if (!phys)
     {
+        spinlock_unlock_irqrestore(&g_pool_lock, flags);
         kprintf("[VMM Pool] Erro crítico: PMM sem memória física durante a alocação.\n");
         return NULL;
     }
@@ -129,6 +140,8 @@ void* pool_alloc(size_t size) {
     // 3. Sinaliza a ocupação no bitmap
     pool_set_bits(start_bit, num_pages);
     
+    spinlock_unlock_irqrestore(&g_pool_lock, flags);
+
     return (void*)base_va;
 }
 
@@ -137,6 +150,8 @@ void pool_free(void* ptr, size_t size) {
     if (size == 0) {
         return;
     }
+
+    unsigned long flags = spinlock_lock_irqsave(&g_pool_lock);
 
     // 1. CORREÇÃO: Cálculo exato e seguro do número de páginas (arredondado para cima)
     size_t num_pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -147,11 +162,13 @@ void pool_free(void* ptr, size_t size) {
 
     // Validações básicas de segurança
     if (base_va < KERNEL_POOL_VIRTUAL_BASE || num_pages == 0) {
+        spinlock_unlock_irqrestore(&g_pool_lock, flags);
         return;
     }
 
     size_t start_bit = (base_va - KERNEL_POOL_VIRTUAL_BASE) / PAGE_SIZE;
     if ((start_bit + num_pages) > KERNEL_POOL_MAX_PAGES) {
+        spinlock_unlock_irqrestore(&g_pool_lock, flags);
         return;
     }
 
@@ -164,6 +181,7 @@ void pool_free(void* ptr, size_t size) {
 
     // Liberta o espaço no bitmap
     pool_clear_bits(start_bit, num_pages);
+    spinlock_unlock_irqrestore(&g_pool_lock, flags);
 }
 
 

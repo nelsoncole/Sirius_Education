@@ -44,6 +44,10 @@
 #define _IOLBF  1   /* Buffering por Linha (Line Buffering) */
 #define _IONBF  2   /* Sem Buffering (No Buffering) -> Usado na criptografia */
 
+#define SEEK_SET	0
+#define SEEK_CUR	1
+#define SEEK_END	2
+
 /* ISO C: Estrutura que encapsula o File Descriptor */
 typedef struct _IO_FILE {
     int fd;

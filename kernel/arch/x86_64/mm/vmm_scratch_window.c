@@ -9,7 +9,7 @@
  *   Created Date: 30/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 10/09/2026
+ *  Modified Date: 02/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -53,7 +53,7 @@ void vmm_scratch_setup(void) {
     unsigned long base_pt_idx = GET_PT_INDEX(VMM_SCRATCH_WINDOW); // Índice 496
     unsigned long long *raw_pt = (unsigned long long *)g_window_pt;
     
-    for (int i = 0; i <= 10; i++) {
+    for (int i = 0; i < 16; i++) {
         raw_pt[base_pt_idx + i] = 0ULL;
     }
 }
@@ -86,13 +86,15 @@ void* vmm_scratch_map(unsigned long phys_addr) {
  * NOTA DE ARQUITETURA CRÍTICA:
  * - As duas primeiras janelas (window 0 e window 1) estão ESTRICTAMENTE RESERVADAS
  *   para as operações primitivas globais de paginação e clonagem profunda de CR3.
- * - As restantes janelas (window 2 a 9) estão livres para expansão e varrimento 
+ * - As restantes janelas (window 2 a 9) estão livres para expansão e varrimento
+ * - As restantes janelas (window 10) reservada para elf_parse_and_map
+ * - As restantes janelas (window 11) reservada para brk
  *   concorrente de tabelas (PML4, PDPT, PD, PT) no subsistema VMM/VFS.
  * ============================================================================
  */
 void* vmm_scratch_map_internal(unsigned long phys_addr, int window) {
     /* Barreira defensiva para garantir integridade física da Page Table */
-    if (window < 0 || window > 9) {
+    if (window < 0 || window > 14) {
         return NULL;
     }
 
@@ -115,4 +117,13 @@ void* vmm_scratch_map_internal(unsigned long phys_addr, int window) {
     __asm__ volatile("invlpg (%0)" :: "r"(scratch_va) : "memory");
 
     return (void*)scratch_va;
+}
+
+
+void* vmm_scratch_map_process(unsigned long phys_addr) {
+    return vmm_scratch_map_internal(phys_addr, 10);
+}
+
+void* vmm_scratch_map_brk(unsigned long phys_addr) {
+    return vmm_scratch_map_internal(phys_addr, 11);
 }

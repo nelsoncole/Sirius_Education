@@ -9,7 +9,7 @@
  *   Created Date: 30/08/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 30/08/2026
+ *  Modified Date: 02/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -76,6 +76,9 @@ void* vmm_scratch_map(unsigned long phys_addr);
  * Protege a criação hierárquica de tabelas de sub-níveis contra corrupção.
  */
 void* vmm_scratch_map_internal(unsigned long phys_addr, int window);
+
+void* vmm_scratch_map_process(unsigned long phys_addr);
+void* vmm_scratch_map_brk(unsigned long phys_addr);
 
 /**
  * Cria um novo espaço de endereçamento virtual (PML4).

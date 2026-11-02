@@ -2,16 +2,29 @@
  * ============================================================================
  *        Project: Sirius_Education
  *       Filename: procyon.c
- *    Description: Procyon Display Server & Compositor (Ring 3).
- *                 Inicializa o servidor via socket local (AF_LOCAL/AF_UNIX) para 
- *                 comunicação com clientes gráficos e faz a gestão do Framebuffer
- *                 através do subsistema TTY do kernel.
+ *    Description: Procyon Display Server & Compositor (Userspace - Ring 3).
+ * 
+ *                 Atua como Servidor Gráfico centralizado e Compositor de janelas.
+ *                 
+ *                 Mecânicas Principais:
+ *                 1. IPC (Inter-Process Communication): Inicializa um socket de
+ *                    domínio Unix local (AF_LOCAL/AF_UNIX) para receber comandos,
+ *                    eventos de input e referências de memória partilhada (shm)
+ *                    dos clientes gráficos (aplicações).
+ *                 2. Gestão de Framebuffer (Kernel TTY): Interage diretamente 
+ *                    com o subsistema TTY do Kernel em modo utilizador através de 
+ *                    `ioctl()`, mapeando o hardware de vídeo e enviando o Backbuffer 
+ *                    composto para renderização física.
+ *                 3. Arquitetura Wayland-like: O servidor atua estritamente como
+ *                    um coordenador. Os clientes desenham nos seus próprios buffers
+ *                    privados e o Procyon realiza o Blitting e a composição final
+ *                    por camadas (layers).
  * 
  *         Author: Nelson Cole
  *   Created Date: 01/11/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 01/11/2026
+ *  Modified Date: 02/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -26,6 +39,10 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <string.h>
+
+#include "pixel.h"
+#include "window.h"
+#include "text.h"
 
 #define PROCYON_SOCKET_PATH "/dev/procyon.sock"
 
@@ -49,18 +66,19 @@ int main() {
         return -1;
     }
 
+
     unlink(PROCYON_SOCKET_PATH);
 
     memset(&server_addr, 0, sizeof(struct sockaddr_un));
     server_addr.sun_family = AF_LOCAL;
     strcpy(server_addr.sun_path, PROCYON_SOCKET_PATH);
-
+    
     if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(struct sockaddr_un)) < 0) {
         printf("Erro no bind do socket local\n");
         close(server_fd);
         return -1;
     }
-
+    
     if (listen(server_fd, 5) < 0) {
         printf("Erro no listen do socket local\n");
         close(server_fd);
@@ -96,8 +114,31 @@ int main() {
         return -1;
     }
 
-    for (uint32_t i = 0; i < fb_pixels; i++) {
-        compositor_buffer[i] = 0x002B36; 
+    window_t* wn = window_create(0, 0, info->width, info->height, NULL, 0x000000, 0x0000FF);
+    if(wn) {
+        unsigned char* free_font_buffer = 0;
+        stbtt_fontinfo font;
+        if(!stbtt_font_init(&font, "usr/share/fonts/Ubuntu.ttf", &free_font_buffer)) {
+            const char *texto =
+                "Bem-vindo ao Sirius OS!\n"
+                "Um sistema operativo desenvolvido em C.\n"
+                "Arquitetura x86_64 com suporte SMP.\n"
+                "Multitarefa, memoria virtual e interface grafica.\n"
+                "Desenvolvido para oferecer desempenho e estabilidade.\n"
+                "Sirius OS - O futuro começa aqui!";
+            draw_text_centered_wrapped(font, texto, 0 , 0, info->width, info->height, 0xFFFFFF, 24, wn);
+        }
+
+        memcpy(compositor_buffer, wn->buffer, fb_pixels * sizeof(unsigned int));
+    }else {
+        uint32_t width = info->width;
+
+        for (uint32_t i = 0; i < fb_pixels; i++)
+        {
+            int x = i % width;
+            int y = i / width;
+            draw_pixel(x, y, info->width, info->height, 0xFF002B36, compositor_buffer);
+        }
     }
 
     info->size = fb_pixels * sizeof(unsigned int);

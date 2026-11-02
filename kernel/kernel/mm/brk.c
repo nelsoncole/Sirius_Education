@@ -8,7 +8,7 @@
  *   Created Date: 17/09/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 17/09/2026
+ *  Modified Date: 02/11/2026
  *
  *        License: MIT
  * ============================================================================
@@ -22,6 +22,8 @@
 
 /* Flags x86_64: Presente (0x1) | Read-Write (0x2) | User-Supervisor (0x4) */
 #define PAGE_USER_FLAGS         (0x1 | 0x2 | 0x4)
+
+spinlock_t g_brk_lock = {0};
 
 /**
  * @brief Altera o limite superior do Heap do processo (Mecanismo brk).
@@ -38,15 +40,19 @@ uint64_t brk(uint64_t new_break)
     process_t* proc = current->owner;
     uint64_t old_break = (uint64_t)proc->heap_end;
 
+    unsigned long flags=  spinlock_lock_irqsave(&g_brk_lock);
+
     /* CASO A: Pedido de Consulta Canónica do POSIX */
     if (new_break == 0 || new_break == old_break) 
     {
+        spinlock_unlock_irqrestore(&g_brk_lock, flags);
         return old_break;
     }
 
     /* VALIDAÇÃO DE SEGURANÇA: Impede invasão ou colisão com a região da Stack */
     if (new_break < USER_HEAP_VIRTUAL_BASE || new_break >= (uint64_t)proc->stack_limit) 
     {
+        spinlock_unlock_irqrestore(&g_brk_lock, flags);
         return old_break;
     }
 
@@ -62,13 +68,14 @@ uint64_t brk(uint64_t new_break)
             if (!phys_page) 
             {
                 kprintf("[Sys_Brk] Erro: Exaustao de RAM fisica para o PID %u.\n", proc->pid);
+                spinlock_unlock_irqrestore(&g_brk_lock, flags);
                 return old_break;
             }
 
-            void* scratch = vmm_scratch_map(phys_page);
+            void* scratch = vmm_scratch_map_brk(phys_page);
             memset(scratch, 0, PAGE_SIZE);
 
-            PML4_TABLE* target_pml4 = (PML4_TABLE*)vmm_scratch_map(proc->cr3);
+            PML4_TABLE* target_pml4 = (PML4_TABLE*)vmm_scratch_map_brk(proc->cr3);
             vmm_map_page(target_pml4, v_addr, phys_page, PAGE_USER_FLAGS);
         }
     }
@@ -86,5 +93,7 @@ uint64_t brk(uint64_t new_break)
     }
 
     proc->heap_end = (uint64_t)new_break;
+
+    spinlock_unlock_irqrestore(&g_brk_lock, flags);
     return new_break; 
 }

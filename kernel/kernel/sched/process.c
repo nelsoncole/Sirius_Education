@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 01/11/2026
+ *  Modified Date: 02/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -37,6 +37,8 @@ pid_t g_next_pid = 1;
 process_t* g_process_list_head = NULL;
 /* Spinlock central para proteção da lista em ambiente SMP */
 spinlock_t g_process_list_lock = {0};
+
+extern spinlock_t g_vmm_lock;
 
 unsigned long process_list_spinlock_acquire(void) {
     return spinlock_lock_irqsave(&g_process_list_lock);
@@ -251,7 +253,7 @@ uintptr_t elf_parse_and_map(process_t* proc, void* binary_buffer, unsigned long 
                     return 0;
                 }
 
-                void* scratch_ptr = vmm_scratch_map(segment_phys);
+                void* scratch_ptr = vmm_scratch_map_process(segment_phys);
 
                 // CASO 1: A página contém dados válidos do ficheiro (Código ou Dados Inicializados)
                 if (v_addr + PAGE_SIZE > phdr->p_vaddr && v_addr < phdr->p_vaddr + phdr->p_filesz)
@@ -290,7 +292,7 @@ uintptr_t elf_parse_and_map(process_t* proc, void* binary_buffer, unsigned long 
                 }
 
                 // Obtém o endereço virtual estável da PML4 do processo atual
-                PML4_TABLE* target_pml4 = (PML4_TABLE*)vmm_scratch_map(proc->cr3);
+                PML4_TABLE* target_pml4 = (PML4_TABLE*)vmm_scratch_map_process(proc->cr3);
                 vmm_map_page(target_pml4, v_addr, segment_phys, PAGE_USER_FLAGS);
             }
         }
@@ -319,7 +321,7 @@ uintptr_t elf_parse_and_map(process_t* proc, void* binary_buffer, unsigned long 
         }
 
         // Obtém o endereço virtual estável da PML4 do processo atual
-        PML4_TABLE* target_pml4 = (PML4_TABLE*)vmm_scratch_map(proc->cr3);
+        PML4_TABLE* target_pml4 = (PML4_TABLE*)vmm_scratch_map_process(proc->cr3);
         vmm_map_page(target_pml4, proc->stack_limit + (i * PAGE_SIZE), user_stack_phys, PAGE_USER_FLAGS);
     }
 
@@ -329,7 +331,7 @@ uintptr_t elf_parse_and_map(process_t* proc, void* binary_buffer, unsigned long 
      * ============================================================================
      */
     if (last_stack_phys != 0) {
-        uint8_t* stack_scratch = (uint8_t*)vmm_scratch_map(last_stack_phys);
+        uint8_t* stack_scratch = (uint8_t*)vmm_scratch_map_process(last_stack_phys);
         memset(stack_scratch, 0, PAGE_SIZE);
 
         uint64_t local_offset = PAGE_SIZE; 
@@ -481,6 +483,8 @@ int process_flush_user_space(uint64_t pml4_phys)
     if (!pml4_phys) return -1;
 
     kprintf("[Process] A limpar User Space do processo para sobreposição...\n");
+
+    unsigned long flags=  spinlock_lock_irqsave(&g_vmm_lock);
     
     // Limpa apenas as primeiras 256 entradas (User Space)
     for (int i = 0; i < 256; i++) 
@@ -551,6 +555,8 @@ int process_flush_user_space(uint64_t pml4_phys)
 
     /* Atualiza o TLB (Invalida as entradas antigas de User Space) */
     __asm__ __volatile__("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");
+
+    spinlock_unlock_irqrestore(&g_vmm_lock, flags);
     
     kprintf("[Process] User Space do processo expurgado com sucesso.\n");
 

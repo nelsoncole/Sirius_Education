@@ -108,7 +108,7 @@
  * ========================================================================
  * Alocado na região do Kernel Base no endereço virtual 0xFFFFFFFF803F0000UL.
  * Mapeado no índice 511 da PML4, Índice 510 da PDPT, Índice 1 da PD e Índice 496 da PT.
- * Ocupa os slots sequenciais 496, 497 e 498 da mesma Tabela de Páginas (PT).
+ * Ocupa os slots sequenciais 496 a 511 da mesma Tabela de Páginas (PT).
  */
 #define VMM_SCRATCH_ISOLATED_BASE    0xFFFFFFFF803F0000UL
 
@@ -124,6 +124,11 @@
 #define VMM_SCRATCH_WINDOW_7         (VMM_SCRATCH_WINDOW_6 + PAGE_SIZE) // Slot / PT Índice 504 (Janela 7)
 #define VMM_SCRATCH_WINDOW_8         (VMM_SCRATCH_WINDOW_7 + PAGE_SIZE) // Slot / PT Índice 505 (Janela 8)
 #define VMM_SCRATCH_WINDOW_9         (VMM_SCRATCH_WINDOW_8 + PAGE_SIZE) // Slot / PT Índice 506 (Janela 9)
+#define VMM_SCRATCH_WINDOW_10        (VMM_SCRATCH_WINDOW_9 + PAGE_SIZE) // Slot / PT Índice 507 (Janela 10)
+#define VMM_SCRATCH_WINDOW_11        (VMM_SCRATCH_WINDOW_10+ PAGE_SIZE) // Slot / PT Índice 508 (Janela 11)
+#define VMM_SCRATCH_WINDOW_12        (VMM_SCRATCH_WINDOW_11+ PAGE_SIZE) // Slot / PT Índice 509 (Janela 12)
+#define VMM_SCRATCH_WINDOW_13        (VMM_SCRATCH_WINDOW_12+ PAGE_SIZE) // Slot / PT Índice 510 (Janela 13)
+#define VMM_SCRATCH_WINDOW_14        (VMM_SCRATCH_WINDOW_13+ PAGE_SIZE) // Slot / PT Índice 511 (Janela 14)
 
 
 /*

@@ -24,8 +24,6 @@ int main(int argc, char *argv[])
 {
     (void)argc;
     (void)argv;
-
-    sleep(1);
     
     __sys_active_tty(); // define o foco em tty0
 

@@ -107,7 +107,6 @@ pid_t clone(stack_frame_t* frame)
         (void(*)(void*))frame->rip, 
         NULL, 
         (void*)frame->rsp, 
-        /*parent_thread->cpu_id*/
         get_cpu_id_with_fewest_threads()
     );
 

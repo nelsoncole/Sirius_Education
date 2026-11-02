@@ -1,0 +1,39 @@
+/procyon/
+├── compositor.h         ⟵ Cabeçalho principal
+├── compositor.c         ⟵ Loop principal e renderização
+├── layers.h             ⟵ Variaveis e funções
+├── layers.c             ⟵ Implementação das camadas
+├── window.h             ⟵ API da janela
+├── window.c             ⟵ Implementação da janela
+├── events.h             ⟵ Tipos e polling de eventos
+├── events.c             ⟵ Implementação do polling
+├── framebuffer.h        ⟵ Manipulação de buffers
+├── framebuffer.c        ⟵ Implementação gráfica
+├── vblank.h             ⟵ Sincronização com VBlank (stub)
+├── vblank.c
+├── text.h
+├── text.c
+├── pixel.h
+└── pixel.c
+
+
+└── /layers/
+      └── 0         ⟵ fundo (background)
+      └── 1         ⟵ janelas normais
+      └── 2         ⟵ janelas sobrepostas (pop-ups, menus, etc)
+
+
+compositor.c → controla o loop principal (input → update → render → vblank).
+
+layers.c → controla quais janelas estão em quais camadas, em qual ordem são desenhadas.
+
+framebuffer.c → funções como draw_rect(), draw_text(), blit() etc para desenhar no framebuffer da janela.
+
+events.c → coleta eventos de teclado/mouse e os repassa para a janela ativa.
+
+vblank.c → sincroniza a troca de buffer com o VBlank para evitar tearing.
+
+
+Estilo Wayland, onde:
+
+      O compositor é um coordenador de buffers e eventos, e os aplicativos são responsáveis por desenhar seu próprio conteúdo.
