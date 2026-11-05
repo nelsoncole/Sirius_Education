@@ -17,7 +17,7 @@ long int ftell(FILE *fp)
     // 2. Consulta a posição atual do cursor no VFS através do lseek.
     // lseek(fd, 0, SEEK_CUR) pergunta ao Kernel: "Em que byte estás agora?"
     // SEEK_CUR costuma ser definido como 1 na unistd.h / stdio.h
-    off_t current_pos = lseek(fp->fd, 0, 1);
+    off_t current_pos = lseek(fp->fd, 0, SEEK_CUR);
 
     if (current_pos == (off_t)-1) {
         fp->flags |= _IOERR; // Sinaliza erro na stream se a syscall falhar

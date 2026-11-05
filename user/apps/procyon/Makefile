@@ -22,7 +22,10 @@ LINKER_SCR  := $(BASE_DIR)libc/user_x86_64.ld
 CFLAGS  := -Wall -Wextra -m64 -O2 -nostdinc -ffreestanding -I$(LIBC_INC)
 LDFLAGS := -m elf_x86_64 -nostdlib -T $(LINKER_SCR)
 
-PROCYON_OBJ := procyon.o utf8_decode.o procyon_file.o window.o pixel.o text.o event.o
+PROCYON_OBJ := procyon.o cpu_memory.o utf8_decode.o procyon_file.o window.o pixel.o \
+				text.o event.o image.o icon.o color.o draw_rect.o layer.o compositor.o \
+				framebuffer.o
+				
 CRT0        := $(CRT0_DIR)/crt0.o
 LIBC_A      := $(LIBC_DIR)/libc.a
 

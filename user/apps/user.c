@@ -28,14 +28,28 @@ int main(int argc, char *argv[])
     __sys_active_tty(); // define o foco em tty0
 
     pid_t pid;
+    int ret;
+
+    char *argv_sshd[] = {
+        "apps/sshd.elf",
+        NULL
+    };
+
+    ret = posix_spawn(&pid, "apps/sshd.elf", NULL, NULL, argv_sshd, environ);
+    if (ret != 0) {
+        printf("[sshd] Erro ao executar processo: %d\n", ret);
+    }else {
+        printf("[sshd] Processo criado: PID %d\n", pid);
+    }
+
+
     char *argv_s[] = {
         "apps/procyon.elf",
         "--background",
         NULL
     };
 
-    int ret = posix_spawn(&pid, "apps/procyon.elf", NULL, NULL, argv_s, environ);
-
+    ret = posix_spawn(&pid, "apps/procyon.elf", NULL, NULL, argv_s, environ);
     if (ret != 0) {
         printf("[Procyon] Erro ao executar processo: %d\n", ret);
     }else {

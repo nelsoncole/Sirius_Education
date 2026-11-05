@@ -78,7 +78,6 @@ static void ahci_spinlock_init(spinlock_t *lock) {
 
 static void ahci_spinlock_lock_irqsave(spinlock_t *lock, unsigned long *flags) {
     *flags = spinlock_lock_irqsave(lock);
-
 }
 static void ahci_spinlock_unlock_irqrestore(spinlock_t *lock, unsigned long flags) {
     spinlock_unlock_irqrestore(lock, flags);

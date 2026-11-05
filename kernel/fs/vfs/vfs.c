@@ -1133,50 +1133,59 @@ int vfs_rename(vfs_node_t* old_dir, const char* old_name, vfs_node_t* new_dir, c
  * 
  * @return O novo offset absoluto em bytes a partir do início, ou -1 em caso de erro.
  */
-uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence) {
-    if (!file || !file->node) {
+
+uint64_t vfs_seek(vfs_file_t* file, int64_t offset, int whence)
+{
+    if (!file || !file->node)
         return (uint64_t)-1;
-    }
-    
+
     vfs_node_t* node = vfs_resolve_mountpoint(file->node);
+    if (!node)
+        return (uint64_t)-1;
 
-    uint64_t new_offset = file->offset;
+    uint64_t base;
+    uint64_t new_offset;
 
-    switch (whence) {
+    switch (whence)
+    {
         case VFS_SEEK_SET:
-            if (offset < 0) { return (uint64_t)-1; }
-            new_offset = (uint64_t)offset;
+            base = 0;
             break;
 
         case VFS_SEEK_CUR:
-            // Proteção contra Underflow se o offset for negativo
-            if (offset < 0 && ((uint64_t)(-offset) > file->offset)) {
-                return (uint64_t)-1;
-            }
-            new_offset = file->offset + offset;
+            base = file->offset;
             break;
 
         case VFS_SEEK_END:
-            // Proteção contra Underflow em relação ao tamanho real do nó resolvido
-            if (offset < 0 && ((uint64_t)(-offset) > node->size)) {
-                return (uint64_t)-1;
-            }
-            new_offset = node->size + offset;
+            base = node->size;
             break;
 
         default:
-            kprintf("[VFS SEEK] Erro: Diretriz 'whence' (%d) invalida.\n", whence);
             return (uint64_t)-1;
     }
 
-    // Proteção de sanidade: Impede que o ponteiro vá além do EOF se o ficheiro for estritamente Read-Only.
-    if (!(file->flags & VFS_MODE_WRITE) && (new_offset > node->size)) {
-        new_offset = node->size;
+    if (offset < 0)
+    {
+        uint64_t magnitude = (uint64_t)(-(offset + 1)) + 1ULL;
+
+        if (magnitude > base)
+            return (uint64_t)-1;
+
+        new_offset = base - magnitude;
+    }
+    else
+    {
+        uint64_t magnitude = (uint64_t)offset;
+
+        if (magnitude > 0xFFFFFFFFFFFFFFFFULL - base) // UINT64_MAX
+            return (uint64_t)-1;
+
+        new_offset = base + magnitude;
     }
 
     file->offset = new_offset;
 
-    return file->offset;
+    return new_offset;
 }
 
 //-----------------------------------------------------------------------------

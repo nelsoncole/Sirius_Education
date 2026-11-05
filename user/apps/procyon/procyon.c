@@ -40,9 +40,12 @@
 #include <sys/un.h>
 #include <string.h>
 
+#include "cpu_memory.h"
 #include "pixel.h"
 #include "window.h"
 #include "text.h"
+#include "image.h"
+#include "compositor.h"
 
 #define PROCYON_SOCKET_PATH "/dev/procyon.sock"
 
@@ -55,7 +58,23 @@ struct tty_user {
     uint32_t bpp;   
 };
 
-int main() {
+// obrigatorio definir
+unsigned int* back_buffer;
+int screen_width;
+int screen_height;
+int pitch;
+
+extern int __sys_active_tty();
+
+int main(int argc, char *argv[])
+{
+    (void)argc;
+    (void)argv;
+    
+    //__sys_active_tty();
+
+    memcpy_init();
+
     
     int server_fd, client_fd;
     struct sockaddr_un server_addr;
@@ -114,11 +133,35 @@ int main() {
         return -1;
     }
 
-    window_t* wn = window_create(0, 0, info->width, info->height, NULL, 0x000000, 0x0000FF);
+    // Init
+    back_buffer = compositor_buffer;
+    screen_width = info->width;
+    screen_height = info->height;
+    pitch = screen_width * (info->bpp/8);
+
+    window_t* back = overlay_window_create(0, 0, info->width, info->height, 0x000000, 0x0000FF);
+    if(back) {
+
+        image_t img;
+        if (!load_image("usr/share/wallpaper/sirius.png", &img))
+        {
+            unsigned char *img_data = draw_image_resize(img.pixels, img.width, img.height,
+                                                        back->width, back->height);
+
+            draw_image(0, 0, back->width, back->height,
+                       img_data, back->width, back->height, back->buffer);
+
+            image_free(&img);
+            free(img_data);
+        }
+
+       compositor_add_window(back, 0); 
+    }
+
+    window_t* wn = window_create(300, 500, 400, 200, "Test", 0x000000, 0x0000FF);
     if(wn) {
-        unsigned char* free_font_buffer = 0;
-        stbtt_fontinfo font;
-        if(!stbtt_font_init(&font, "usr/share/fonts/Ubuntu.ttf", &free_font_buffer)) {
+        
+        if(wn->free_font_buffer) {
             const char *texto =
                 "Bem-vindo ao Sirius OS!\n"
                 "Um sistema operativo desenvolvido em C.\n"
@@ -126,20 +169,12 @@ int main() {
                 "Multitarefa, memoria virtual e interface grafica.\n"
                 "Desenvolvido para oferecer desempenho e estabilidade.\n"
                 "Sirius OS - O futuro começa aqui!";
-            draw_text_centered_wrapped(font, texto, 0 , 0, info->width, info->height, 0xFFFFFF, 24, wn);
+            draw_text_centered_wrapped(*(stbtt_fontinfo*)wn->font, texto, wn->client.x, wn->client.y, wn->client.width, wn->client.height, 0xFFFFFFFF, 18, wn);
         }
-
-        memcpy(compositor_buffer, wn->buffer, fb_pixels * sizeof(unsigned int));
-    }else {
-        uint32_t width = info->width;
-
-        for (uint32_t i = 0; i < fb_pixels; i++)
-        {
-            int x = i % width;
-            int y = i / width;
-            draw_pixel(x, y, info->width, info->height, 0xFF002B36, compositor_buffer);
-        }
+        compositor_add_window(wn, 1);
     }
+
+    compositor_render(); 
 
     info->size = fb_pixels * sizeof(unsigned int);
     info->user_buffer = (uint64_t)compositor_buffer;

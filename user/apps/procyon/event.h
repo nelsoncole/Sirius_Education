@@ -1,6 +1,8 @@
 #ifndef EVENT_H
 #define EVENT_H
 
+typedef struct window_t window_t;
+
 #define MAX_EVENTS 64
 
 typedef enum {
@@ -45,5 +47,9 @@ typedef struct {
         } text;
     };
 } event_t;
+
+
+void push_event_to_window(window_t* win, event_t ev);
+event_t get_next_event_window(window_t* win);
 
 #endif

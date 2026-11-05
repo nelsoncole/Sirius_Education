@@ -8,6 +8,7 @@
 #include "event.h"
 
 #define WINDOW_TITLE_MAX 256
+#define WINDOW_TITLEBAR_HEIGHT 30
 
 typedef struct {
     int x, y;
@@ -58,11 +59,19 @@ typedef struct window_t {
 
     unsigned long pid;
 
+    void *font;
+    void* free_font_buffer;
+
     struct window_t *parent;
 
 }__attribute__((packed)) window_t;
 
 window_t* window_create(int x, int y, int width, int height, char *title, unsigned int bg_color, unsigned int fg_color);
+window_t* overlay_window_create(int x, int y, int width, int height, unsigned int bg_color, unsigned int fg_color);
 void window_destroy(window_t* win);
+window_t* get_focused_window();
+void window_update_focus(window_t* win, int focused);
+
+extern window_t* g_focused_window;
 
 #endif

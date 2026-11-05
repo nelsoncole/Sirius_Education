@@ -353,40 +353,17 @@ void kernel_main(BOOT_INFO *boot_info)
      * ============================================================================
      */
 
-    // Buffer local na RAM para armazenar a string de resolução formatada (ex: "1024x768")
-    char uefi_res_str[32];
-    memset(uefi_res_str, 0, sizeof(uefi_res_str));
-    if (g_boot_info != NULL)
-    {
-        ksprintf(uefi_res_str, "%ux%u", g_boot_info->Graphics.Width, g_boot_info->Graphics.Height);
-    }
-    else
-    {
-        // Fallback de segurança académica caso o bloco g_boot_info falhe
-        strncpy(uefi_res_str, "800x600", sizeof(uefi_res_str) - 1);
-    }
 
-    int init_argc = 5;
+    int init_argc = 3;
     char *init_argv[] = {
         "/mnt/hd0/apps/user.elf",       // argv[0]: Caminho do executável
-        g_boot_partition_name,          // argv[1]: Ex: "ahci0.1" (Origem de persistência)
         "text_mode",                    // argv[2]: Modo gráfico/texto base
         "/dev/tty0",                    // argv[3]: Terminal padrão do sistema
-        uefi_res_str                    // argv[4]: Resolução de tela REAL e dinâmica da UEFI!
+        NULL
     };
 
     kprintf("[BOOT] Lancando o processo mestre de User Space '%s'...\n",init_argv[0]);
     elf_load_and_create_process(init_argv[0], init_argc, init_argv, get_cpu_id_with_fewest_threads());
-
-    char *argv_sshd[] = {"/mnt/hd0/apps/sshd.elf",};
-    kprintf("[BOOT] Lancando o processo do user space '%s'...\n", argv_sshd[0]);
-    elf_load_and_create_process(argv_sshd[0], 1, argv_sshd, get_cpu_id_with_fewest_threads());
-    
-
-    //vfs_print_tree("/");
-
-    // Liga o barramento local de interrupções com segurança
-    __asm__ __volatile__("sti");
 
     /*
      * ============================================================================
