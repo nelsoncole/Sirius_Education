@@ -44,6 +44,7 @@ Sirius_Education/
 │   ├── drivers/             # Controladores de hardware embutidos (Char, Block, Net, Bus)
 │   │   ├── bus/             # PCI, USB Core
 │   │   ├── char/            # Teclado (input), Displays de texto, Serial (UART)
+│   │   ├── input/           # Mouse (input)
 │   │   ├── storage/         # Storage (IDE, AHCI, Ramdisk)
 │   │   ├── net/             # Placas de rede (e1000, rtl8139)
 │   │   |── video/           # Displays

@@ -33,7 +33,7 @@
 #include <kernel/kernel/sched/scheduler.h>
 #include <kernel/drivers/bus/pci.h>
 #include <kernel/drivers/char/keyboard.h>
-#include <kernel/drivers/char/mouse.h>
+#include <kernel/drivers/input/mouse.h>
 #include <kernel/drivers/storage/ahci.h>
 #include <kernel/drivers/storage/block.h>
 #include <kernel/drivers/storage/partitions.h>
@@ -49,6 +49,7 @@
 #include <kernel/kmods/kmod.h>
 #include <kernel/kernel/net/net.h>
 #include <kernel/drivers/net/net_core.h>
+#include <kernel/fs/dev/vfs_mouse.h>
 
 extern void test(void* arg);
 extern void tty_emulator_thread(void* arg);
@@ -229,6 +230,7 @@ void kernel_main(BOOT_INFO *boot_info)
             tty_init();     /* Prepara os buffers circulares e spinlocks do TTY */
             tty_vfs_init(dev);
             pty_vfs_init(dev);
+            mouse_vfs_init(dev);
         }
         else
         {
@@ -323,9 +325,10 @@ void kernel_main(BOOT_INFO *boot_info)
      * 1. A do Emulador (que consome o tty_pop_output e faz kprintf)
      * 2. A do Teclado (que consome o scancode bruto, traduz e injeta na TTY)
      */
-    thread_create(tty_emulator_thread,NULL, 0);
-    thread_create(tty_keyboard_bridge_thread, NULL, 0);
-    thread_create(network_rx_thread, NULL, 0);
+    process_t* proc = get_current_process();
+    thread_create(tty_emulator_thread,NULL, 0, proc);
+    thread_create(tty_keyboard_bridge_thread, NULL, 0, proc);
+    thread_create(network_rx_thread, NULL, 0, proc);
 
     //thread_create(test, NULL, 0);
     /*

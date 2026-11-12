@@ -21,6 +21,7 @@
 #include <kernel/klib.h>
 #include <kernel/kernel/mm/shm.h>
 #include <kernel/kernel/core/panic.h>
+#include <kernel/arch/x86_64/cpu/ipi.h>
 
 uint32_t *shm_bitmap;
 volatile int shm_lock = 0; 
@@ -137,11 +138,14 @@ void* shm_alloc(size_t size, int flag) {
         uintptr_t pa = phys + (i * PAGE_SIZE);
         #define PAGE_USER_FLAGS         (0x1 | 0x2 | 0x4)
         vmm_map_page(pml4, va, pa, flag);
+        
     }
     
     shm_set_bits(start_bit, num_pages);
     
     shm_lock_release();
+
+    smp_flush_tlb_all();
     return (void*)base_va;
 }
 
@@ -161,18 +165,15 @@ void shm_free(void* ptr, size_t size) {
 
     for (size_t i = 0; i < num_pages; i++) {
         uintptr_t va = base_va + (i * PAGE_SIZE);
-        uintptr_t pa = vmm_get_physical_address(pml4, va);
-        
         vmm_unmap_page(pml4, va);
         
-        if (pa) {
-            pmm_free_pages(pa, 1); 
-        }
     }
 
     shm_clear_bits(start_bit, num_pages);
     
     shm_lock_release();
+
+    smp_flush_tlb_all();
 }
 
 unsigned long shm_virtual_to_physical(void* virt_addr) {

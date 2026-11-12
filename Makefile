@@ -77,6 +77,7 @@ C_OBJ := \
 	$(BUILD_DIR)/timer.o \
 	$(BUILD_DIR)/lapic.o \
 	$(BUILD_DIR)/ioapic.o \
+	$(BUILD_DIR)/ipi.o \
 	$(BUILD_DIR)/irq.o \
 	$(BUILD_DIR)/msi.o \
 	$(BUILD_DIR)/smp.o \
@@ -87,6 +88,7 @@ C_OBJ := \
 	$(BUILD_DIR)/wakeup.o \
 	$(BUILD_DIR)/clone.o \
 	$(BUILD_DIR)/fork.o \
+	$(BUILD_DIR)/pthread.o \
 	$(BUILD_DIR)/process_loader.o \
 	$(BUILD_DIR)/execve_loader.o \
 	$(BUILD_DIR)/syscall.o \
@@ -103,6 +105,7 @@ C_OBJ := \
 	$(BUILD_DIR)/ramfs.o \
 	$(BUILD_DIR)/vfs_tty.o \
 	$(BUILD_DIR)/vfs_pty.o \
+	$(BUILD_DIR)/vfs_mouse.o \
 	$(BUILD_DIR)/console.o \
 	$(BUILD_DIR)/fat32.o \
 	$(BUILD_DIR)/socket.o \
@@ -277,7 +280,7 @@ $(BUILD_DIR)/font.o: $(DRIVERS_DIR)/char/font.c | $(BUILD_DIR)
 $(BUILD_DIR)/keyboard.o: $(DRIVERS_DIR)/char/keyboard.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/mouse.o: $(DRIVERS_DIR)/char/mouse.c | $(BUILD_DIR)
+$(BUILD_DIR)/mouse.o: $(DRIVERS_DIR)/input/mouse.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/ahci.o: $(DRIVERS_DIR)/storage/ahci.c | $(BUILD_DIR)
@@ -335,6 +338,9 @@ $(BUILD_DIR)/lapic.o: $(ARCH_DIR)/x86_64/cpu/lapic.c | $(BUILD_DIR)
 $(BUILD_DIR)/ioapic.o: $(ARCH_DIR)/x86_64/cpu/ioapic.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/ipi.o: $(ARCH_DIR)/x86_64/cpu/ipi.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/smp.o: $(ARCH_DIR)/x86_64/cpu/smp.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -359,6 +365,9 @@ $(BUILD_DIR)/clone.o: $(KERNEL_DIR)/sched/clone.c | $(BUILD_DIR)
 $(BUILD_DIR)/fork.o: $(KERNEL_DIR)/sched/fork.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/pthread.o: $(KERNEL_DIR)/sched/pthread.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/process_loader.o: $(KERNEL_DIR)/sched/process_loader.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -381,6 +390,9 @@ $(BUILD_DIR)/vfs_tty.o: $(FS_DIR)/dev/vfs_tty.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/vfs_pty.o: $(FS_DIR)/dev/vfs_pty.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/vfs_mouse.o: $(FS_DIR)/dev/vfs_mouse.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/fat32.o: $(FS_DIR)/fat/fat32.c | $(BUILD_DIR)

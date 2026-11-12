@@ -3,6 +3,8 @@
 #include "window.h"
 #include "layer.h"
 #include "event.h"
+#include "mouse_cursor.h"
+#include "pixel.h"
 #include <string.h>
 
 #include "cpu_memory.h"
@@ -11,6 +13,8 @@ extern unsigned int* back_buffer;
 extern int screen_width;
 extern int screen_height;
 extern int pitch;
+
+volatile int compositor_lock = 0;
 
 // Inicializa o compositor
 void compositor_init() {
@@ -27,6 +31,7 @@ void compositor_init() {
 // Adiciona uma janela a uma camada
 void compositor_add_window(window_t* win, int layer) {
     if(!win) return;
+    co_lock(&compositor_lock);
 
     if (layer < LAYER_COUNT && layer_counts[layer] < MAX_WINDOWS_PER_LAYER) {
         layers[layer][layer_counts[layer]++] = win;
@@ -35,23 +40,27 @@ void compositor_add_window(window_t* win, int layer) {
         g_focused_window = win;
         window_update_focus(win, 1);
     }
+
+    co_unlock(&compositor_lock);
 }
 
 void compositor_add_window_child(window_t* win, window_t* parent) {
     if(!win) return;
-
-    win->parent = parent;
+    co_lock(&compositor_lock);
+    parent->parent = win;
+    co_unlock(&compositor_lock);
 }
 
 void compositor_remove_window_child(window_t* win) {
     if(!win) return;
-
+    co_lock(&compositor_lock);
     win->parent = 0;
+    co_unlock(&compositor_lock);
 }
 
 void compositor_remove_window(window_t* win) {
     if (!win) return;
-
+    co_lock(&compositor_lock);
     for (int layer = 0; layer < LAYER_COUNT; layer++) {
         for (int i = 0; i < layer_counts[layer]; i++) {
             if (layers[layer][i] == win) {
@@ -79,19 +88,22 @@ void compositor_remove_window(window_t* win) {
                         }
                     }
                 }
-
+                co_unlock(&compositor_lock);
                 return;
             }
         }
     }
-
+    co_unlock(&compositor_lock);
 }
 
 void compositor_draw_window(window_t* win) {
+    
     if(!win) return;
     if (!win->visible) return;
 
     int max_shadow_radius = 6;
+
+    window_lock(&win->lock);
 
     // =========================
     // SOMBRA (inalterado)
@@ -142,7 +154,6 @@ void compositor_draw_window(window_t* win) {
     if (overflow > 0) {
         len -= overflow * 4;
     }
-
     // usar ponteiros corretamente
     unsigned int *s1 = back_buffer;      // destino
     unsigned int *s2 = win->buffer;      // origem
@@ -177,78 +188,169 @@ void compositor_draw_window(window_t* win) {
         // origem continua usando largura da janela (correto)
         s2 += win->width;
     }
+
+    window_unlock(&win->lock);
 }
 
-void compositor_draw_cursor(void)
+
+void compositor_draw_cursor(unsigned int *buffer)
 {
-    /*if (!g_mouse_cursor.visible ||
+    if (!back_buffer || !buffer)
+        return;
+
+    if (!g_mouse_cursor.visible ||
         !g_mouse_cursor.buffer ||
         g_mouse_cursor.width <= 0 ||
         g_mouse_cursor.height <= 0)
-        return;
-
-    int cx = g_mouse_cursor.x;
-    int cy = g_mouse_cursor.y;
-
-    int width = g_mouse_cursor.width;
-    int height = g_mouse_cursor.height;
-
-    int fb_pitch = pitch / 4;
-
-    int start_x = cx < 0 ? -cx : 0;
-    int start_y = cy < 0 ? -cy : 0;
-
-    int end_x = width;
-    int end_y = height;
-
-    if (cx + end_x > screen_width)
-        end_x = screen_width - cx;
-
-    if (cy + end_y > screen_height)
-        end_y = screen_height - cy;
-
-    if (start_x >= end_x || start_y >= end_y)
-        return;
-
-    unsigned int *cursor = g_mouse_cursor.buffer;
-    unsigned int *fb = back_buffer;
-
-    for (int y = start_y; y < end_y; y++)
     {
-        int fy = cy + y;
+        return;
+    }
 
-        unsigned int *src = cursor + y * width + start_x;
-        unsigned int *dst = fb + fy * fb_pitch + cx + start_x;
+    if (g_mouse_cursor.width > CURSOR_W ||
+        g_mouse_cursor.height > CURSOR_H)
+        return;
 
-        for (int x = start_x; x < end_x; x++, src++, dst++)
+    const int cx = g_mouse_cursor.x;
+    const int cy = g_mouse_cursor.y;
+    const int c_width = g_mouse_cursor.width;
+    const int c_height = g_mouse_cursor.height;
+
+    for (int y = 0; y < c_height; y++)
+    {
+        for (int x = 0; x < c_width; x++)
         {
-            unsigned int color = *src;
+            int screen_x = cx + x;
+            int screen_y = cy + y;
 
-            unsigned int a = color >> 24;
-
-            if (a == 0)
+            if (screen_x < 0 || screen_x >= screen_width ||
+                screen_y < 0 || screen_y >= screen_height)
                 continue;
 
-            if (a == 255)
+            unsigned int cursor_color =
+                g_mouse_cursor.buffer[y * c_width + x];
+
+            unsigned int alpha = cursor_color >> 24;
+
+            if (!alpha)
+                continue;
+
+            if (alpha == 255)
             {
-                *dst = color & 0x00FFFFFF;
-                continue;
+                draw_pixel(
+                    screen_x,
+                    screen_y,
+                    screen_width,
+                    screen_height,
+                    cursor_color,
+                    buffer
+                );
             }
+            else
+            {
+                unsigned int bg_color = get_pixel(
+                    screen_x,
+                    screen_y,
+                    screen_width,
+                    screen_height,
+                    back_buffer
+                );
 
-            unsigned int bg = *dst;
+                unsigned int blended_color =
+                    blend_color(bg_color, cursor_color, alpha);
 
-            unsigned int r = (((color >> 16) & 0xFF) * a +
-                              ((bg >> 16) & 0xFF) * (255 - a)) / 255;
+                blended_color |= 0xFF000000;
 
-            unsigned int g = (((color >> 8) & 0xFF) * a +
-                              ((bg >> 8) & 0xFF) * (255 - a)) / 255;
-
-            unsigned int b = ((color & 0xFF) * a +
-                              (bg & 0xFF) * (255 - a)) / 255;
-
-            *dst = (r << 16) | (g << 8) | b;
+                draw_pixel(
+                    screen_x,
+                    screen_y,
+                    screen_width,
+                    screen_height,
+                    blended_color,
+                    buffer
+                );
+            }
         }
-    }*/
+    }
+}
+
+void compositor_draw_cursor_2(unsigned int *buffer)
+{
+    if (!back_buffer || !buffer)
+        return;
+
+    if (!g_mouse_cursor.visible ||
+        !g_mouse_cursor.buffer ||
+        g_mouse_cursor.width <= 0 ||
+        g_mouse_cursor.height <= 0)
+    {
+        return;
+    }
+
+    if (g_mouse_cursor.width > CURSOR_W ||
+        g_mouse_cursor.height > CURSOR_H)
+        return;
+
+    const int cx = g_mouse_cursor.x;
+    const int cy = g_mouse_cursor.y;
+    const int c_width = g_mouse_cursor.width;
+    const int c_height = g_mouse_cursor.height;
+
+    for (int y = 0; y < c_height; y++)
+    {
+        for (int x = 0; x < c_width; x++)
+        {
+            int screen_x = cx + x;
+            int screen_y = cy + y;
+
+            if (screen_x < 0 || screen_x >= screen_width ||
+                screen_y < 0 || screen_y >= screen_height)
+                continue;
+
+            unsigned int cursor_color =
+                g_mouse_cursor.buffer[y * c_width + x];
+
+            unsigned int alpha = cursor_color >> 24;
+
+            if (!alpha)
+                continue;
+
+            if (alpha == 255)
+            {
+                draw_pixel(
+                    x,
+                    y,
+                    c_width,
+                    c_height,
+                    cursor_color,
+                    buffer
+                );
+            }
+            else
+            {
+                unsigned int bg_color = get_pixel(
+                    screen_x,
+                    screen_y,
+                    screen_width,
+                    screen_height,
+                    back_buffer
+                );
+
+                unsigned int blended_color =
+                    blend_color(bg_color, cursor_color, alpha);
+
+                blended_color |= 0xFF000000;
+
+                draw_pixel(
+                    x,
+                    y,
+                    c_width,
+                    c_height,
+                    blended_color,
+                    buffer
+                );
+            }
+        }
+    }
 }
 
 // Handlers
@@ -277,6 +379,8 @@ void compositor_handle_key_down(int key, int type) {
 void compositor_render() {
     //framebuffer_clear(rgba(97, 96, 96, 1));
 
+    co_lock(&compositor_lock);
+
     for (int layer = 0; layer < LAYER_COUNT; layer++) {
         for (int i = 0; i < layer_counts[layer]; i++) {
             window_t *win = layers[layer][i];
@@ -291,10 +395,9 @@ void compositor_render() {
 
     }
 
-    
-    /*if (!mouse_callback) {
-        compositor_draw_cursor();
-    }*/
+    compositor_draw_cursor(back_buffer);
+
+    co_unlock(&compositor_lock);
 }
 
 

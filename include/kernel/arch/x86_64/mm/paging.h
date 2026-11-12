@@ -206,4 +206,7 @@ typedef struct _PML4_TABLE
 // Aponta para o início de cada bloco de 4 KB
 extern unsigned long g_next_pt_number;
 
+void flush_tlb_local(void);
+void invlpg(void *addr);
+
 #endif

@@ -83,6 +83,11 @@ ISR_ERR_CODE    30 ; Security Exception
 ISR_NO_ERR_CODE 31 ; Reserved
 
 ; ============================================================================
+; VETORES IPI DO SMP
+; ============================================================================
+ISR_NO_ERR_CODE 240 ; IPI_FLUSH_TLB
+
+; ============================================================================
 ; VETORES EXCLUSIVOS DO CONTROLADOR DE INTERRUPÇÕES (LAPIC)
 ; ============================================================================
 ISR_NO_ERR_CODE 254 ; isr254: Handler de Erros Internos do LAPIC

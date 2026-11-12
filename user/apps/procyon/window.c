@@ -2,7 +2,10 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include "text.h"
+#include "layer.h"
+#include <stdio.h>
 
 window_t* g_focused_window;
 
@@ -27,8 +30,11 @@ static window_t* window_create_init(int x, int y, int width, int height, char *t
     strncpy(win->title, title ? title : "", sizeof(win->title) - 1);
     win->title[sizeof(win->title) - 1] = '\0';
 
+    win->struct_size = struct_size;
+
     size_t num_pixels = (size_t)width * height;
     size_t buffer_size = sizeof(unsigned int) * num_pixels;
+    win->buffer_size = buffer_size;
 
     win->buffer = mmap(NULL, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
@@ -55,18 +61,21 @@ static window_t* window_create_init(int x, int y, int width, int height, char *t
     win->pid = (unsigned long) getpid();
 
     unsigned char *free_font_buffer = 0;
-    win->font = mmap(NULL, sizeof(stbtt_fontinfo), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (win->buffer == MAP_FAILED) {
+    win->font = malloc(sizeof(stbtt_fontinfo));
+    if (!win->font) {
         munmap(win->buffer, buffer_size);
         munmap(win, struct_size);
         return NULL;
     }
 
     memset(win->font, 0, sizeof(stbtt_fontinfo));
-
-    if (!stbtt_font_init(win->font, "usr/share/fonts/Ubuntu.ttf", &free_font_buffer))
-    {
+    if (stbtt_font_init(win->font, "usr/share/fonts/Ubuntu.ttf", &free_font_buffer) == 0) {
         win->free_font_buffer = free_font_buffer;
+    } else {
+        free(win->font);
+        munmap(win->buffer, buffer_size);
+        munmap(win, struct_size);
+        return NULL;
     }
 
     return win;
@@ -75,9 +84,10 @@ static window_t* window_create_init(int x, int y, int width, int height, char *t
 window_t* window_create(int x, int y, int width, int height, char *title, unsigned int bg_color, unsigned int fg_color) {
     
     window_t* win = window_create_init(x, y, width, height, title, bg_color, fg_color, 1);
-
+    if (!win) return NULL;
+    
     int border_thickness = 2;
-    win->client.x = 1;
+    win->client.x = border_thickness;
     win->client.y = WINDOW_TITLEBAR_HEIGHT + win->client.x;
     win->client.width = win->width - (win->client.x*border_thickness);
     win->client.height = win->height - (WINDOW_TITLEBAR_HEIGHT+(win->client.x*border_thickness)+(win->client.x*border_thickness*2));
@@ -120,6 +130,8 @@ window_t* overlay_window_create(int x, int y, int width, int height, unsigned in
     
     window_t* win = window_create_init(x, y, width, height, NULL, bg_color, fg_color, 0);
 
+    if (!win) return NULL;
+
     size_t num_pixels = (size_t)width * height;
 
     for (size_t i = 0; i < num_pixels; i++) {
@@ -129,11 +141,22 @@ window_t* overlay_window_create(int x, int y, int width, int height, unsigned in
     return win;
 }
 
-void window_destroy(window_t* win) {
-    if (!win || win == MAP_FAILED) return;
-    size_t buffer_size = sizeof(unsigned int) * win->width * win->height;
-    if (win->buffer != MAP_FAILED) munmap(win->buffer, buffer_size);
-    munmap(win, sizeof(window_t));
+void window_destroy(window_t *win)
+{
+    printf("x");
+    if (!win || win == MAP_FAILED)
+        return;
+
+    if (win->buffer && win->buffer != MAP_FAILED)
+        munmap(win->buffer, win->buffer_size);
+
+    if (win->font)
+        free(win->font);
+
+    if (win->free_font_buffer)
+        free(win->free_font_buffer);
+
+    munmap(win, win->struct_size);
 }
 
 
@@ -145,4 +168,45 @@ void window_update_focus(window_t* win, int focused) {
     if (!win) return;
     win->focused = focused;
     if(win->type != 1)return;
+}
+
+void window_handle_mouse(window_t* win, int layer, int delta_x, int delta_y, int buttons)
+{
+    int x = delta_x - win->x;
+    int y = delta_y - win->y;
+
+    if (!(buttons & 0x03))
+        return;
+
+    window_t* win_x = NULL;
+
+    if (g_focused_window != win)
+    {
+        win_x = g_focused_window;
+
+        g_focused_window = win;
+        window_update_focus(win, 1);
+
+        if (win->type == 1)
+            move_window_to_top(1, win);
+    }
+    
+    if (win_x)
+        window_update_focus(win_x, 0);
+
+    if (layer == 1 &&
+        (buttons & 0x01) &&
+        !win->dragging &&
+        y < 20)
+    {
+        win->dragging = 1;
+        win->drag_offset_x = x;
+        win->drag_offset_y = y;
+    }
+}
+
+void window_handle_key(window_t* win, int scancode) {
+    (void)win;
+    (void)scancode;
+    // Exemplo: poderia responder a teclas
 }

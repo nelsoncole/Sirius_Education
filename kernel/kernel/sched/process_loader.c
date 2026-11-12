@@ -69,7 +69,6 @@ process_t* elf_load_and_create_process(const char* path, int argc, char** argv, 
     // 3. Lê o binário completo do disco rígido para a RAM
     int bytes_lidos = vfs_read(file, 0, (uint32_t)binary_size, binary_buffer);
     vfs_close(file); // Fecha o ficheiro imediatamente após a leitura
-
     if (bytes_lidos != (int)binary_size) {
         kprintf("[ELF] Erro crítico: Falha de leitura síncrona no hardware.\n");
         pool_free(binary_buffer, alloc_size);

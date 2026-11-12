@@ -520,47 +520,9 @@ int tty_read_from_out_queue(struct tty_device* tty, char* buf, int size) {
     return lidos;
 }
 
-/*
-size_t tty_video_write(struct tty_device* tty, struct tty_user* user)
-{
-    if (!tty || !tty->video_buffer || !user || !user->user_buffer || user->size == 0)
-        return -1;
-
-    size_t pitch = tty->pixels_per_scanLine * tty->bpp;
-    size_t max_size = tty->height * pitch;
-
-    size_t size = user->size;
-
-    if (size > max_size)
-        size = max_size;
-        
-    if (size > tty->buffer_size)
-        size = tty->buffer_size;
-
-    while (__atomic_load_n(&tty->refresh_needed, __ATOMIC_ACQUIRE))
-        cpu_relax();
-
-    size_t offset = 0;
-
-    while (offset < size)
-    {
-        size_t remaining = size - offset;
-        size_t line_size = remaining < pitch ? remaining : pitch;
-
-        optimized_memcpy(
-            (uint8_t *)tty->video_buffer + offset,
-            (const uint8_t *)user->user_buffer + offset,
-            line_size);
-
-        offset += line_size;
-    }
-
-    __sync_lock_test_and_set(&tty->refresh_needed, 1);
-
-    return size;
-}
-*/
-
+/**
+ *  Escreve ou copia dados no backbuffer da tty
+ */
 size_t tty_video_write(struct tty_device *tty, struct tty_user *user)
 {
     if (!tty || !tty->video_buffer || !user || !user->user_buffer)
@@ -572,40 +534,49 @@ size_t tty_video_write(struct tty_device *tty, struct tty_user *user)
     if (user->bpp != 32 || tty->bpp != 32)
         return 0;
 
-    if (user->ppsl < user->width)
+    if (user->ppsl < user->width ||
+        tty->pixels_per_scanLine < tty->width)
         return 0;
 
-    if (tty->pixels_per_scanLine < tty->width)
+    if (user->x_start >= tty->width ||
+        user->y_start >= tty->height)
         return 0;
 
-    size_t bytes_per_pixel = user->bpp / 8;
+    size_t bpp = 4;
 
-    size_t src_pitch = user->ppsl * bytes_per_pixel;
-    size_t dst_pitch = tty->pixels_per_scanLine * bytes_per_pixel;
+    size_t src_pitch = (size_t)user->ppsl * bpp;
+    size_t dst_pitch = (size_t)tty->pixels_per_scanLine * bpp;
 
-    size_t copy_width = user->width < tty->width
-                      ? user->width : tty->width;
+    size_t copy_width = user->width;
+    size_t copy_height = user->height;
 
-    size_t copy_height = user->height < tty->height
-                       ? user->height : tty->height;
+    if (copy_width > tty->width - user->x_start)
+        copy_width = tty->width - user->x_start;
 
-    size_t line_size = copy_width * bytes_per_pixel;
+    if (copy_height > tty->height - user->y_start)
+        copy_height = tty->height - user->y_start;
 
-    if (user->size < src_pitch * copy_height)
+    size_t line_size = copy_width * bpp;
+
+    if (user->size < src_pitch * user->height)
         return 0;
 
     while (__atomic_load_n(&tty->refresh_needed, __ATOMIC_ACQUIRE))
         cpu_relax();
 
+    const uint8_t *src = (const uint8_t *)(uintptr_t)user->user_buffer;
+
+    uint8_t *dst = (uint8_t *)tty->video_buffer
+                 + (size_t)user->y_start * dst_pitch
+                 + (size_t)user->x_start * bpp;
+
     for (size_t y = 0; y < copy_height; y++)
     {
-        const uint8_t *src =
-            (const uint8_t *)user->user_buffer + y * src_pitch;
-
-        uint8_t *dst =
-            (uint8_t *)tty->video_buffer + y * dst_pitch;
-
-        optimized_memcpy(dst, src, line_size);
+        optimized_memcpy(
+            dst + y * dst_pitch,
+            src + y * src_pitch,
+            line_size
+        );
     }
 
     __atomic_store_n(&tty->refresh_needed, 1, __ATOMIC_RELEASE);

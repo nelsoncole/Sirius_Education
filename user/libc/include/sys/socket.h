@@ -28,6 +28,11 @@
 #define SOCK_DGRAM  2       /* Datagramas não fiáveis de tamanho fixo (UDP) */
 #define SOCK_RAW    3       /* Acesso direto aos protocolos de rede (IP cru) */
 
+
+#define SHUT_RD   0
+#define SHUT_WR   1
+#define SHUT_RDWR 2
+
 /* Tipo primitivo para o comprimento de endereços */
 typedef unsigned int socklen_t;
 

@@ -15,17 +15,24 @@
         WebP, TIFF, HEIF / AVIF, JPEG 2000, SVG, GIF animado
 */
 int load_image(const char *filename, image_t *img) {
-    int img_width, img_height, img_channels;
-    unsigned char* data = stbi_load(filename, &img_width, &img_height, &img_channels, 4); // força RGBA
+    int img_width = 0, img_height =0, img_channels = 0;
+    
+    // Força RGBA (4 canais)
+    unsigned char* data = stbi_load(filename, &img_width, &img_height, &img_channels, 4); 
+    
+    if(!data) {
+        printf("Erro ao carregar imagem: %s\n", filename);
+        img->pixels = NULL;
+        img->width = 0;
+        img->height = 0;
+        img->channels = 0;
+        return 1; 
+    }
+
     img->pixels = data;
     img->width = img_width; 
     img->height = img_height;
     img->channels = img_channels;
-
-    if(!data) {
-        printf("Erro ao carregar imagem: %s\n", filename);
-        return 1; 
-    }
 
     return 0;
 }
@@ -127,7 +134,7 @@ void draw_image_tint_shadow(
     int shadow_offset_x, int shadow_offset_y) {
 
     // Cor da sombra: preta com alfa reduzido (ex: 80 de opacidade)
-    unsigned int shadow_color = 0x000000;
+    //unsigned int shadow_color = 0x000000;
     unsigned char shadow_alpha = 80;
 
     // Primeiro desenha a sombra

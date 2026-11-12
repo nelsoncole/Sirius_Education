@@ -127,53 +127,73 @@ static int af_local_bind(socket_t* sock, const void* addr,
 /**
  * Estabelece uma conexão local.
  */
-static int af_local_connect(socket_t* sock, const void* addr,
+static int af_local_connect(socket_t *sock, const void *addr,
                             unsigned long addrlen)
 {
     if (!sock || !addr || addrlen == 0)
         return -1;
 
-    socket_t* server_sock =
+    socket_t *server_sock =
         socket_find_by_address(addr, addrlen, AF_LOCAL);
 
     if (!server_sock || server_sock == sock)
         return -1;
 
-    af_local_lock_pair(sock, server_sock);
+    for (;;)
+    {
+        spinlock_acquire(&sock->lock);
 
-    if (sock->state == SOCKET_CLOSING ||
-        sock->state == SOCKET_CONNECTING ||
-        sock->state == SOCKET_CONNECTED ||
-        server_sock->state != SOCKET_LISTENING) {
+        while (sock->state == SOCKET_CONNECTED ||
+               sock->state == SOCKET_CONNECTING)
+        {
+            wait(&sock->wait_queue, &sock->lock);
+        }
+
+        if (sock->state == SOCKET_CLOSING)
+        {
+            spinlock_release(&sock->lock);
+            return -1;
+        }
+
+        spinlock_release(&sock->lock);
+
+        af_local_lock_pair(sock, server_sock);
+
+        if (sock->state == SOCKET_CONNECTED ||
+            sock->state == SOCKET_CONNECTING)
+        {
+            af_local_unlock_pair(sock, server_sock);
+            continue;
+        }
+
+        if (sock->state == SOCKET_CLOSING ||
+            server_sock->state != SOCKET_LISTENING)
+        {
+            af_local_unlock_pair(sock, server_sock);
+            return -1;
+        }
+
+        sock->state = SOCKET_CONNECTING;
+        sock->next = server_sock->listen_queue;
+        server_sock->listen_queue = sock;
+
         af_local_unlock_pair(sock, server_sock);
-        return -1;
+
+        wakeup(&server_sock->wait_queue);
+
+        spinlock_acquire(&sock->lock);
+
+        while (sock->state == SOCKET_CONNECTING)
+        {
+            wait(&sock->wait_queue, &sock->lock);
+        }
+
+        int connected = (sock->state == SOCKET_CONNECTED);
+
+        spinlock_release(&sock->lock);
+
+        return connected ? 0 : -1;
     }
-
-    if (server_sock->state == SOCKET_CLOSING) {
-        af_local_unlock_pair(sock, server_sock);
-        return -1;
-    }
-
-    sock->state = SOCKET_CONNECTING;
-
-    sock->next = server_sock->listen_queue;
-    server_sock->listen_queue = sock;
-
-    af_local_unlock_pair(sock, server_sock);
-
-    wakeup(&server_sock->wait_queue);
-
-    spinlock_acquire(&sock->lock);
-
-    while (sock->state == SOCKET_CONNECTING) {
-        wait(&sock->wait_queue, &sock->lock);
-    }
-
-    int connected = (sock->state == SOCKET_CONNECTED);
-
-    spinlock_release(&sock->lock);
-
-    return connected ? 0 : -1;
 }
 
 /**

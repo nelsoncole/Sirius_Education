@@ -82,6 +82,8 @@ struct tty_device {
 struct tty_user {
     uint64_t user_buffer;
     uint64_t size;
+    uint32_t x_start;
+    uint32_t y_start;
     uint32_t width;                 /* Largura virtual em pixéis (ex: 1024) */
     uint32_t height;                /* Altura virtual em pixéis (ex: 768) */
     uint32_t ppsl;                  /* Pixéis por linha no buffer virtual */

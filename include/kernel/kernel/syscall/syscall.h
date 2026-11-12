@@ -102,6 +102,13 @@ enum {
 
     SYS_PROCESS_SPAWN,
 
+    SYS_PTHREAD_CREATE,
+    SYS_PTHREAD_EXIT,
+    SYS_PTHREAD_JOIN,
+
+    SYS_UWAIT,
+    SYS_UWAKEUP,
+
     /* O compilador define automaticamente MAX_SYSCALLS com o valor total correto (43) */
     MAX_SYSCALLS
 };
@@ -209,5 +216,12 @@ uint64_t sys_process_spawn(pid_t * pid, const char *path,
                 const void *file_actions,
                 const void *attrp,
                 char *const argv[], char *const envp[]);
+
+uint64_t sys_pthread_create(uint64_t start_routine, uint64_t stack);
+uint64_t sys_pthread_exit(void *retval);
+uint64_t sys_pthread_join(void* thread, void **retval);
+
+uint64_t sys_uwait(void *chan);
+uint64_t sys_uwakeup(void *chan);
 
 #endif /* _SYSCALL_H_ */

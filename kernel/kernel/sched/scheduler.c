@@ -412,12 +412,14 @@ void scheduler_exit(int exit_code)
         //enqueue_dead_thread(cpu, current);
     }
 
+    current_proc->thread_count--;
+
     /*
      * CORREÇÃO CRÍTICA: Eliminação da recursão infinita.
      * Se não há processo associado (e.g. Thread de Kernel), ignoramos a lógica 
      * de Zombies do VFS e saltamos direto para o encerramento da Thread física.
      */
-    if (current_proc != NULL) 
+    if (current_proc != NULL && current_proc->thread_count == 0) 
     {
         process_flush_user_space(current_proc->cr3);
         process_file_destroy(current_proc);

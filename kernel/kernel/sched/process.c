@@ -24,6 +24,7 @@
 #include <kernel/kvmm.h>
 #include <kernel/klib.h>
 #include <kernel/kernel/core/spinlock.h>
+#include <kernel/kernel/sched/wait.h>
 
 extern unsigned long g_kernel_pml4_phys;
 
@@ -452,7 +453,8 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
         (void(*)(void*))proc->code_base,
         NULL,
         (void*)proc->stack_top,
-        cpu_id
+        cpu_id,
+        proc
     );
 
     if (!main_th) 
@@ -593,39 +595,10 @@ void process_destroy(process_t* proc)
         }
         
         // LIMPEZA DO VFS: Fecho regulamentar baseado em Contagem de Referências
-        for (int i = 0; i < MAX_FILES_PER_PROCESS; i++)
-        {
-            if (proc->file_descriptor_table[i] != NULL)
-            {
-                /* 1. Decrementa a referência já que este processo está a largar o ficheiro */
-                proc->file_descriptor_table[i]->ref_count--;
+        process_file_destroy(proc);
 
-                /* 
-                 * 2. DECISÃO DE DESTRUIÇÃO:
-                 * O recurso só é destruído se mais NINGUÉM no sistema o estiver a usar.
-                 */
-                if (proc->file_descriptor_table[i]->ref_count == 0)
-                {
-                    kprintf("[VFS] ref_count == %d A fechar recurso partilhado globalmente: %s\n", 
-                            proc->file_descriptor_table[i]->ref_count,
-                            proc->file_descriptor_table[i]->node->name);
-                    
-                    /* Fecha o nó no sistema de ficheiros virtual */
-                    vfs_close(proc->file_descriptor_table[i]->node);
-                    
-                    /* Liberta a estrutura do descritor de ficheiro da RAM */
-                    kfree(proc->file_descriptor_table[i]);
-                }
-                else 
-                {
-                    kprintf("[VFS] Ficheiro mantido ativo. Outros processos ainda o utilizam (ref_count: %d).\n", 
-                            proc->file_descriptor_table[i]->ref_count);
-                }
-
-                /* 3. Desvincula o ponteiro local deste processo morto por segurança */
-                proc->file_descriptor_table[i] = NULL;
-            }
-        }
+        wait_queue_t *chan = wait_queue_remove(proc->main_thread->chan);
+        if(chan) kfree(chan);
 
         kfree(proc->main_thread);
 

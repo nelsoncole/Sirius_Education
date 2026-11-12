@@ -31,6 +31,8 @@ extern void isr20(); extern void isr21(); extern void isr22(); extern void isr23
 extern void isr24(); extern void isr25(); extern void isr26(); extern void isr27();
 extern void isr28(); extern void isr29(); extern void isr30(); extern void isr31();
 
+// IPI_FLUSH_TLB
+extern void isr240(void); // Handler IPI_FLUSH_TLB
 
 // LAPIC
 extern void isr32(void);  // O Stub Assembly do LAPIC Timer
@@ -238,6 +240,8 @@ void idt_init(void)
     idt_set_gate(111, (unsigned long)isr111, 0x08, 0x0E, 0, 0);
     idt_set_gate(112, (unsigned long)isr112, 0x08, 0x0E, 0, 0);
 
+
+    idt_set_gate(240, (unsigned long)isr240, 0x08, 0x8E, 0, 0);
 
     /* Mapeamento de canais de exceções internas do APIC */
     idt_set_gate(254, (unsigned long)isr254, 0x08, 0x0E, 0, 0); // LVT Error

@@ -46,16 +46,16 @@ typedef struct window_t {
 
     client_t client;
 
+    volatile int event_head;
+    volatile int event_tail;
     event_t event_queue[MAX_EVENTS];
-    int event_head;
-    int event_tail;
 
     int last_mouse_x;
     int last_mouse_y;
 
     int invalid;
 
-    int lock;
+    volatile int lock;  /* 0 = Pronto para ler, 1 = Cliente a desenhar */
 
     unsigned long pid;
 
@@ -64,13 +64,30 @@ typedef struct window_t {
 
     struct window_t *parent;
 
-}__attribute__((packed)) window_t;
+    void *wait;
+
+    size_t buffer_size;
+    size_t struct_size;
+
+}window_t;
+
+static inline void window_lock(volatile int* lock) {
+    while (__sync_lock_test_and_set(lock, 1)) {
+         while (*lock); // espera ativa (menos agressivo)
+    }
+}
+
+static inline void window_unlock(volatile int* lock) {
+    __sync_lock_release(lock);
+}
 
 window_t* window_create(int x, int y, int width, int height, char *title, unsigned int bg_color, unsigned int fg_color);
 window_t* overlay_window_create(int x, int y, int width, int height, unsigned int bg_color, unsigned int fg_color);
 void window_destroy(window_t* win);
 window_t* get_focused_window();
 void window_update_focus(window_t* win, int focused);
+void window_handle_mouse(window_t* win, int layer, int delta_x, int delta_y, int buttons);
+void window_handle_key(window_t* win, int scancode);
 
 extern window_t* g_focused_window;
 

@@ -65,6 +65,7 @@ typedef struct process {
 
     struct process* parent;         /* Ponteiro para o processo pai */
     thread_t* main_thread;          /* Ponteiro para a thread principal do processo */
+    uint32_t thread_count;
 
      /*
      * TABELA DE FDs (Para Sockets, Pipes e Ficheiros Virtuais) 

@@ -28,6 +28,7 @@
 #include <sys/mman.h>
 #include <spawn.h>
 #include <errno.h>
+#include <sync/sync.h>
 
 
 #ifndef MAX_PATH_LEN
@@ -493,6 +494,14 @@ void munmap(void *addr, size_t length)
   syscall2(SYS_MUNMAP, (uint64_t)addr, length); 
 }
 
+
+void uwait(void *chan) {
+    syscall1(SYS_UWAIT, (uint64_t)chan); 
+}
+
+void uwakeup(void *chan) {
+    syscall1(SYS_UWAKEUP, (uint64_t)chan); 
+}
 
 int __sys_active_tty() {
      return(int)syscall0(SYS_ACTIVE_TTY);

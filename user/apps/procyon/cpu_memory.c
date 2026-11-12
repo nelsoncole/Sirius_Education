@@ -108,6 +108,24 @@ static void *sse_memcpy(void *dst, const void *src, size_t len)
     unsigned char *d = dst;
     const unsigned char *s = src;
 
+    // Fallback para buffers não alinhados a 16 bytes
+    if (((unsigned long)d % 16) != 0 || ((unsigned long)s % 16) != 0) {
+		size_t qwords = len / 8;
+		size_t bytes = len % 8;
+		uint64_t *d64 = (uint64_t *)d;
+		uint64_t *s64 = (uint64_t *)s;
+
+		__asm__ __volatile__(
+			"cld; rep movsq"
+			: "+D"(d64), "+S"(s64), "+c"(qwords) : : "memory");
+
+		d = (unsigned char *)d64;
+		s = (unsigned char *)s64;
+
+		if (bytes) memcpy(d, s, bytes);
+		return ret;
+	}
+
     size_t blocks = len / 128;
 
     for (size_t i = 0; i < blocks; i++)
@@ -160,6 +178,24 @@ static void *avx2_memcpy(void *dst, const void *src, size_t len)
 
     unsigned char *d = dst;
     const unsigned char *s = src;
+
+    /* Fallback se os buffers nao estiverem alinhados ao limite natural de 32 bytes do AVX */
+    if (((unsigned long)d % 32) != 0 || ((unsigned long)s % 32) != 0) {
+		size_t qwords = len / 8;
+		size_t bytes = len % 8;
+		uint64_t *d64 = (uint64_t *)d;
+		uint64_t *s64 = (uint64_t *)s;
+
+		__asm__ __volatile__(
+			"cld; rep movsq"
+			: "+D"(d64), "+S"(s64), "+c"(qwords) : : "memory");
+
+		d = (unsigned char *)d64;
+		s = (unsigned char *)s64;
+
+		if (bytes) memcpy(d, s, bytes);
+		return ret;
+	}
 
     size_t blocks = len / 256;
 

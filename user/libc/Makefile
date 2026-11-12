@@ -29,7 +29,7 @@ TARGET  := libc.a
 SRC_DIRS := \
 			src/stdio src/string src/ctype src/stdlib \
 			src/errno src/assert src/math src/sys src/sys/arpa src/time \
-			src/signal src/setjmp src/wchar
+			src/signal src/setjmp src/wchar src/pthread
 
 # Coleta todos os ficheiros .c dentro das pastas especificadas
 C_SRCS   := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))

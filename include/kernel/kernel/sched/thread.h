@@ -82,11 +82,11 @@ thread_t* thread_create_init(uint32_t cpu_id);
  * @param cpu_id O núcleo de processamento onde a thread será inicialmente agendada.
  * @return Ponteiro para a estrutura thread_t criada, ou NULL em caso de falha.
  */
-thread_t* thread_create(void (*entry_point)(void*), void* arg, uint32_t cpu_id);
+thread_t* thread_create(void (*entry_point)(void*), void* arg, uint32_t cpu_id, struct process* proc);
 
 /**
  * Cria e configura uma nova thread de Utilizador (Ring 3), com contexto e isolamento adequados.
  */
-thread_t* user_thread_create(void (*entry_point)(void*), void* arg, void* user_stack_top, uint32_t cpu_id);
+thread_t* user_thread_create(void (*entry_point)(void*), void* arg, void* user_stack_top, uint32_t cpu_id, struct process* proc);
 
 #endif /* THREAD_H */

@@ -28,6 +28,9 @@
 #include <kernel/arch/x86_64/kapi/timer.h>
 #include <kernel/kernel/mm/memory_map.h>
 #include <kernel/kernel/sched/process_loader.h>
+#include <kernel/kernel/sched/pthread.h>
+#include <kernel/kernel/sched/wait.h>
+#include <kernel/kernel/sched/wakeup.h>
 
 /*
  * REGS DE HARDWARE ESPECÍFICOS DA ARQUITETURA (x86_64 MSRs)
@@ -117,7 +120,14 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
 
     [SYS_ACTIVE_TTY] = sys_active_tty,
 
-    [SYS_PROCESS_SPAWN] = sys_process_spawn
+    [SYS_PROCESS_SPAWN] = sys_process_spawn,
+
+    [SYS_PTHREAD_CREATE] = sys_pthread_create,
+    [SYS_PTHREAD_EXIT] = sys_pthread_exit,
+    [SYS_PTHREAD_JOIN] = sys_pthread_join,
+
+    [SYS_UWAIT] = sys_uwait,
+    [SYS_UWAKEUP] = sys_uwakeup
 };
 
 static inline void wrmsr(uint32_t msr, uint64_t val) {
@@ -151,6 +161,9 @@ static inline int syscall_is_blocking(uint64_t syscall_num) {
         case SYS_GETPID:
         case SYS_GETPPID:
         case SYS_PROCESS_SPAWN:
+        case SYS_PTHREAD_CREATE:
+        case SYS_PTHREAD_EXIT:
+        case SYS_PTHREAD_JOIN:
             return 0; // GRUPO: CLI ESTRITO
 
         default:
@@ -597,6 +610,7 @@ uint64_t sys_fork(void)
 
     /* 4. Sintetiza o frame local SEM ZERAR os outros registadores gerais */
     stack_frame_t frame;
+    memset(&frame, 0, sizeof(stack_frame_t));
     
     // Injeta os dados de controle de fluxo estáveis
     frame.rip    = saved_rip;
@@ -1315,6 +1329,48 @@ uint64_t sys_process_spawn(pid_t * pid, const char *path,
 
     return (uint64_t)0;   
 }
+
+uint64_t sys_pthread_create(uint64_t start_routine, uint64_t stack)
+{
+
+    kprintf("[SCI] sys_pthread_create: Capturando contexto completo do processo para thread...\n");
+
+    stack_frame_t frame;
+    memset(&frame, 0, sizeof(stack_frame_t));
+    
+    // Injeta os dados de controle de fluxo estáveis
+    frame.rip    = start_routine;
+    frame.rsp    = stack;
+
+    /* 5. Executa o clone repassando o contexto 100% íntegro */
+    pid_t pid = pthread(&frame);
+
+    return (uint64_t)pid;
+}
+
+uint64_t sys_pthread_exit(void *retval)
+{
+    kprintf("[SCI] sys_pthread_exit\n");
+    return (uint64_t)0;
+}
+
+uint64_t sys_pthread_join(void* thread, void **retval)
+{
+    return (uint64_t)0;
+}
+
+uint64_t sys_uwait(void *chan)
+{   
+    wait(chan, NULL);
+    return (uint64_t)0;
+}
+
+uint64_t sys_uwakeup(void *chan)
+{
+    wakeup(chan);
+    return (uint64_t)0;
+}
+
 /*
  * ============================================================================
  * INTERFACE DE INICIALIZAÇÃO DE HARDWARE

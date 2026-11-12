@@ -58,6 +58,7 @@ pid_t clone(stack_frame_t* frame)
     {
         /* CASO A: Criação de Thread (Partilha o mesmo processo) */
         child_proc = parent_proc;
+
     }
     else
     {
@@ -107,10 +108,10 @@ pid_t clone(stack_frame_t* frame)
         (void(*)(void*))frame->rip, 
         NULL, 
         (void*)frame->rsp, 
-        get_cpu_id_with_fewest_threads()
+        get_cpu_id_with_fewest_threads(),
+        child_proc
     );
 
-    
     if (!child_thread) 
     {
         kprintf("[CLONE ERROR] Falha ao instanciar TCB.\n");
@@ -123,10 +124,13 @@ pid_t clone(stack_frame_t* frame)
 
     /* 5. Duplica o Stack Frame (Registadores) */
     stack_frame_t* child_frame = (stack_frame_t*)child_thread->context_frame;
-    memcpy(child_frame, frame, sizeof(stack_frame_t));
+    if(!(flags & CLONE_VM)) {
+        memcpy(child_frame, frame, sizeof(stack_frame_t));
+    }
 
     /* 6. Vinculação Estrutural */
     child_thread->owner = child_proc;
+    
     if (!(flags & CLONE_VM)) {
         child_proc->main_thread = child_thread;
     }
@@ -135,12 +139,11 @@ pid_t clone(stack_frame_t* frame)
     child_frame->rax = 0; 
 
     /* 8. Ativação Atómica */
-    if (!(flags & CLONE_VM)) {
-        child_proc->state = PROCESS_READY;
-    }
+    if (!(flags & CLONE_VM)) child_proc->state = PROCESS_READY;
+
     child_thread->state = THREAD_READY;
 
-    process_list_insert(child_proc);
+    if (!(flags & CLONE_VM)) process_list_insert(child_proc);
 
     enqueue_thread(current_cpu, child_thread);
     

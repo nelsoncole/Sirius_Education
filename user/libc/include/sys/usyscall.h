@@ -94,6 +94,13 @@ enum {
     SYS_ACTIVE_TTY,
 
     SYS_PROCESS_SPAWN,
+
+    SYS_PTHREAD_CREATE,
+    SYS_PTHREAD_EXIT,
+    SYS_PTHREAD_JOIN,
+
+    SYS_UWAIT,
+    SYS_UWAKEUP,
     
     /* O compilador define automaticamente MAX_SYSCALLS com o valor total correto (43) */
     MAX_SYSCALLS

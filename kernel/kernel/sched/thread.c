@@ -17,12 +17,13 @@
  */
 
 #include <kernel/kernel/sched/scheduler.h>
+#include <kernel/kernel/sched/process.h>
 #include <kernel/klib.h>
 
 /* ID incremental estático para atribuição única de TIDs */
 static uint32_t g_next_tid = 1;
 
-static thread_t* thread_create_common(void (*entry_point)(void*), void* arg, void* user_stack_top, uint32_t cpu_id, uint64_t cs, uint64_t ss)
+static thread_t* thread_create_common(void (*entry_point)(void*), void* arg, void* user_stack_top, uint32_t cpu_id, uint64_t cs, uint64_t ss, process_t* proc)
 {
     /* 1. Alocação de Memória */
     thread_t* thread = (thread_t*)kmalloc(sizeof(thread_t));
@@ -74,6 +75,8 @@ static thread_t* thread_create_common(void (*entry_point)(void*), void* arg, voi
 
     thread->chan        = NULL;
     thread->next        = NULL;
+
+    proc->thread_count++;
 
     return thread;
 }
@@ -127,9 +130,9 @@ thread_t* thread_create_init(uint32_t cpu_id)
 /**
  * Cria e configura uma nova thread de Kernel, forjando o seu stack inicial.
  */
-thread_t* thread_create(void (*entry_point)(void*), void* arg, uint32_t cpu_id)
+thread_t* thread_create(void (*entry_point)(void*), void* arg, uint32_t cpu_id, process_t* proc)
 {
-    thread_t* thread = thread_create_common(entry_point, arg, NULL, cpu_id, 0x8, 0x10);
+    thread_t* thread = thread_create_common(entry_point, arg, NULL, cpu_id, 0x8, 0x10, proc);
     if (!thread) 
     {
         return NULL;
@@ -149,9 +152,9 @@ thread_t* thread_create(void (*entry_point)(void*), void* arg, uint32_t cpu_id)
 /**
  * Cria e configura uma nova thread de Utilizador (Ring 3), com contexto e isolamento adequados.
  */
-thread_t* user_thread_create(void (*entry_point)(void*), void* arg, void* user_stack_top, uint32_t cpu_id)
+thread_t* user_thread_create(void (*entry_point)(void*), void* arg, void* user_stack_top, uint32_t cpu_id, process_t* proc)
 {
-    thread_t* thread = thread_create_common(entry_point, arg, user_stack_top, cpu_id, 0x2B, 0x23);
+    thread_t* thread = thread_create_common(entry_point, arg, user_stack_top, cpu_id, 0x2B, 0x23, proc);
     if (!thread) 
     {
         return NULL;

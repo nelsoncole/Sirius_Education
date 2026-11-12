@@ -191,7 +191,7 @@ void vmm_map_page(PML4_TABLE* pml4, unsigned long virt, unsigned long phys, unsi
     pt[pt_idx].nx = (flags & (1ULL << 63)) ? 1 : 0;
 
     // Sincroniza imediatamente a cache MMU do processador para o endereço virtual alvo
-    __asm__ __volatile__("invlpg (%0)" :: "r"(virt) : "memory");
+    invlpg((void*)virt);
 
     spinlock_unlock_irqrestore(&g_vmm_lock, flag_lock);
 }

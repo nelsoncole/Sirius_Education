@@ -225,7 +225,7 @@ void tty_vfs_init(vfs_node_t* dev_node) {
      * tty3 -> Modo gráfico 
      * 
      * */
-    g_active_tty_index = 0;
+    g_active_tty_index = 2;
 }
 
 /**

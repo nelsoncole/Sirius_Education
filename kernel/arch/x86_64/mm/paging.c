@@ -624,3 +624,37 @@ setup_paging(
         : "memory"
     );
 }
+
+static inline uint64_t read_cr3(void)
+{
+    uint64_t cr3;
+
+    __asm__ volatile(
+        "mov %%cr3, %0"
+        : "=r"(cr3)
+    );
+
+    return cr3;
+}
+
+static inline void write_cr3(uint64_t cr3)
+{
+    __asm__ volatile(
+        "mov %0, %%cr3"
+        :
+        : "r"(cr3)
+        : "memory"
+    );
+}
+
+void flush_tlb_local(void)
+{
+    uint64_t cr3 = read_cr3();
+
+    write_cr3(cr3);
+}
+
+// Se quiser invalidar apenas um endereço específico (por exemplo, durante munmap ou mprotect)
+void invlpg(void *addr) {
+    __asm__ __volatile__("invlpg (%0)" :: "r"(addr) : "memory");
+}

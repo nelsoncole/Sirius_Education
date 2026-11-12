@@ -17,6 +17,7 @@
 
 #include <kernel/arch/x86_64/cpu/idt.h>
 #include <kernel/arch/x86_64/cpu/lapic.h>
+#include <kernel/arch/x86_64/cpu/ipi.h>
 #include <kernel/arch/x86_64/cpu/reg.h>
 #include <kernel/arch/x86_64/cpu/cpu.h>
 #include <kernel/lib/stdio.h>
@@ -248,6 +249,14 @@ void* interrupt_handler_c(registers_t *regs)
 
         lapic_eoi();
         return regs;
+    }
+
+    // Handler para IPI de TLB Shootdown (Vetor 0xF0 = 240)
+    if (regs->int_no == IPI_FLUSH_TLB)
+    {
+        handle_ipi_flush_tlb();
+        lapic_eoi();
+        return regs; // Retorna o mesmo ponteiro de pilha sem trocar de thread!
     }
 
     // TRATAMENTO DO ERRO DO LOCAL APIC (Vetor 254)

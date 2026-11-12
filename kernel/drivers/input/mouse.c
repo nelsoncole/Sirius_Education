@@ -17,9 +17,13 @@
  * ============================================================================
  */
 
-#include <kernel/drivers/char/mouse.h>
+#include <kernel/drivers/input/mouse.h>
 #include <kernel/arch/x86_64/kapi/irq.h>
 #include <kernel/klib.h>
+#include <kernel/kernel/sched/wait.h>
+#include <kernel/kernel/sched/wakeup.h>
+
+static void* g_mouse_read_wait = NULL;
 
 #define IRQ_MOUSE 12 /* O Rato PS/2 secundário está mapeado obrigatoriamente na IRQ 12 */
 
@@ -28,7 +32,7 @@ static uint8_t g_mouse_cycle = 0;
 static uint8_t g_mouse_bytes[3];
 
 /* Buffer circular para armazenamento dos pacotes de movimento montados */
-#define MOUSE_BUFFER_SIZE 64
+#define MOUSE_BUFFER_SIZE 128
 static mouse_packet_t g_mouse_buffer[MOUSE_BUFFER_SIZE];
 static int g_mouse_head = 0;
 static int g_mouse_tail = 0;
@@ -167,13 +171,16 @@ void mouse_handler(void)
 
         /* Enfileira o pacote estável montado no buffer circular */
         int next = (g_mouse_head + 1) % MOUSE_BUFFER_SIZE;
+
         if (next != g_mouse_tail)
         {
             g_mouse_buffer[g_mouse_head] = packet;
             g_mouse_head = next;
+
+            wakeup(&g_mouse_read_wait);
         }
 
-        //kprintf("[%dx%d %2x] ",packet.delta_x, packet.delta_y, packet.buttons);
+        // kprintf("[%dx%d %2x] ",packet.delta_x, packet.delta_y, packet.buttons);
     }
 }
 
@@ -183,10 +190,16 @@ void mouse_handler(void)
  */
 int mouse_get_packet(mouse_packet_t* packet)
 {
-    if (g_mouse_tail == g_mouse_head || !packet) return 0;
+    if (!packet)
+        return 0;
+
+    while (g_mouse_tail == g_mouse_head)
+    {
+        wait(&g_mouse_read_wait, NULL);
+    }
 
     *packet = g_mouse_buffer[g_mouse_tail];
     g_mouse_tail = (g_mouse_tail + 1) % MOUSE_BUFFER_SIZE;
-    
+
     return 1;
 }

@@ -22,9 +22,14 @@ LINKER_SCR  := $(BASE_DIR)libc/user_x86_64.ld
 CFLAGS  := -Wall -Wextra -m64 -O2 -nostdinc -ffreestanding -I$(LIBC_INC)
 LDFLAGS := -m elf_x86_64 -nostdlib -T $(LINKER_SCR)
 
-PROCYON_OBJ := procyon.o cpu_memory.o utf8_decode.o procyon_file.o window.o pixel.o \
-				text.o event.o image.o icon.o color.o draw_rect.o layer.o compositor.o \
-				framebuffer.o
+PROCYON_BASE_OBJ := procyon.o cpu_memory.o utf8_decode.o procyon_file.o window.o pixel.o \
+                    text.o text_cache.o event.o image.o icon.o color.o draw_rect.o draw_line.o layer.o compositor.o \
+                    framebuffer.o mouse_cursor.o procyon_ipc.o desktop.o
+
+PROCYON_UI_OBJ   := components.o label.o button.o iconbutton.o checkbox.o listbox.o radiobutton.o \
+					slider.o progressbar.o painel.o combobox.o
+
+ALL_OBJS         := $(PROCYON_BASE_OBJ) $(PROCYON_UI_OBJ)
 				
 CRT0        := $(CRT0_DIR)/crt0.o
 LIBC_A      := $(LIBC_DIR)/libc.a
@@ -33,13 +38,16 @@ LIBC_A      := $(LIBC_DIR)/libc.a
 
 all: $(SYSROOT_APP)
 
-$(SYSROOT_APP): $(PROCYON_OBJ) $(LIBC_A) $(CRT0)
+$(SYSROOT_APP): $(ALL_OBJS) $(LIBC_A) $(CRT0)
 	@mkdir -p $(dir $(SYSROOT_APP))
-	$(LD) $(LDFLAGS) $(CRT0) $(PROCYON_OBJ) $(LIBC_A) -o $@
+	$(LD) $(LDFLAGS) $(CRT0) $(ALL_OBJS) $(LIBC_A) -o $@
 
-%.o: %.c
+$(PROCYON_BASE_OBJ): %.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(PROCYON_UI_OBJ): %.o: ui/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(PROCYON_OBJ)
+	rm -f $(ALL_OBJS)
 
