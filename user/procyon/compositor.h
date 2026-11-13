@@ -15,7 +15,7 @@ static inline void co_unlock(volatile int* lock) {
     __sync_lock_release(lock);
 }
 
-void compositor_init();
+void compositor_init(unsigned int* compositor_buffer, int width, int height, int bpp);
 void compositor_add_window(window_t* win, int layer);
 void compositor_remove_window(window_t* win);
 void compositor_add_window_child(window_t* win, window_t* parent);

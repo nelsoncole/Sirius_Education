@@ -10,6 +10,8 @@
 #define WINDOW_TITLE_MAX 256
 #define WINDOW_TITLEBAR_HEIGHT 30
 
+#define WINDOW_FLAG_TRANSPARENT  0x01
+
 typedef struct {
     int x, y;
     int width, height;
@@ -24,6 +26,7 @@ typedef struct {
 
 typedef struct window_t {
     int type;
+    uint32_t flags;
 
     int x;
     int y;

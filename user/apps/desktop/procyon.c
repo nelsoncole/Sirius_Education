@@ -41,12 +41,7 @@
 #include <string.h>
 #include <pthread.h>
 
-#include "cpu_memory.h"
-#include "window.h"
-#include "compositor.h"
-#include "mouse_cursor.h"
-#include "event.h"
-#include "procyon_ipc.h"
+#include <procyon/procyon.h>
 
 struct tty_user {
     uint64_t user_buffer;
@@ -61,12 +56,6 @@ struct tty_user {
 
 struct tty_user *info;
 int tty;
-
-// obrigatorio definir
-unsigned int* back_buffer;
-int screen_width;
-int screen_height;
-int pitch;
 
 extern void procyon_desktop_main(int info_width, int info_height);
 
@@ -122,6 +111,9 @@ int main(int argc, char *argv[])
 {
     (void)argc;
     (void)argv;
+
+    //extern int __sys_active_tty();
+    //__sys_active_tty();
 
     memcpy_init();
 
@@ -189,20 +181,15 @@ int main(int argc, char *argv[])
     info->size = fb_pixels * sizeof(unsigned int);
     info->user_buffer = (uint64_t)compositor_buffer;
 
+    compositor_init(compositor_buffer, info->width, info->height, info->bpp);
     mouse_cursor_init();
     
     pthread_create(&thread_mouse, NULL, thread_mouse_func, NULL);
 
-    // Init
-    back_buffer = compositor_buffer;
-    screen_width = info->width;
-    screen_height = info->height;
-    pitch = screen_width * (info->bpp/8);
-
     pid_t pid_desktop = fork();
 
     if( pid_desktop == 0) {
-        procyon_desktop_main(screen_width, screen_height);
+        procyon_desktop_main(info->width, info->height);
         _exit(0);
     }
 
@@ -268,9 +255,30 @@ int main(int argc, char *argv[])
                     }
                 }
             }
+            else if (header.command == PROCYON_CMD_REMOVE_WINDOW)
+            {
+                ipc_msg_remove_window_t msg;
+
+                if (read(client_fd, &msg, sizeof(msg)) ==
+                    sizeof(msg))
+                {
+                    window_t *win = (window_t *)msg.shm_win;
+
+                    if (win)
+                    {
+                        compositor_remove_window(win);
+                        procyon_msg_response_t response;
+                        response.status = 0;
+                        write(client_fd, &response, sizeof(response));
+
+                        compositor_render();
+                        ioctl(tty, TTY_IOCTL_VIDEO_WRITE, info);
+                    }
+                }
+            }
             else if (header.command == PROCYON_CMD_REMOVE_WINDOW_CHILD)
             {
-                ipc_msg_remove_window_child_t msg;
+                ipc_msg_remove_window_t msg;
 
                 if (read(client_fd, &msg, sizeof(msg)) ==
                     sizeof(msg))

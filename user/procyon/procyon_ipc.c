@@ -137,6 +137,41 @@ int enviar_janela_filha_ao_servidor(int socket_fd, window_t *win, window_t *pare
     return response.status;
 }
 
+int enviar_remocao_janela(int socket_fd, window_t *win)
+{
+    if (!win)
+        return -1;
+
+    procyon_msg_header_t header;
+    header.command = PROCYON_CMD_REMOVE_WINDOW;
+    header.size = sizeof(ipc_msg_remove_window_t);
+
+    ipc_msg_remove_window_t msg;
+    msg.shm_win = (uint64_t)win;
+
+    struct sockaddr_un server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sun_family = AF_LOCAL;
+
+    strncpy(server_addr.sun_path,
+            PROCYON_SOCKET_PATH,
+            sizeof(server_addr.sun_path) - 1);
+
+    if (connect(socket_fd, (struct sockaddr *)&server_addr,
+                sizeof(server_addr)) < 0)
+        return -1;
+
+    write(socket_fd, &header, sizeof(header));
+    write(socket_fd, &msg, sizeof(msg));
+
+    procyon_msg_response_t response;
+
+     if (socket_read_all(socket_fd, &response, sizeof(response)) < 0)
+        return -1;
+    
+    return response.status;
+}
+
 int enviar_remocao_janela_filha(int socket_fd, window_t *win)
 {
     if (!win)
@@ -144,9 +179,9 @@ int enviar_remocao_janela_filha(int socket_fd, window_t *win)
 
     procyon_msg_header_t header;
     header.command = PROCYON_CMD_REMOVE_WINDOW_CHILD;
-    header.size = sizeof(ipc_msg_remove_window_child_t);
+    header.size = sizeof(ipc_msg_remove_window_t);
 
-    ipc_msg_remove_window_child_t msg;
+    ipc_msg_remove_window_t msg;
     msg.shm_win = (uint64_t)win;
 
     struct sockaddr_un server_addr;

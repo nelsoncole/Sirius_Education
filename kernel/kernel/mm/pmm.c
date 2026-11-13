@@ -167,20 +167,21 @@ void pmm_init(BOOT_INFO *boot_info) {
 unsigned long pmm_alloc_page(void)
 {
     unsigned long flags=  spinlock_lock_irqsave(&g_pmm_lock);
-
+    unsigned long count = 0;
     // Varre o bitmap byte a byte
     for (unsigned long i = 0; i < pmm_bitmap_size; i++)
     {
         // Se o byte for 0xFF, significa que as 8 páginas deste bloco estão ocupadas.
         if (pmm_bitmap[i] == 0xFF) {
+            count += 8;
             continue;
         }
 
         // Se o byte tem pelo menos um bit em 0, descobrimos qual é
         for (int bit = 0; bit < 8; bit++)
         {
-            // CORREÇÃO 1: Usa 1ULL (64-bit Unsigned Long Long) para evitar Sign Extension e lixo de 32-bit
-            if (!(pmm_bitmap[i] & (1ULL << bit)))
+            count++;
+            if (!(pmm_bitmap[i] & (1U << bit)))
             {
                 // Calcula o índice global da página na RAM
                 unsigned long page_index = (i * 8) + bit;
@@ -203,6 +204,7 @@ unsigned long pmm_alloc_page(void)
     }
 
     kprintf("[PMM ERRO] Memoria fIsica esgotada! ImpossIvel alocar pagina.\n");
+    kprintf("[PMM ERRO] count %ld\n", count);
     spinlock_unlock_irqrestore(&g_pmm_lock, flags);
     return 0; // Out of memory
 }

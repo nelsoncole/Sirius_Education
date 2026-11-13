@@ -4,6 +4,11 @@
 #include "image.h"
 #include "text.h"
 #include "procyon_ipc.h"
+#include "compositor.h"
+#include "event.h"
+#include "mouse_cursor.h"
+#include "cpu_memory.h"
+#include "color.h"
 
 //UI
 #include "ui/include/components.h"

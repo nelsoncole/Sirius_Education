@@ -16,6 +16,30 @@ unsigned int blend_color(unsigned int bg, unsigned int fg, unsigned char alpha) 
     return (r << 16) | (g << 8) | b;
 }
 
+unsigned int alpha_blend(unsigned int src, unsigned int dst)
+{
+    unsigned int a = src >> 24;
+
+    if (a == 0)
+        return dst;
+
+    if (a == 255)
+        return src;
+
+    unsigned int ia = 255 - a;
+
+    unsigned int r = (((src >> 16) & 0xFF) * a +
+                  ((dst >> 16) & 0xFF) * ia) / 255;
+
+    unsigned int g = (((src >> 8) & 0xFF) * a +
+                  ((dst >> 8) & 0xFF) * ia) / 255;
+
+    unsigned int b = ((src & 0xFF) * a +
+                  (dst & 0xFF) * ia) / 255;
+
+    return 0xFF000000 | (r << 16) | (g << 8) | b;
+}
+
 
 void draw_pixel(int x, int y, int width, int height, unsigned int color, unsigned int *buffer) {
     if (x < 0 || y < 0 || x >= width || y >= height)

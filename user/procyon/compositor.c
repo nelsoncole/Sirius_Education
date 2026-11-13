@@ -9,18 +9,24 @@
 
 #include "cpu_memory.h"
 
-extern unsigned int* back_buffer;
-extern int screen_width;
-extern int screen_height;
-extern int pitch;
+unsigned int* back_buffer;
+int screen_width;
+int screen_height;
+int pitch;
 
 volatile int compositor_lock = 0;
 
 // Inicializa o compositor
-void compositor_init() {
+void compositor_init(unsigned int* compositor_buffer, int width, int height, int bpp) {
+    
     memset(layers, 0, sizeof(layers));
     memset(layer_counts, 0, sizeof(layer_counts));
     g_focused_window = (window_t*)0;
+
+    back_buffer = compositor_buffer;
+    screen_width = width;
+    screen_height = height;
+    pitch = screen_width * (bpp/8);
 }
 
 /*
@@ -167,25 +173,43 @@ void compositor_draw_window(window_t* win) {
     // =========================
     // LOOP DAS LINHAS
     // =========================
-    for (int y = 0; y < win->height; y++) {
-
+    for (int y = 0; y < win->height; y++)
+    {
         int fy = win->y + y;
 
-        // clipping vertical
-        if (fy >= 0 && fy < screen_height) {
+        if (fy >= 0 && fy < screen_height)
+        {
+            int start_x = win->x;
+            int end_x = win->x + win->width;
 
-            // clipping horizontal simples (mantendo tua lógica)
-            if (win->x < screen_width) {
+            if (start_x < 0)
+                start_x = 0;
 
-                // copia linha inteira da janela para framebuffer
-                optimized_memcpy(s1 + win->x, s2, len);
+            if (end_x > screen_width)
+                end_x = screen_width;
+
+            if (start_x < end_x)
+            {
+                uint32_t *dst = (uint32_t *)s1 + start_x;
+                uint32_t *src = (uint32_t *)s2 + (start_x - win->x);
+
+                int pixels = end_x - start_x;
+
+                if (win->flags & WINDOW_FLAG_TRANSPARENT)
+                {
+                    for (int x = 0; x < pixels; x++)
+                    {
+                        dst[x] = alpha_blend(src[x], dst[x]);
+                    }
+                }
+                else
+                {
+                    optimized_memcpy(dst, src, pixels * sizeof(uint32_t));
+                }
             }
         }
 
-        // AVANÇA usando STRIDE (pitch), NÃO screen_width
         s1 += stride;
-
-        // origem continua usando largura da janela (correto)
         s2 += win->width;
     }
 

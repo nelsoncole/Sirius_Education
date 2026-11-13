@@ -30,6 +30,9 @@ static window_t* window_create_init(int x, int y, int width, int height, char *t
     strncpy(win->title, title ? title : "", sizeof(win->title) - 1);
     win->title[sizeof(win->title) - 1] = '\0';
 
+    if((bg_color & 0xFF000000) != 0xFF000000) win->flags |= WINDOW_FLAG_TRANSPARENT; 
+
+
     win->struct_size = struct_size;
 
     size_t num_pixels = (size_t)width * height;
@@ -167,7 +170,11 @@ window_t* get_focused_window() {
 void window_update_focus(window_t* win, int focused) {
     if (!win) return;
     win->focused = focused;
-    if(win->type != 1)return;
+
+    event_t ev_tmp = {0};
+    ev_tmp.type = !focused ? EVENT_FOCUS_LOST : EVENT_FOCUS_GAINED;
+    ev_tmp.clock = 0;
+    push_event_to_window(win, ev_tmp);
 }
 
 void window_handle_mouse(window_t* win, int layer, int delta_x, int delta_y, int buttons)

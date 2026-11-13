@@ -1,6 +1,7 @@
 #include <stdlib.h>
-#include "procyon.h"
 #include <stdio.h>
+
+#include <procyon/procyon.h>
 
 component_t* label;
 
