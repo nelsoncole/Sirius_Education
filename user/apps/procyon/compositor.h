@@ -23,7 +23,6 @@ void compositor_remove_window_child(window_t* win);
 void compositor_render();
 void compositor_draw_window(window_t* win);
 void compositor_draw_cursor(unsigned int *buffer);
-void compositor_draw_cursor_2(unsigned int *buffer);
 
 // Handler
 void compositor_handle_key_down(int key, int type);

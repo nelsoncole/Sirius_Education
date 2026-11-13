@@ -87,11 +87,6 @@ static pthread_t thread_mouse;
 void *thread_mouse_func(void *arg)
 {
     (void)arg;
-    //int buffer_size = g_mouse_cursor.width * g_mouse_cursor.height * sizeof(unsigned int);
-    //unsigned int *buffer = malloc(buffer_size);
-    //struct tty_user *info_2 = malloc(sizeof(struct tty_user));
-    //memcpy(info_2, info, sizeof(struct tty_user));
-
     int fd = open("/dev/mouse", O_RDONLY);
 
     int x = 0;
@@ -115,20 +110,6 @@ void *thread_mouse_func(void *arg)
                 set_cursor(x, y);
 
                 handle_mouse_event(x, y, packet.buttons);
-
-                /*
-                compositor_draw_cursor_2(buffer);
-                
-                info_2->x_start = g_mouse_cursor.x;
-                info_2->y_start = g_mouse_cursor.y;
-                info_2->width = g_mouse_cursor.width;
-                info_2->height = g_mouse_cursor.height;
-                info_2->ppsl = info_2->width;
-                info_2->size = buffer_size;
-                info_2->user_buffer = (uint64_t)buffer;
-                ioctl(tty, TTY_IOCTL_VIDEO_WRITE, info_2);*/
-
-                //compositor_draw_cursor(back_buffer);
                 
                 compositor_render();
                 ioctl(tty, TTY_IOCTL_VIDEO_WRITE, info);

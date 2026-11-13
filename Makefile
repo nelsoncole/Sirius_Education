@@ -57,6 +57,7 @@ C_OBJ := \
 	$(BUILD_DIR)/vmm.o \
 	$(BUILD_DIR)/vmm_scratch_window.o \
 	$(BUILD_DIR)/cpu.o \
+	$(BUILD_DIR)/mtrr.o \
 	$(BUILD_DIR)/idle.o \
 	$(BUILD_DIR)/idt.o \
 	$(BUILD_DIR)/isr.o \
@@ -225,6 +226,9 @@ $(BUILD_DIR)/vmm_scratch_window.o: $(ARCH_DIR)/x86_64/mm/vmm_scratch_window.c | 
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/cpu.o: $(ARCH_DIR)/x86_64/cpu/cpu.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/mtrr.o: $(ARCH_DIR)/x86_64/cpu/mtrr.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/idle.o: $(ARCH_DIR)/x86_64/cpu/idle.c | $(BUILD_DIR)

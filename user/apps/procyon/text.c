@@ -452,3 +452,30 @@ int draw_text_centered_wrapped(stbtt_fontinfo font, const char *text,
 
     return max_line_width;
 }
+
+
+
+int text_get_string_width(const stbtt_fontinfo *font, float font_size, const char *text, int cursor_pos)
+{
+    if (!font || !text || cursor_pos <= 0) {
+        return 0;
+    }
+
+    float scale = stbtt_ScaleForPixelHeight(font, font_size);
+    float width = 0.0f;
+
+    for (int i = 0; i < cursor_pos && text[i] != '\0'; i++) {
+        int advance_width = 0;
+        int left_side_bearing = 0;
+
+        stbtt_GetCodepointHMetrics(font, (unsigned char)text[i], &advance_width, &left_side_bearing);
+        width += (float)advance_width * scale;
+
+        if (i + 1 < cursor_pos && text[i + 1] != '\0') {
+            int kern = stbtt_GetCodepointKernAdvance(font, (unsigned char)text[i], (unsigned char)text[i + 1]);
+            width += (float)kern * scale;
+        }
+    }
+
+    return (int)(width + 0.5f);
+}

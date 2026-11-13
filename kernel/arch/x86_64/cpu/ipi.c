@@ -1,3 +1,21 @@
+/*
+ * ============================================================================
+ *        Project: Sirius_Education
+ *       Filename: ipi.c
+ *    Description: Implementação das rotinas de comunicação e sincronização
+ *                 entre núcleos (SMP) via Inter-Processor Interrupts (IPI),
+ *                 incluindo invalidação remota de TLB (TLB Shootdown).
+ * 
+ *         Author: Nelson Cole
+ *   Created Date: 12/11/2026
+ * 
+ *    Modified By: Nelson Cole
+ *  Modified Date: 12/11/2026
+ * 
+ *        License: MIT
+ * ============================================================================
+ */
+
 #include <kernel/arch/x86_64/cpu/lapic.h>
 #include <kernel/arch/x86_64/cpu/cpu.h>
 #include <kernel/arch/x86_64/mm/paging.h>

@@ -101,11 +101,14 @@ void tty_emulator_thread(void* arg) {
             active_node = tty_vfs_get_node_by_index(0); // Fallback tty0
         }
         
+        int mudou_foco = 0;
+        int precisa_refresh = 0;
+
         if (active_node && active_node->private_data) {
             struct tty_device* active_tty = (struct tty_device*)active_node->private_data;
             
-            int mudou_foco = (active_node != last_active_node);
-            int precisa_refresh = __sync_lock_test_and_set(&active_tty->refresh_needed, 0);
+            mudou_foco = (active_node != last_active_node);
+            precisa_refresh = __sync_lock_test_and_set(&active_tty->refresh_needed, 0);
             if (precisa_refresh || mudou_foco) {
                 tty_flush_to_screen(active_tty);
                 // Garante a atualização imediata do ponteiro para travar loops infinitos
@@ -114,7 +117,7 @@ void tty_emulator_thread(void* arg) {
         }
 
         /* 3. POLÍTICA DE COOPERAÇÃO OBRIGATÓRIA (FIM DO CONGELAMENTO) */
-        if (!teve_dados) {
+        if (!teve_dados && !precisa_refresh && !mudou_foco) {
             /* 
              * CORREÇÃO CRÍTICA: Não podes usar apenas "pause". Tens de ceder o CPU!
              * Use a função de yield (ex: scheduler_yield(), thread_yield()).

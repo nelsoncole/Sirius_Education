@@ -569,11 +569,12 @@ setup_paging(
 
         /*
          * ATIVAÇÃO DO WRITE-COMBINING (PAT)
-         * PWT = 1, PCD = 1 -> Seleciona a entrada PAT3 na arquitetura x86.
-         * Por padrão, a grande maioria dos firmwares configura PAT3 como WC.
+         * PWT = 0, PCD = 0 -> Seleciona PAT0 (Write-Back por padrão).
+         * O tipo final efetivo será determinado pelo MTRR (Write-Combining).
          */
-        pt[pt_entry].pwt = 1; // Bit 3 da entrada da PT
-        pt[pt_entry].pcd = 1; // Bit 4 da entrada da PT
+        pt[pt_entry].pwt = 0; // Bit 3 da entrada da PT
+        pt[pt_entry].pcd = 0; // Bit 4 da entrada da PT
+
 
         /*
          * Framebuffer é memória de dados.

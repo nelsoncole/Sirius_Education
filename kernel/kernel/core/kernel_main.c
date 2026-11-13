@@ -50,6 +50,7 @@
 #include <kernel/kernel/net/net.h>
 #include <kernel/drivers/net/net_core.h>
 #include <kernel/fs/dev/vfs_mouse.h>
+#include <kernel/arch/x86_64/cpu/mtrr.h>
 
 extern void test(void* arg);
 extern void tty_emulator_thread(void* arg);
@@ -171,6 +172,16 @@ void kernel_main(BOOT_INFO *boot_info)
      */
     kprintf("[INIT] Inicializando a Tabela de Descritores de Interrupcao (IDT)...\n");
     idt_init();
+
+    /* Inicialização do MTRR e Aceleração de Vídeo */
+    mtrr_init_bsp();
+    uint64_t fb_phys = boot_info->Graphics.FrameBufferBase;
+    uint64_t fb_size = boot_info->Graphics.FrameBufferSize;
+    
+    int slot = mtrr_add_region(fb_phys, fb_size, MTRR_TYPE_WRITECOMBINING);
+    if (slot < 0) {
+        kprintf("[MTRR] Aviso: Nao foi possivel mapear WC (Erro: %d)\n", slot);
+    }
 
     // 7. ACPI (Faz o parse das tabelas RSDP, XSDT e localiza a tabela MADT)
     acpi_init(boot_info);

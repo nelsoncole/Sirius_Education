@@ -30,7 +30,7 @@ void cpu_idle(void)
      * Ativa as interrupções locais para permitir que o núcleo
      * acorde do estado de suspensão quando um evento disparar.
      */
-    __asm__ volatile("sti");
+    __asm__ __volatile__("sti");
 
     for (;;)
     {
@@ -38,6 +38,6 @@ void cpu_idle(void)
          * Coloca o processador em estado de baixo consumo (Halt).
          * O núcleo dorme até à próxima interrupção (ex: tique do LAPIC).
          */
-        __asm__ volatile("hlt");
+        __asm__ __volatile__("hlt");
     }
 }

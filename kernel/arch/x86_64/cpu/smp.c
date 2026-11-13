@@ -28,6 +28,7 @@
 #include <kernel/klib.h>
 #include <kernel/kernel/sched/scheduler.h>
 #include <kernel/kernel/syscall/syscall.h>
+#include <kernel/arch/x86_64/cpu/mtrr.h>
 
 // Endereço físico padrão de 16 bits exigido pela arquitetura para o Boot dos APs
 #define TRAMPOLINE_PHYS_ADDRESS 0x8000UL
@@ -62,6 +63,8 @@ void segment_ap_main(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top)
 
     // 2. Carrega a tabela global de interrupções neste núcleo físico
     __asm__ __volatile__("lidt %0" : : "m"(g_idtr));
+
+    mtrr_init_ap();
 
     // 3. Inicializa e limpa o controlador Local APIC desta thread
     lapic_init();

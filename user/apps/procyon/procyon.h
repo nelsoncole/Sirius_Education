@@ -17,5 +17,7 @@
 #include "ui/include/progressbar.h"
 #include "ui/include/painel.h"
 #include "ui/include/combobox.h"
+#include "ui/include/editbox.h"
+#include "ui/include/gridview.h"
 
 #endif

@@ -53,4 +53,6 @@ void draw_text_cached(font_cache_t *font_cache, unsigned int* buffer, int buf_w,
 void draw_text_cached_rtl(font_cache_t *font_cache, unsigned int* buffer, int buf_w, int buf_h,
                           const char* text, int x, int y, int max_width, unsigned int color);
 
+int text_get_string_width(const stbtt_fontinfo *font, float font_size, const char *text, int cursor_pos);
+
 #endif
