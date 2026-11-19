@@ -46,6 +46,13 @@ typedef enum {
     PROCESS_DEAD
 } process_state_t;
 
+// Estrutura auxiliar
+typedef struct process_thread_node {
+    thread_t *thread;
+    struct process_thread_node *next;
+} process_thread_node_t;
+
+
 typedef struct process {
     pid_t pid;                      /* Identificador único do processo (PID) */
     pid_t ppid;                     /* ID do processo pai (Parent PID) */
@@ -65,7 +72,12 @@ typedef struct process {
 
     struct process* parent;         /* Ponteiro para o processo pai */
     thread_t* main_thread;          /* Ponteiro para a thread principal do processo */
+
+    /* Gestão das threads pertencentes ao processo */
+    process_thread_node_t *threads_head;
+    process_thread_node_t *threads_tail;
     uint32_t thread_count;
+    spinlock_t thread_lock;
 
      /*
      * TABELA DE FDs (Para Sockets, Pipes e Ficheiros Virtuais) 
@@ -153,5 +165,10 @@ void process_list_spinlock_release(unsigned long flags);
 void process_list_insert(process_t* proc);
 void process_list_remove(process_t* proc);
 process_t* process_find_by_pid(pid_t pid);
+
+void process_add_thread(process_t *process, thread_t *thread);
+void process_remove_thread(process_t *process, thread_t *thread);
+bool process_has_thread(process_t *process, thread_t *thread, spinlock_t *lock);
+thread_t * get_process_thread(process_t *process, uint64_t tid);
 
 #endif /* PROCESS_H */

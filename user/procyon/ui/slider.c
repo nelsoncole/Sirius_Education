@@ -37,7 +37,7 @@ int draw_slider(component_t* c, window_t* win) {
     return 1;
 }
 
-void slider_event(component_t* c, event_t ev) {
+int slider_event(component_t* c, event_t ev) {
     slider_data_t* s = (slider_data_t*)c->data;
 
     int cy = c->y + c->h / 2;
@@ -85,10 +85,12 @@ void slider_event(component_t* c, event_t ev) {
         default:
             break;
     }
+
+    return c->render;
 }
 component_t* create_slider(ui_context_t* ctx, int x, int y, int w, int h,
                            int min, int max, int value, void (*on_change)(int)) {
-    if (ctx->count >= 64) return NULL;
+    if (!ctx)return NULL;
 
     component_t* comp = malloc(sizeof(component_t));
     memset(comp, 0, sizeof(component_t));
@@ -107,6 +109,6 @@ component_t* create_slider(ui_context_t* ctx, int x, int y, int w, int h,
     comp->data = s;
 
     comp->ctx = ctx;
-    ctx->components[ctx->count++] = comp;
+    ui_add_component(ctx, comp);
     return comp;
 }

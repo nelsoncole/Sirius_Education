@@ -39,6 +39,8 @@ static thread_t* thread_create_common(void (*entry_point)(void*), void* arg, voi
     /* Limpa a estrutura TCB */
     memset(thread, 0, sizeof(thread_t));
 
+    thread->kernel_stack_free = kernel_stack_raw;
+
     /* O topo absoluto da pilha limpa (Será usado pelo Syscall e TSS) */
     uint64_t absolute_top = (uint64_t)kernel_stack_raw + 8192;
 
@@ -76,7 +78,7 @@ static thread_t* thread_create_common(void (*entry_point)(void*), void* arg, voi
     thread->chan        = NULL;
     thread->next        = NULL;
 
-    proc->thread_count++;
+    process_add_thread(proc, thread);
 
     return thread;
 }
@@ -94,6 +96,8 @@ thread_t* thread_create_init(uint32_t cpu_id)
     }
 
     memset(thread, 0, sizeof(thread_t));
+
+    thread->kernel_stack_free = kernel_stack_raw;
 
     uint64_t absolute_top = (uint64_t)kernel_stack_raw + 8192;
 
@@ -161,4 +165,44 @@ thread_t* user_thread_create(void (*entry_point)(void*), void* arg, void* user_s
     }
 
     return thread;
+}
+
+/*
+ * ============================================================================
+ * Destrói uma thread e liberta os recursos associados.
+ * Deve ser chamada por uma thread diferente da thread a destruir.
+ * ============================================================================
+ */
+bool thread_destroy(process_t *proc, thread_t *thread)
+{
+    if (!thread)
+        return false;
+
+    if (thread->state != THREAD_DEAD)
+        return false;
+
+    cpu_data_block_t *cpu = get_cpu_data_block(thread->cpu_id);
+
+    if (cpu && cpu->current_thread == thread)
+        return false;
+
+    /* Remove da runqueue, caso ainda esteja presente. */
+    if (cpu)
+        remove_thread(cpu, thread);
+
+    /* Remove da lista interna do processo. */
+    if (proc && process_has_thread(proc, thread, &proc->thread_lock))
+        process_remove_thread(proc, thread);
+
+    /* Liberta a pilha de kernel. */
+    if (thread->kernel_stack_free)
+    {
+        kfree(thread->kernel_stack_free);
+        thread->kernel_stack_free = NULL;
+    }
+
+    /* Liberta a estrutura TCB. */
+    kfree(thread);
+
+    return true;
 }

@@ -1,4 +1,3 @@
-
 /*
  * ============================================================================
  *        Project: Sirius_Education
@@ -22,6 +21,10 @@
 #include <kernel/kernel/sched/process.h>
 #include <kernel/kernel/sched/clone.h>
 #include <kernel/kernel/sched/pthread.h>
+#include <kernel/arch/x86_64/kapi/irq.h>
+#include <kernel/kernel/sched/wait.h>
+#include <kernel/kernel/sched/wakeup.h>
+#include <kernel/kernel/core/spinlock.h>
 
 /**
  * sys_pthread - Invoca o clone para criar uma nova thread no processo atual.
@@ -39,4 +42,76 @@ pid_t pthread(stack_frame_t* frame)
     frame->rsi = saved_rsi;
 
     return result_tid;
+}
+
+
+void pthread_join(thread_t *target, void **retval)
+{
+    if (!target)
+        return;
+
+    cpu_data_block_t *cpu = get_current_cpu();
+    thread_t *current = cpu->current_thread;
+
+    if (!current || current == target)
+        return;
+
+    process_t *process = current->owner;
+
+    spin_lock(&process->thread_lock);
+
+    if (!process_has_thread(process, target, NULL)) {
+        spin_unlock(&process->thread_lock);
+        return;
+    }
+
+    /*
+     * Enquanto a thread não terminar:
+     * bloquear a thread atual e aguardar a sua conclusão.
+     */
+    while (!target->exited)
+        wait(target, &process->thread_lock);
+
+    /*
+     * Recuperar o retval.
+     */
+
+    if (retval)
+        *retval = target->retval;
+
+    /*
+     * Marcar como recolhida.
+     */
+    target->joined = true;
+
+    spin_unlock(&process->thread_lock);
+}
+
+void pthread_exit(thread_t *thread, void *retval)
+{
+    if (!thread)
+        return;
+
+    spin_lock(&thread->owner->thread_lock);
+
+    cpu_data_block_t *cpu = get_current_cpu();
+
+    thread->retval = retval;
+    thread->exited = true;
+    thread->state = THREAD_DEAD;
+
+    enqueue_dead_thread(cpu, thread);
+
+    /*
+     * Acordar a thread que está à espera através de pthread_join().
+     */
+
+    wakeup(thread);
+    
+    spin_unlock(&thread->owner->thread_lock);
+
+    schedule();
+
+    for (;;)
+        __asm__ __volatile__("sti; hlt" ::: "memory");
 }

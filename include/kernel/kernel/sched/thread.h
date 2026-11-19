@@ -43,10 +43,11 @@ typedef enum {
  * ----------------------------------------------------------------------------
  */
 typedef struct thread {
-    uint32_t tid;               // Identificador único da Thread (Thread ID)
+    uint64_t tid;               // Identificador único da Thread (Thread ID)
     void* context_frame;         // Ponteiro para o topo do stack de kernel (salvaguarda de contexto)
     void* context_frame_top;
     void* kernel_stack_top;
+    void* kernel_stack_free;
     thread_state_t state;       // Estado atual de execução
     uint32_t cpu_id;            // ID do CPU associado (ou fixado por afinidade)
 
@@ -57,6 +58,11 @@ typedef struct thread {
     struct process* owner;      // Processo ao qual esta thread pertence
     
     struct thread* next;        // Ponteiro para a próxima thread na fila (Runqueue)
+
+    // para pthread
+    void    *retval;    // valor devolvido pela thread
+    int     exited;     // indica que a thread terminou
+    int     joined;     // indica que outra thread já recolheu o resultado
     
     /* 
      * Buffer de Contexto Estendido (FPU, SSE/XMM e AVX2/YMM).
@@ -88,5 +94,7 @@ thread_t* thread_create(void (*entry_point)(void*), void* arg, uint32_t cpu_id, 
  * Cria e configura uma nova thread de Utilizador (Ring 3), com contexto e isolamento adequados.
  */
 thread_t* user_thread_create(void (*entry_point)(void*), void* arg, void* user_stack_top, uint32_t cpu_id, struct process* proc);
+
+bool thread_destroy(struct process *proc, thread_t *thread);
 
 #endif /* THREAD_H */

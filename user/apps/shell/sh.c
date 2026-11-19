@@ -181,7 +181,7 @@ void runcmd(struct cmd *cmd)
     else 
     {
         // Força a pesquisa unificada dentro da pasta bin do sistema
-        snprintf(caminho_absoluto, MAX_PATH, "/mnt/hd0/apps/bin/%s", ecmd->argv[0]);
+        snprintf(caminho_absoluto, MAX_PATH, "/mnt/hd0/usr/bin/%s", ecmd->argv[0]);
     }
 
     // Substitui apenas o ponteiro do comando executável preservando os argumentos seguintes

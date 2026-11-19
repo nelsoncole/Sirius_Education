@@ -1,19 +1,27 @@
 #include "pixel.h"
 
-unsigned int blend_color(unsigned int bg, unsigned int fg, unsigned char alpha) {
-    unsigned char bg_r = (bg >> 16) & 0xFF;
-    unsigned char bg_g = (bg >> 8) & 0xFF;
-    unsigned char bg_b = bg & 0xFF;
+unsigned int blend_color(unsigned int bg, unsigned int fg, unsigned char alpha)
+{
+    unsigned int bg_a = (bg >> 24) & 0xFF;
 
-    unsigned char fg_r = (fg >> 16) & 0xFF;
-    unsigned char fg_g = (fg >> 8) & 0xFF;
-    unsigned char fg_b = fg & 0xFF;
+    unsigned int bg_r = (bg >> 16) & 0xFF;
+    unsigned int bg_g = (bg >> 8) & 0xFF;
+    unsigned int bg_b = bg & 0xFF;
 
-    unsigned char r = (fg_r * alpha + bg_r * (255 - alpha)) / 255;
-    unsigned char g = (fg_g * alpha + bg_g * (255 - alpha)) / 255;
-    unsigned char b = (fg_b * alpha + bg_b * (255 - alpha)) / 255;
+    unsigned int fg_r = (fg >> 16) & 0xFF;
+    unsigned int fg_g = (fg >> 8) & 0xFF;
+    unsigned int fg_b = fg & 0xFF;
 
-    return (r << 16) | (g << 8) | b;
+    unsigned int out_a = alpha + (bg_a * (255 - alpha) + 127) / 255;
+
+    if (out_a == 0)
+        return 0;
+
+    unsigned int r = (fg_r * alpha + bg_r * bg_a * (255 - alpha) / 255) / out_a;
+    unsigned int g = (fg_g * alpha + bg_g * bg_a * (255 - alpha) / 255) / out_a;
+    unsigned int b = (fg_b * alpha + bg_b * bg_a * (255 - alpha) / 255) / out_a;
+
+    return (out_a << 24) | (r << 16) | (g << 8) | b;
 }
 
 unsigned int alpha_blend(unsigned int src, unsigned int dst)

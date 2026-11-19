@@ -4,11 +4,22 @@
 #include "components.h"
 #include "icon.h"
 
+
+typedef enum {
+    ICON_LABEL_BOTTOM,
+    ICON_LABEL_LEFT,
+    ICON_LABEL_RIGHT,
+    ICON_LABEL_TOP,
+    ICON_CENTER
+} iconbutton_layout_t;
+
 typedef struct {
     char label[256];          // Texto do botão
     ui_icon_t icon;           // Ícone associado
     int pressed;              // Estado pressionado
     int hovered;              // Estado hover
+
+    iconbutton_layout_t layout;
 
     // Configuração visual
     int transparent_bg;       // 1 = fundo transparente, 0 = cor sólida
@@ -25,11 +36,11 @@ typedef struct {
     int spacing;              // Espaço entre ícone e label
 
     volatile int spinlock;
-    // Callback
-    void (*on_click)();       // Função chamada no clique
+    // Callback      
+    void (*on_click)(component_t *comp); // Função chamada no clique
 } iconbutton_data_t;
 
 component_t* create_iconbutton(ui_context_t* ctx, int x, int y, int w, int h,
-    const char* label, const char* icon_path, int icon_size, void (*on_click)());
+    const char* label, const char* icon_path, int icon_size, void (*on_click)(component_t *comp));
 
 #endif

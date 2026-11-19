@@ -24,7 +24,7 @@
  *   Created Date: 01/11/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 02/11/2026
+ *  Modified Date: 18/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -43,6 +43,8 @@
 
 #include <procyon/procyon.h>
 
+#define KBD_MOD_RELEASE  (1 << 7) /* Tecla solta (Key Up) */
+
 struct tty_user {
     uint64_t user_buffer;
     uint64_t size;
@@ -56,6 +58,10 @@ struct tty_user {
 
 struct tty_user *info;
 int tty;
+
+extern char scancode_to_ascii(int scancode, int mods);
+extern int scancode_to_key(int scancode, int extended);
+extern int scancode_is_especial(int scancode);
 
 extern void procyon_desktop_main(int info_width, int info_height);
 
@@ -72,7 +78,19 @@ typedef struct
 
 mouse_packet_t packet;
 
+
+typedef struct
+{
+    uint8_t  is_e0_extended;
+    uint8_t  mods;
+    uint8_t  scancode;
+} keyboard_packet_t;
+
+keyboard_packet_t kpacket;
+
 static pthread_t thread_mouse;
+static pthread_t thread_keyboard;
+
 void *thread_mouse_func(void *arg)
 {
     (void)arg;
@@ -107,13 +125,49 @@ void *thread_mouse_func(void *arg)
     }
 }
 
+void *thread_keyboard_func(void *arg)
+{
+    (void)arg;
+    int keyboard = open("/dev/event0", O_RDONLY);
+
+    while (1)
+    {
+        int ret = read(keyboard, &kpacket, sizeof(kpacket));
+
+        if (ret == sizeof(kpacket))
+        {
+            uint8_t scancode = kpacket.scancode;
+            if (scancode > 127)
+                continue;
+
+            /* FILTRO DE EVENTOS: Se a tecla foi libertada (Key Up / Release) */
+            if (kpacket.mods & KBD_MOD_RELEASE)
+            {
+                handle_key_event(scancode, kpacket.mods, 2);
+                continue;
+            }
+
+            if(kpacket.is_e0_extended) {
+                char key = scancode_to_key(scancode, 1);
+                handle_key_event(key, kpacket.mods, 1);
+            }
+            else if(scancode_is_especial(scancode)){
+                char key = scancode_to_key(scancode, 0);
+                handle_key_event(key, kpacket.mods, 1);
+            }
+            else {
+                char key = scancode_to_ascii(scancode, kpacket.mods);
+                if(key) handle_key_event(key, kpacket.mods, 0);
+            }
+            
+        }
+    }
+}
+
 int main(int argc, char *argv[])
 {
     (void)argc;
     (void)argv;
-
-    //extern int __sys_active_tty();
-    //__sys_active_tty();
 
     memcpy_init();
 
@@ -185,6 +239,7 @@ int main(int argc, char *argv[])
     mouse_cursor_init();
     
     pthread_create(&thread_mouse, NULL, thread_mouse_func, NULL);
+    pthread_create(&thread_keyboard, NULL, thread_keyboard_func, NULL);
 
     pid_t pid_desktop = fork();
 

@@ -24,14 +24,14 @@ int draw_button(component_t* c, window_t* win) {
             c->font_size, win);
     }
     
-    c->render--;
+    c->render = 0;
 
     ui_unlock(&win->lock);
 
     return 1;
 }
 
-void button_event(component_t* c, event_t ev) {
+int button_event(component_t* c, event_t ev) {
     button_data_t* b = (button_data_t*) c->data;
 
     int inside = (ev.mouse.x >= c->x && ev.mouse.x < c->x + c->w &&
@@ -70,17 +70,19 @@ void button_event(component_t* c, event_t ev) {
                 c->render = 1;
                 c->ctx->window->invalid = 1;
                 if (inside && b->on_click) {
-                    b->on_click(); // dispara callback
+                    b->on_click(c); // dispara callback
                 }
             }
             break;
 		default:
 			break;
     }
+
+    return c->render;
 }
 
-component_t* create_button(ui_context_t* ctx, int x, int y, int w, int h, const char* label, void (*on_click)()) {
-    if (ctx->count >= 64) return NULL;
+component_t* create_button(ui_context_t* ctx, int x, int y, int w, int h, const char* label, void (*on_click)(component_t *comp)) {
+    if (!ctx)return NULL;
 
     component_t* comp = malloc(sizeof(component_t));
     memset(comp, 0, sizeof(component_t));
@@ -100,7 +102,7 @@ component_t* create_button(ui_context_t* ctx, int x, int y, int w, int h, const 
 	comp->border_color = 0x222222;
 	comp->render = 1;
 
-    button_data_t* btn = malloc(sizeof(button_data_t));
+    button_data_t* btn = calloc(1, sizeof(button_data_t));
     if(label) {
         strncpy(btn->label, label, sizeof(btn->label));
     }else {
@@ -108,6 +110,7 @@ component_t* create_button(ui_context_t* ctx, int x, int y, int w, int h, const 
     }
     
     btn->pressed = 0;
+    btn->hovered = 0;
     btn->bg_normal = 0xFFDDDDDD;     // cor normal
     btn->bg_hover = 0xFFEEEEEE; // cor hover (mais clara)
     btn->bg_pressed = 0xFFAAAAAA; // cor de clique
@@ -117,7 +120,7 @@ component_t* create_button(ui_context_t* ctx, int x, int y, int w, int h, const 
     comp->data = btn;
 
     comp->ctx = ctx;
-    ctx->components[ctx->count++] = comp;
+    ui_add_component(ctx, comp);
     return comp;
 }
 

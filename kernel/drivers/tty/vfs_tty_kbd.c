@@ -127,7 +127,7 @@ void tty_keyboard_bridge_thread(void* arg) {
             if (tty_focado)
             {
                 // Obtém diretamente a PTY que detém o foco lógico em background
-                struct tty_device *pty_ativa = pty_vfs_get_active_engine();
+                struct tty_device *pty_ativa = tty_focado->pty_foco; //pty_vfs_get_active_engine();
 
                 /* EXECUÇÃO DO DESVIO DIRETO PARA A PTY ATIVA */
                 if (pty_ativa)
@@ -140,35 +140,30 @@ void tty_keyboard_bridge_thread(void* arg) {
 
                     // 2. Se o eco local estiver ativo na PTY, replica o caractere na tty0 fixa de texto
                     // para que o utilizador veja no ecrã F1 o comando a ser digitado
-                    if (pty_ativa->c_lflag & TTY_ECHO)
+                    if (pty_ativa->c_lflag & TTY_ECHO && tty_focado->c_lflag & TTY_ECHO)
                     {
-                        vfs_node_t *tty0_node = tty_vfs_get_node_by_name("tty0");
-                        if (tty0_node && tty0_node->private_data)
-                        {
-                            struct tty_device *tty0_dev = (struct tty_device *)tty0_node->private_data;
-
-                            tty_write_to_in_queue(tty0_dev, &c_buf, 1);
+                            tty_write_to_in_queue(tty_focado, &c_buf, 1);
 
                             char echo_c;
-                            while (tty_pop_output(tty0_dev, &echo_c))
+                            while (tty_pop_output(tty_focado, &echo_c))
                             {
-                                tty_putc_backbuffer(tty0_dev, echo_c);
+                                tty_putc_backbuffer(tty_focado, echo_c);
                             }
-                        }
                     }
-
-                    pty_vfs_get_active_engine_close(pty_ativa); 
                 }
                 else
                 {
                     // Se nenhuma PTY estiver ativa no sistema, mantém o comportamento original do hardware
-                    char c_buf = ascii_char;
-                    tty_write_to_in_queue(tty_focado, &c_buf, 1);
+                    vfs_node_t *tty0_node = tty_vfs_get_node_by_name("tty0");
+                    if(tty0_node && tty0_node->private_data && (struct tty_device*)tty0_node->private_data == tty_focado) {
+                        char c_buf = ascii_char;
+                        tty_write_to_in_queue(tty_focado, &c_buf, 1);
 
-                    char echo_c;
-                    while (tty_pop_output(tty_focado, &echo_c))
-                    {
-                        tty_putc_backbuffer(tty_focado, echo_c);
+                        char echo_c;
+                        while (tty_pop_output(tty_focado, &echo_c))
+                        {
+                            tty_putc_backbuffer(tty_focado, echo_c);
+                        }
                     }
                 }
             }

@@ -21,7 +21,9 @@
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/drivers/tty/tty.h>
 #include <kernel/fs/dev/vfs_tty.h>
+#include <kernel/fs/dev/vfs_pty.h>
 #include <kernel/klib.h>
+#include <kernel/kernel/sched/process.h>
 
 /* Protótipos das operações em conformidade estrita com vfs_operations_t */
 static int tfs_tty_open(vfs_node_t* node, uint32_t flags);
@@ -117,7 +119,43 @@ static int tfs_tty_ioctl(vfs_node_t* node, uint32_t cmd, unsigned long arg) {
         return 0; 
 
     }
+    else if(cmd ==  TIOCSFOCUS) {
 
+        process_t *proc = get_current_process();
+        if (!proc || *(int*)arg < 0 ||  *(int*)arg >= MAX_FILES_PER_PROCESS)
+            return -1;
+
+        vfs_file_t *file = proc->file_descriptor_table[*(int*)arg];
+        if (!file || !file->node)
+            return -1;
+
+        vfs_node_t *n = (vfs_node_t *)file->node;
+
+        if (!n && n->flags != VFS_CHAR_DEV)
+            return -1;
+    
+        pty_pair_t* pair = (pty_pair_t*)n->private_data;
+        struct tty_device *tty_foco = (struct tty_device*)pair->replica_tty;
+        return tty_set_keyboard_focus(tty, tty_foco);   
+    }
+    else if(cmd ==  TIOCGFOCUS) {
+
+        process_t *proc = get_current_process();
+        if (!proc || *(int*)arg < 0 || *(int*)arg >= MAX_FILES_PER_PROCESS)
+            return -1;
+
+        vfs_file_t *file = proc->file_descriptor_table[*(int*)arg];
+        if (!file || !file->node)
+            return -1;
+
+        vfs_node_t *n = (vfs_node_t *)file->node;
+        if (!n && n->flags != VFS_CHAR_DEV)
+            return -1;
+
+        pty_pair_t* pair = (pty_pair_t*)n->private_data;
+        struct tty_device *tty_foco = (struct tty_device*)pair->replica_tty;
+        return tty_get_keyboard_focus(tty, tty_foco);  
+    }
 
     return -1; // Comando não implementado/suportado
 }
@@ -140,6 +178,8 @@ static int tty_vfs_setup_nodestruct(vfs_node_t* node) {
     tty->line_start = tty->raw_count = tty->lines_available = 0;
     tty->c_lflag = TTY_ICANON | TTY_ECHO;
     spin_lock_init(&tty->lock);
+    spin_lock_init(&tty->user_lock);
+    spin_lock_init(&tty->video_mutex);
 
     // Vincula a instância ao catálogo global do driver físico usando a posição do loop (inode - 1000)
     tty_register_driver_instance(g_tty_inode_counter - 1000, tty);
@@ -225,7 +265,8 @@ void tty_vfs_init(vfs_node_t* dev_node) {
      * tty3 -> Modo gráfico 
      * 
      * */
-    g_active_tty_index = 2;
+    tty_vfs_set_active_index(2); // Atualiza o VFS do Core
+    tty_set_active_id(2);        // Atualiza a tabela do driver físico
 }
 
 /**

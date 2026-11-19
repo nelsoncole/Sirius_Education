@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  * 
  *    Modified By: Nelson Cole / AI Collaborator
- *  Modified Date: 15/09/2026
+ *  Modified Date: 19/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -98,13 +98,13 @@ enum {
     SYS_CHDIR,
     SYS_GETCWD,
 
-    SYS_ACTIVE_TTY,
-
     SYS_PROCESS_SPAWN,
 
     SYS_PTHREAD_CREATE,
     SYS_PTHREAD_EXIT,
     SYS_PTHREAD_JOIN,
+
+    SYS_THREAD_POINTER,
 
     SYS_UWAIT,
     SYS_UWAKEUP,
@@ -210,8 +210,6 @@ uint64_t sys_kmod_print(void);
 uint64_t sys_chdir(const char *path);
 uint64_t sys_getcwd(char *buf, size_t size);
 
-uint64_t sys_active_tty();
-
 uint64_t sys_process_spawn(pid_t * pid, const char *path,
                 const void *file_actions,
                 const void *attrp,
@@ -220,6 +218,8 @@ uint64_t sys_process_spawn(pid_t * pid, const char *path,
 uint64_t sys_pthread_create(uint64_t start_routine, uint64_t stack);
 uint64_t sys_pthread_exit(void *retval);
 uint64_t sys_pthread_join(void* thread, void **retval);
+
+uint64_t sys_thread_pointer(uint64_t tid);
 
 uint64_t sys_uwait(void *chan);
 uint64_t sys_uwakeup(void *chan);

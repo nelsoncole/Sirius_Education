@@ -23,10 +23,17 @@ typedef enum {
     EVENT_CLIENT_MESSAGE
 } event_type_t;
 
-#define KEY_BACKSPACE  8   // '\b' = 0x08
-#define KEY_TAB        9   // '\t' = 0x09
-#define KEY_ENTER      10  // '\n' = 0x0A
-#define KEY_ESCAPE     27  // 0x1B
+#define KEY_BACKSPACE   8   // '\b' = 0x08
+#define KEY_TAB         9   // '\t' = 0x09
+#define KEY_ENTER       10  // '\n' = 0x0A
+#define KEY_ESCAPE      27  // 0x1B
+#define KEY_CTRL        0           
+#define KEY_LSHIFT      0
+#define KEY_RSHIFT      0
+#define KEY_CAPSLOCK    0
+#define KEY_WIN         0
+#define KEY_LALT        0
+#define KEY_RALT        0
 
 // Estas não têm ASCII definido e costumam vir como códigos "estendidos"
 #define KEY_DELETE     127  // DEL (0x7F) é o código ASCII de delete
@@ -65,5 +72,6 @@ typedef struct {
 void push_event_to_window(window_t* win, event_t ev);
 event_t get_next_event_window(window_t* win);
 void handle_mouse_event(int delta_x, int delta_y, int buttons);
+void handle_key_event(int key, int mods, int type);
 
 #endif

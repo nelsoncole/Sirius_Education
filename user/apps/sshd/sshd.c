@@ -144,7 +144,7 @@ int main(int argc, char *argv[])
                         close(client_sock);
 
                         // Executa o interpretador de comandos nativo do Sirius OS
-                        char *sh_args[] = {"apps/bin/sh", NULL};
+                        char *sh_args[] = {"usr/bin/sh", NULL};
                         execve(sh_args[0], sh_args, NULL);
 
                         // Caso o execve falhe, encerra graciosamente

@@ -17,10 +17,10 @@ LD      := ld
 BASE_DIR    := ../../
 LIBC_DIR    := $(BASE_DIR)libc
 LIBC_INC    := $(LIBC_DIR)/include
-PROCYON_DIR  := $(BASE_DIR)procyon
-PROCYON_INC  := $(BASE_DIR)
+PROCYON_DIR := $(BASE_DIR)procyon
+PROCYON_INC := $(BASE_DIR)
 CRT0_DIR    := $(LIBC_DIR)/src/arch/x86_64
-SYSROOT_APP := $(BASE_DIR)../sysroot/apps/procyon.elf
+SYSROOT_APP := $(BASE_DIR)../sysroot/usr/app/procyon.elf
 LINKER_SCR  := $(BASE_DIR)libc/user_x86_64.ld
 
 # 3. Flags de Compilação para Espaço de Utilizador Isolado com TLSe
@@ -30,11 +30,8 @@ CFLAGS  += -I$(LIBC_INC) -I$(PROCYON_INC)
 # Flags do Linkeditor para gerar o executável final em Ring 3
 LDFLAGS := -m elf_x86_64 -nostdlib -T $(LINKER_SCR)
 
-# 4. Mapeamento de Ficheiros de Origem e Objetos
-PROCYON_SRC := procyon.c desktop.c
-
 CRT0    := $(CRT0_DIR)/crt0.o
-PROCYON_OBJ := procyon.o desktop.o
+PROCYON_OBJ := procyon.o keymap.o desktop.o app_loader.o
 
 # Biblioteca estática gerada pelo teu Makefile base
 LIBC_A   := $(LIBC_DIR)/libc.a

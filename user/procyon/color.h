@@ -11,6 +11,7 @@ typedef unsigned int rgb_t;
 )
 
 unsigned int rgb(unsigned char r, unsigned char g, unsigned char b);
+unsigned int argb(unsigned char a, unsigned char r, unsigned char g, unsigned char b);
 unsigned int rgba(unsigned char r, unsigned char g, unsigned char b, unsigned char a);
 
 #endif

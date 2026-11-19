@@ -12,6 +12,10 @@
 
 #define WINDOW_FLAG_TRANSPARENT  0x01
 
+#define WINDOW_TYPE_NORMAL     1
+#define WINDOW_TYPE_OVERLAY    0
+#define WINDOW_TYPE_COMPONENT  2
+
 typedef struct {
     int x, y;
     int width, height;
@@ -86,11 +90,13 @@ static inline void window_unlock(volatile int* lock) {
 
 window_t* window_create(int x, int y, int width, int height, char *title, unsigned int bg_color, unsigned int fg_color);
 window_t* overlay_window_create(int x, int y, int width, int height, unsigned int bg_color, unsigned int fg_color);
+window_t *component_window_create(window_t *parent, int width, int height, unsigned int bg_color, unsigned int fg_color);
 void window_destroy(window_t* win);
+void component_window_destroy(window_t *win);
+void window_copy_buffer(window_t *dst, window_t *src, size_t offset, int width, int height, int x, int y);
 window_t* get_focused_window();
 void window_update_focus(window_t* win, int focused);
 void window_handle_mouse(window_t* win, int layer, int delta_x, int delta_y, int buttons);
-void window_handle_key(window_t* win, int scancode);
 
 extern window_t* g_focused_window;
 

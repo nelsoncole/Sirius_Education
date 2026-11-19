@@ -19,6 +19,8 @@
 #include <kernel/kernel/sched/scheduler.h>
 #include <kernel/arch/x86_64/mm/vmm.h>
 #include <kernel/klib.h>
+#include <kernel/kernel/core/spinlock.h>
+#include <kernel/arch/x86_64/kapi/irq.h>
 
 /*
  * ----------------------------------------------------------------------------
@@ -26,13 +28,15 @@
  * ----------------------------------------------------------------------------
  */
 
-/**
+/*
  * Adiciona uma thread ao fim da fila de prontos de um CPU específico.
  */
-void enqueue_thread(cpu_data_block_t* cpu, thread_t* thread)
+void enqueue_thread(cpu_data_block_t *cpu, thread_t *thread)
 {
     if (!cpu || !thread)
         return;
+
+    unsigned long flags = spinlock_lock_irqsave(&cpu->scheduler_lock);
 
     thread->next = NULL;
 
@@ -47,17 +51,20 @@ void enqueue_thread(cpu_data_block_t* cpu, thread_t* thread)
         cpu->ready_queue_tail = thread;
     }
 
+    spinlock_unlock_irqrestore(&cpu->scheduler_lock, flags);
 }
 
-/**
+/*
  * Remove e retorna a próxima thread do início da fila de prontos de um CPU.
  */
-thread_t* dequeue_thread(cpu_data_block_t* cpu)
+thread_t *dequeue_thread(cpu_data_block_t *cpu)
 {
     if (!cpu)
         return NULL;
 
-    thread_t* thread = cpu->ready_queue_head;
+    unsigned long flags = spinlock_lock_irqsave(&cpu->scheduler_lock);
+
+    thread_t *thread = cpu->ready_queue_head;
 
     if (thread != NULL)
     {
@@ -69,16 +76,56 @@ thread_t* dequeue_thread(cpu_data_block_t* cpu)
         thread->next = NULL;
     }
 
+    spinlock_unlock_irqrestore(&cpu->scheduler_lock, flags);
+
     return thread;
 }
 
-/**
- * Insere uma thread terminada (THREAD_DEAD) na fila de descarte local do CPU.
+/*
+ * Remove uma thread específica da fila de prontos de um CPU.
  */
-void enqueue_dead_thread(cpu_data_block_t* cpu, thread_t* thread)
+void remove_thread(cpu_data_block_t *cpu, thread_t *thread)
 {
     if (!cpu || !thread)
         return;
+
+    unsigned long flags = spinlock_lock_irqsave(&cpu->scheduler_lock);
+
+    thread_t *current = cpu->ready_queue_head;
+    thread_t *previous = NULL;
+
+    while (current != NULL)
+    {
+        if (current == thread)
+        {
+            if (previous == NULL)
+                cpu->ready_queue_head = current->next;
+            else
+                previous->next = current->next;
+
+            if (cpu->ready_queue_tail == current)
+                cpu->ready_queue_tail = previous;
+
+            current->next = NULL;
+            break;
+        }
+
+        previous = current;
+        current = current->next;
+    }
+
+    spinlock_unlock_irqrestore(&cpu->scheduler_lock, flags);
+}
+
+/*
+ * Insere uma thread terminada (THREAD_DEAD) na fila de descarte local do CPU.
+ */
+void enqueue_dead_thread(cpu_data_block_t *cpu, thread_t *thread)
+{
+    if (!cpu || !thread)
+        return;
+
+    unsigned long flags = spinlock_lock_irqsave(&cpu->scheduler_lock);
 
     thread->next = NULL;
 
@@ -92,6 +139,8 @@ void enqueue_dead_thread(cpu_data_block_t* cpu, thread_t* thread)
         cpu->dead_queue_tail->next = thread;
         cpu->dead_queue_tail = thread;
     }
+
+    spinlock_unlock_irqrestore(&cpu->scheduler_lock, flags);
 }
 
 /**
@@ -262,13 +311,13 @@ void* task_switch(void* regs)
  */
 void schedule(void)
 {
-    __asm__ __volatile__("cli");
+    unsigned long flags = irq_save();
 
     cpu_data_block_t* cpu = get_current_cpu();
     thread_t* current = cpu->current_thread;
 
     if (!current) {
-        __asm__ __volatile__("sti");
+        irq_restore(flags);
         return;
     }
 
@@ -342,12 +391,13 @@ void schedule(void)
  */ 
 void scheduler_yield(void)
 {
-    __asm__ __volatile__("cli");
+    unsigned long flags = irq_save();
+
     cpu_data_block_t *cpu = get_current_cpu();
     thread_t *current = cpu->current_thread;
     if (!current || current->tid == 0 || current->state != THREAD_RUNNING)
     {
-        __asm__ __volatile__("sti");
+        irq_restore(flags);
         return;
     } /* Reaproveita o motor completo de desvio atómico */
     schedule();

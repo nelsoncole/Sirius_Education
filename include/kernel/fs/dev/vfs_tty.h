@@ -20,8 +20,10 @@
 
 #include <kernel/fs/vfs/vfs.h>
 
-#define TTY_IOCTL_VIDEO_WRITE  0x2001
-#define TTY_IOCTL_VIDEO_INFO   0x2002
+#define TTY_IOCTL_VIDEO_WRITE   0x2001
+#define TTY_IOCTL_VIDEO_INFO    0x2002
+#define TIOCSFOCUS              0X5401   // Solicita o foco do teclado
+#define TIOCGFOCUS              0X5402   // Consulta o foco
 
 /**
  * tty_vfs_init - Instancia os múltiplos terminais e vincula-os dentro do nó /dev.

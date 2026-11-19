@@ -7,16 +7,16 @@ LIBC_INC        	:= $(LIBC_DIR)/include
 CRT0_DIR        	:= $(LIBC_DIR)/src/arch/x86_64
 
 # DESTINOS NO SYSROOT
-SYSROOT_SH_APP 		:= $(BASE_DIR)../sysroot/apps/bin/sh
-SYSROOT_LS_APP 		:= $(BASE_DIR)../sysroot/apps/bin/ls
-SYSROOT_HELP_APP	:= $(BASE_DIR)../sysroot/apps/bin/help
-SYSROOT_MKDIR_APP 	:= $(BASE_DIR)../sysroot/apps/bin/mkdir
-SYSROOT_RENAME_APP 	:= $(BASE_DIR)../sysroot/apps/bin/rename
-SYSROOT_CP_APP 		:= $(BASE_DIR)../sysroot/apps/bin/cp
-SYSROOT_TOUCH_APP 	:= $(BASE_DIR)../sysroot/apps/bin/touch
-SYSROOT_RM_APP 		:= $(BASE_DIR)../sysroot/apps/bin/rm
-SYSROOT_CAT_APP 	:= $(BASE_DIR)../sysroot/apps/bin/cat
-SYSROOT_ECHO_APP 	:= $(BASE_DIR)../sysroot/apps/bin/echo
+SYSROOT_SH_APP 		:= $(BASE_DIR)../sysroot/usr/bin/sh
+SYSROOT_LS_APP 		:= $(BASE_DIR)../sysroot/usr/bin/ls
+SYSROOT_HELP_APP	:= $(BASE_DIR)../sysroot/usr/bin/help
+SYSROOT_MKDIR_APP 	:= $(BASE_DIR)../sysroot/usr/bin/mkdir
+SYSROOT_RENAME_APP 	:= $(BASE_DIR)../sysroot/usr/bin/rename
+SYSROOT_CP_APP 		:= $(BASE_DIR)../sysroot/usr/bin/cp
+SYSROOT_TOUCH_APP 	:= $(BASE_DIR)../sysroot/usr/bin/touch
+SYSROOT_RM_APP 		:= $(BASE_DIR)../sysroot/usr/bin/rm
+SYSROOT_CAT_APP 	:= $(BASE_DIR)../sysroot/usr/bin/cat
+SYSROOT_ECHO_APP 	:= $(BASE_DIR)../sysroot/usr/bin/echo
 
 LINKER_SCR  		:= $(BASE_DIR)libc/user_x86_64.ld
 

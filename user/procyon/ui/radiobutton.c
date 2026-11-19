@@ -30,14 +30,14 @@ int draw_radiobutton(component_t* c, window_t* win) {
     draw_text(c->font, rb->label, c->x + c->h + 6, ty,
               c->w - c->h - 6, c->fg, c->font_size, win);
 
-    c->render--;
+    c->render = 0;
 
     ui_unlock(&win->lock);
 
     return 1;
 }
 
-void radiobutton_event(component_t* c, event_t ev) {
+int radiobutton_event(component_t* c, event_t ev) {
     if (ev.type == EVENT_MOUSE_LEFT_DOWN) {
         radiobutton_data_t* rb = (radiobutton_data_t*)c->data;
         int inside = (ev.mouse.x >= c->x && ev.mouse.x < c->x + c->w &&
@@ -62,12 +62,14 @@ void radiobutton_event(component_t* c, event_t ev) {
             if (rb->on_select) rb->on_select(rb->group_id);
         }
     }
+
+    return c->render;
 }
 
 component_t* create_radiobutton(ui_context_t* ctx, int x, int y, int w, int h,
                                 const char* label, int group, int selected,
                                 void (*on_select)(int)) {
-    if (ctx->count >= 64) return NULL;
+    if (!ctx)return NULL;
 
     component_t* comp = malloc(sizeof(component_t));
     memset(comp, 0, sizeof(component_t));
@@ -93,6 +95,6 @@ component_t* create_radiobutton(ui_context_t* ctx, int x, int y, int w, int h,
     comp->data = rb;
 
     comp->ctx = ctx;
-    ctx->components[ctx->count++] = comp;
+    ui_add_component(ctx, comp);
     return comp;
 }

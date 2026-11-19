@@ -1,30 +1,18 @@
-/**
- *
- *  File Name: user_x86_64.ld
- *
- *  Sirius Education - x86_64 User Space Application Linker Script
- *
- */
-
-
 OUTPUT_FORMAT("elf64-x86-64")
 OUTPUT_ARCH(i386:x86-64)
 ENTRY(_start)
 
 PHDRS
 {
-    text   PT_LOAD FLAGS(5);
-    rodata PT_LOAD FLAGS(4);
-    data   PT_LOAD FLAGS(6);
+    text   PT_LOAD FLAGS(5); /* R + X */
+    rodata PT_LOAD FLAGS(4); /* R */
+    data   PT_LOAD FLAGS(6); /* R + W */
+    tls    PT_TLS  FLAGS(4); /* R (Necessário para errno e pthreads) */
 }
 
 SECTIONS
 {
-    . = 0x00400000;
-
-    . += 0x1000;
-
-    _start = .;
+    . = 0x00401000;
 
     /* Executable code */
     .text ALIGN(0x1000) :
@@ -68,9 +56,6 @@ SECTIONS
         *(.got.plt)
 
         *(.data.rel.ro .data.rel.ro.*)
-
-        . = ALIGN(0x1000);
-        _edata = .;
     } :data
 
     /* Constructor arrays */
@@ -96,7 +81,26 @@ SECTIONS
         KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*)))
         KEEP(*(.fini_array))
         __fini_array_end = .;
+
+        . = ALIGN(0x1000);
+        _edata = .;
     } :data
+
+    /* Thread-Local Storage (TLS) */
+    .tdata ALIGN(8) :
+    {
+        _tdata_start = .;
+        *(.tdata .tdata.*)
+        _tdata_end = .;
+    } :data :tls
+
+    .tbss ALIGN(8) (NOLOAD) :
+    {
+        _tbss_start = .;
+        *(.tbss .tbss.*)
+        *(.tcommon)
+        _tbss_end = .;
+    } :data :tls
 
     /* Uninitialized data */
     .bss ALIGN(0x1000) (NOLOAD) :
@@ -108,7 +112,6 @@ SECTIONS
         *(COMMON)
 
         . = ALIGN(0x1000);
-
         _ebss = .;
     } :data
 
@@ -119,7 +122,6 @@ SECTIONS
     __end = .;
     _end_of_image = .;
 
-    /* Discard unnecessary sections */
     /DISCARD/ :
     {
         *(.comment)

@@ -13,6 +13,8 @@ typedef struct pthread {
     void *return_value;    // valor passado por pthread_exit
     int detachstate;       // joinable ou detached
     unsigned long pid;
+    unsigned long tid;
+    unsigned long thread_pointer;
 } *pthread_t;
 
 // -----------------------------------------------------
@@ -24,6 +26,18 @@ typedef struct pthread_attr {
 } pthread_attr_t;
 
 typedef void *pthread_addr_t;
+
+typedef struct {
+    volatile int lock;
+} pthread_mutex_t;
+
+#define PTHREAD_MUTEX_INITIALIZER { 0 }
+
+int pthread_mutex_init(pthread_mutex_t *mutex, const void *attr);
+int pthread_mutex_lock(pthread_mutex_t *mutex);
+int pthread_mutex_trylock(pthread_mutex_t *mutex);
+int pthread_mutex_unlock(pthread_mutex_t *mutex);
+int pthread_mutex_destroy(pthread_mutex_t *mutex);
 
 // -----------------------------------------------------
 // Cria uma thread

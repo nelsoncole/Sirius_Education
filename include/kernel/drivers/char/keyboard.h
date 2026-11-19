@@ -53,6 +53,16 @@ typedef struct {
 #define KBD_BUFFER_SIZE 128
 
 /**
+ * Estrutura unificada de pacotes brutos de saida do teclado.
+ */
+typedef struct
+{
+    uint8_t  is_e0_extended;
+    uint8_t  mods;
+    uint8_t  scancode;
+} keyboard_packet_t;
+
+/**
  * Inicializa o controlador PS/2, limpa buffers residuais e prepara 
  * o subsistema para capturar caracteres.
  */
@@ -66,5 +76,8 @@ void keyboard_handler(void);
 
 /* Retorna o evento bruto de scancode de 16 bits */
 kbd_event_t keyboard_get_event(void);
+
+/* Interface pública para capturar o pacote tratado do buffer */
+int keyboard_get_packet(keyboard_packet_t *packet);
 
 #endif

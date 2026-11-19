@@ -42,6 +42,12 @@ syscall_entry_stub:
     push r14
     push r15
 
+    push rdi
+    push rsi
+    push rdx
+    push r8
+    push r9
+
     ; ====================================================================================================
     ; 2. CONVERSÃO DE ARGUMENTOS DE 64-BITS (CONVENÇÃO SYSTEM V ABI)
     ;
@@ -52,10 +58,9 @@ syscall_entry_stub:
     ; Alinhamento dinâmico seguro da Stack do Kernel para a chamada da função C
     mov rbp, rsp
     and rsp, ~0xF               ; Alinha a stack a 16 bytes
+    sub rsp, 16
+    mov [rsp], r9
 
-    ; Passagem do 6º argumento (A6) através do topo da stack conforme a ABI exige
-    push r9                     ; O 6º argumento fica agora na posição exata [rsp] para o call ler
-    
     ; Ajuste imediato dos registadores nos parâmetros de entrada da função C
     mov r9, r8                  ; 5º argumento: R8 (User)  -> R9  (5º Parâmetro do C)
     mov r8, r10                 ; 4º argumento: R10 (User) -> R8  (4º Parâmetro do C)
@@ -72,6 +77,13 @@ syscall_entry_stub:
     ; ============================================================================
     ; 3. RESTAURO DO CONTEXTO DE RING 3 (Ordem Inversa Estrita)
     ; ============================================================================
+    
+    pop r9
+    pop r8
+    pop rdx
+    pop rsi
+    pop rdi
+    
     pop r15
     pop r14
     pop r13

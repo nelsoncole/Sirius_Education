@@ -29,14 +29,14 @@ int draw_checkbox(component_t* c, window_t* win) {
     int y = c->y + ((c->h - c->font_size)/2);
     draw_text(c->font, cb->label, c->x + c->h + 6, y, c->w - c->h - 6, c->fg, c->font_size, win);
 
-    c->render--;
+    c->render = 0;
 
     ui_unlock(&win->lock);
 
     return 1;
 }
 
-void checkbox_event(component_t* c, event_t ev) {
+int checkbox_event(component_t* c, event_t ev) {
     checkbox_data_t* cb = (checkbox_data_t*)c->data;
 
     if (ev.type == EVENT_MOUSE_LEFT_DOWN) {
@@ -49,10 +49,11 @@ void checkbox_event(component_t* c, event_t ev) {
             if (cb->on_change) cb->on_change(cb->checked);
         }
     }
+    return c->render;
 }
 
 component_t* create_checkbox(ui_context_t* ctx, int x, int y, int w, int h, const char* label, int initial, void (*on_change)(int)) {
-    if (ctx->count >= 64) return NULL;
+    if (!ctx)return NULL;
 
     component_t* comp = malloc(sizeof(component_t));
     memset(comp, 0, sizeof(component_t));
@@ -79,6 +80,6 @@ component_t* create_checkbox(ui_context_t* ctx, int x, int y, int w, int h, cons
     comp->data = cb;
 
     comp->ctx = ctx;
-    ctx->components[ctx->count++] = comp;
+    ui_add_component(ctx, comp);
     return comp;
 }

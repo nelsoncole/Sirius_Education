@@ -46,6 +46,7 @@ struct tty_device {
     uint32_t c_lflag;
     spinlock_t lock;
     spinlock_t user_lock;
+    spinlock_t video_mutex;
 
     /* Campos para video de dedicado */
     uint32_t* video_buffer;     /* Ponteiro para o Backbuffer privado (Alocado via kmalloc) */
@@ -77,6 +78,8 @@ struct tty_device {
     /* Primitivas de Sincronização e Canais de Espera Passiva */
     void* read_wait;            /* Âncora de memória para threads leitoras (Réplica/Shell) */
     void* write_wait;           /* Âncora de memória para threads escritoras/controladoras (Mestre) */
+
+    struct tty_device* pty_foco;
 };
 
 struct tty_user {
@@ -123,6 +126,10 @@ void tty_set_active_id(uint32_t id);
  *                   Bate com o comportamento esperado por tfs_tty_open no teu VFS.
  */
 struct tty_device* tty_get_current(void);
+
+
+int tty_set_keyboard_focus(struct tty_device *tty, struct tty_device *tty_foco);
+int tty_get_keyboard_focus(struct tty_device *tty, struct tty_device *tty_foco);
 
 /* ============================================================================
  *                      Interface com o Emulador de Tela

@@ -77,6 +77,8 @@ typedef struct cpu_data_block {
     thread_t* idle_thread;      /* Thread de emergência/ociosa, executada quando não há tarefas na fila. */
     thread_t* fpu_owner_thread; /* Controla quem é o dono do FPU neste Core */
     
+    spinlock_t scheduler_lock;
+    
 } __attribute__((aligned(16))) cpu_data_block_t;
 
 /*

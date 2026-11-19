@@ -24,7 +24,7 @@ int draw_progressbar(component_t* c, window_t* win) {
                             pb->color, pb->color, 0, 4);
     }
 
-    c->render--;
+    c->render = 0;
 
     ui_unlock(&win->lock);
 
@@ -43,7 +43,7 @@ void progressbar_set_value(component_t* c, int v) {
 }
 
 component_t* create_progressbar(ui_context_t* ctx, int x, int y, int w, int h, int max) {
-    if (ctx->count >= 64) return NULL;
+    if (!ctx)return NULL;
 
     component_t* comp = malloc(sizeof(component_t));
     memset(comp, 0, sizeof(component_t));
@@ -67,6 +67,6 @@ component_t* create_progressbar(ui_context_t* ctx, int x, int y, int w, int h, i
     comp->data = pb;
 
     comp->ctx = ctx;
-    ctx->components[ctx->count++] = comp;
+    ui_add_component(ctx, comp);
     return comp;
 }

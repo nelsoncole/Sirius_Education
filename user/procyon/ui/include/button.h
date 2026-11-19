@@ -16,12 +16,13 @@ typedef struct {
     int border_radius;        // Arredondamento das bordas
     int border_thickness;     // Espessura da borda
     volatile int spinlock;
-    void (*on_click)();
+    // Callback      
+    void (*on_click)(component_t *comp); // Função chamada no clique
 } button_data_t;
 
 
 component_t* create_button(ui_context_t* ctx, int x, int y, int w, int h,
-    const char* label, void (*on_click)());
+    const char* label, void (*on_click)(component_t *comp));
     
 void button_set_label(component_t* c, const char* new_label);
 

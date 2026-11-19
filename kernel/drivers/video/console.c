@@ -101,11 +101,12 @@ void tty_emulator_thread(void* arg) {
             active_node = tty_vfs_get_node_by_index(0); // Fallback tty0
         }
         
+        struct tty_device* active_tty = (struct tty_device*)tty_get_current();
+        
         int mudou_foco = 0;
         int precisa_refresh = 0;
 
-        if (active_node && active_node->private_data) {
-            struct tty_device* active_tty = (struct tty_device*)active_node->private_data;
+        if (active_tty) {
             
             mudou_foco = (active_node != last_active_node);
             precisa_refresh = __sync_lock_test_and_set(&active_tty->refresh_needed, 0);

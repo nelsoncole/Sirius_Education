@@ -18,7 +18,7 @@ int draw_label(component_t* c, window_t* win) {
     // Texto alinhado à esquerda
     draw_text(c->font, l->text, c->x, c->y, c->w, c->fg, c->font_size, win);
 
-	c->render--;
+	c->render = 0;
 
     ui_unlock(&win->lock);
 
@@ -41,7 +41,7 @@ void label_set_text(component_t* c, const char* new_text) {
 }
 
 component_t* create_label(ui_context_t* ctx, int x, int y, int w, const char* text, unsigned int color) {
-    if (ctx->count >= 64) return NULL;
+    if (!ctx)return NULL;
 
     component_t* comp = malloc(sizeof(component_t));
     memset(comp, 0, sizeof(component_t));
@@ -65,6 +65,6 @@ component_t* create_label(ui_context_t* ctx, int x, int y, int w, const char* te
     comp->data = lbl;
 
     comp->ctx = ctx;
-    ctx->components[ctx->count++] = comp;
+    ui_add_component(ctx, comp);
     return comp;
 }

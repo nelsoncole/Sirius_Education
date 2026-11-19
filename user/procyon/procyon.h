@@ -24,5 +24,7 @@
 #include "ui/include/combobox.h"
 #include "ui/include/editbox.h"
 #include "ui/include/gridview.h"
+#include "ui/include/scroll.h"
+#include "ui/include/console.h"
 
 #endif

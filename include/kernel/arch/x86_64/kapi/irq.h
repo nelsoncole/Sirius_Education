@@ -63,4 +63,26 @@ void disable_irq(uint8_t irq_number);
 /* Registro de IRQ com suporte a MSI*/
 void kapi_register_irq_handler(pci_device_t *dev, void (*fuc)(void));
 
+static inline unsigned long irq_save(void)
+{
+    unsigned long flags;
+
+    __asm__ __volatile__(
+        "pushfq\n\t"
+        "popq %0\n\t"
+        "cli"
+        : "=r"(flags)
+        :
+        : "memory"
+    );
+
+    return flags;
+}
+
+static inline void irq_restore(unsigned long flags)
+{
+    if (flags & (1UL << 9))
+        __asm__ __volatile__("sti" ::: "memory");
+}
+
 #endif /* _IRQ_H_ */

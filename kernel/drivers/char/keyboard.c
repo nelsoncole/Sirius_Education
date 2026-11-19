@@ -29,6 +29,12 @@
 #define SCAN_RSHIFT    0x36
 #define SCAN_CAPSLOCK  0x3A
 
+/* Buffer circular de pacotes brutos para eventX*/
+static void* g_keyboard_read_wait = NULL;
+static keyboard_packet_t g_keyboard_buffer[KBD_BUFFER_SIZE];
+static int g_keyboard_head = 0;
+static int g_keyboard_tail = 0;
+
 /* Estado volátil de controle do fluxo de bytes do barramento */
 static int g_is_e0_extended = 0;
 static uint8_t g_current_modifiers = 0; // Guarda o estado vivo do Shift/Caps
@@ -119,6 +125,21 @@ void keyboard_handler(void)
         g_kbd_head = next;
         wakeup_thread(&g_kbd_wait, thread_kbd);
     }
+
+    keyboard_packet_t packet;
+
+    packet.is_e0_extended = g_is_e0_extended;
+    packet.mods = packet_modifiers;
+    packet.scancode = byte;
+    /* Enfileira o pacote estável montado no buffer circular */
+    next = (g_keyboard_head + 1) % KBD_BUFFER_SIZE;
+    if (next != g_keyboard_tail)
+    {
+        g_keyboard_buffer[g_keyboard_head] = packet;
+        g_keyboard_head = next;
+
+        wakeup(&g_keyboard_read_wait);
+    }
 }
 
 /**
@@ -133,4 +154,21 @@ kbd_event_t keyboard_get_event(void)
     kbd_event_t event = g_kbd_raw_buffer[g_kbd_tail];
     g_kbd_tail = (g_kbd_tail + 1) % KBD_BUFFER_SIZE;
     return event;
+}
+
+
+int keyboard_get_packet(keyboard_packet_t* packet)
+{
+    if (!packet)
+        return 0;
+
+    while (g_keyboard_tail == g_keyboard_head)
+    {
+        wait(&g_keyboard_read_wait, NULL);
+    }
+
+    *packet = g_keyboard_buffer[g_keyboard_tail];
+    g_keyboard_tail = (g_keyboard_tail + 1) % KBD_BUFFER_SIZE;
+
+    return 1;
 }

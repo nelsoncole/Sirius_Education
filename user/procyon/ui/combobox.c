@@ -88,15 +88,15 @@ int draw_combobox(component_t* c, window_t* win) {
         ui_unlock(&cb->win->lock);
     }
 
-    c->render--;
+    c->render = 0;
 
     ui_unlock(&win->lock);
 
     return 1;
 }
 
-void combobox_event(component_t* c, event_t ev) {
-    if (!c || !c->visible) return;
+int combobox_event(component_t* c, event_t ev) {
+    if (!c || !c->visible) return 0;
     combobox_data_t* cb = (combobox_data_t*)c->data;
 
     int inside_main = (ev.mouse.x >= c->x && ev.mouse.x < c->x + c->w &&
@@ -136,11 +136,11 @@ void combobox_event(component_t* c, event_t ev) {
 
         c->render = 1;
         c->ctx->window->invalid = 1;
-        return;
+        return c->render;
     }
 
     // --- Se não está expandido, ignora ---
-    if (!cb->expanded || !cb->win) return;
+    if (!cb->expanded || !cb->win) return c->render;
 
     // --- Lógica de interação dentro do dropdown ---
     int visible_rows = cb->win->height / cb->item_height;
@@ -262,12 +262,14 @@ void combobox_event(component_t* c, event_t ev) {
         default:
             break;
     }
+
+    return c->render;
 }
 
 component_t* create_combobox(ui_context_t* ctx, int x, int y, int w, int h,
                              const char* items[], int count,
                              void (*on_select)(int, const char*)) {
-    if (ctx->count >= 64) return NULL;
+    if (!ctx)return NULL;
 
     component_t* comp = malloc(sizeof(component_t));
     memset(comp, 0, sizeof(component_t));
@@ -311,6 +313,6 @@ component_t* create_combobox(ui_context_t* ctx, int x, int y, int w, int h,
     build_font_cache(&comp->font, comp->font_size, &comp->font_cache);
 
     comp->ctx = ctx;
-    ctx->components[ctx->count++] = comp;
+    ui_add_component(ctx, comp);
     return comp;
 }

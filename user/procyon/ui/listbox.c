@@ -23,7 +23,7 @@ int draw_listbox(component_t* c, window_t* win) {
     if (lb->count == 0) {
         draw_rect_border(win->buffer, win->width, win->height,
                          c->x, c->y, c->w, c->h, 0x000000);
-        c->render--;
+        c->render = 0;
         ui_unlock(&lb->spinlock);
         ui_unlock(&win->lock);
         return 1;
@@ -84,7 +84,7 @@ int draw_listbox(component_t* c, window_t* win) {
                          c->x + c->w - 8, bar_y, 8, bar_h, 0xFF555555);
     }
 
-    c->render--;
+    c->render = 0;
     ui_unlock(&lb->spinlock);
     ui_unlock(&win->lock);
 
@@ -92,7 +92,7 @@ int draw_listbox(component_t* c, window_t* win) {
 }
 
 // ---- Eventos do listbox ----
-void listbox_event(component_t* c, event_t ev) {
+int listbox_event(component_t* c, event_t ev) {
     listbox_data_t* lb = (listbox_data_t*)c->data;
 
     int visible_rows = c->h / lb->item_height;
@@ -113,7 +113,7 @@ void listbox_event(component_t* c, event_t ev) {
 			}
     }
     
-    if(!lb->focused) return;
+    if(!lb->focused) return c->render;
 
     switch (ev.type) {
         case EVENT_MOUSE_LEFT_DOWN: {
@@ -215,6 +215,8 @@ void listbox_event(component_t* c, event_t ev) {
         default:
             break;
     }
+
+    return c->render;
 }
 
 void listbox_set_items(component_t* c, const char* items[], int count) {
@@ -273,7 +275,7 @@ void listbox_set_items(component_t* c, const char* items[], int count) {
 component_t* create_listbox(ui_context_t* ctx, int x, int y, int w, int h,
                             const char* items[], int count,
                             void (*on_select)(int, const char*)) {
-    if (ctx->count >= 64) return NULL;
+    if (!ctx)return NULL;
     component_t* comp = malloc(sizeof(component_t));
     memset(comp, 0, sizeof(component_t));
 
@@ -315,6 +317,6 @@ component_t* create_listbox(ui_context_t* ctx, int x, int y, int w, int h,
     build_font_cache(&comp->font, comp->font_size, &comp->font_cache);
 
     comp->ctx = ctx;
-    ctx->components[ctx->count++] = comp;
+    ui_add_component(ctx, comp);
     return comp;
 }

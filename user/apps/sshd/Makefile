@@ -22,7 +22,7 @@ LIBC_INC    := $(LIBC_DIR)/include
 LIBSSH_DIR  := $(BASE_DIR)libssh
 LIBSSH_INC  := $(BASE_DIR)
 CRT0_DIR    := $(LIBC_DIR)/src/arch/x86_64
-SYSROOT_APP := $(BASE_DIR)../sysroot/apps/sshd.elf
+SYSROOT_APP := $(BASE_DIR)../sysroot/usr/app/sshd.elf
 LINKER_SCR  := $(BASE_DIR)libc/user_x86_64.ld
 
 # 3. Flags de Compilação para Espaço de Utilizador Isolado com TLSe

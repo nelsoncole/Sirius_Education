@@ -19,6 +19,7 @@
 #include <kernel/kernel/mm/heap.h>
 #include <kernel/lib/string.h>
 #include <kernel/lib/stdio.h>
+#include <kernel/kernel/core/spinlock.h>
 
 /*
  * ============================================================================
@@ -241,6 +242,8 @@ void cpu_initialize_local(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top
     // Grava no bloco local para uso assíncrono do Escalonador
     cpu->cr3 = current_cr3;
     cpu->self = cpu;
+
+    spin_lock_init(&cpu->scheduler_lock);
 
     // Configuração dos segmentos base da GDT (Índices 0 a 3)
     cpu->gdt_entries[0] = create_gdt_entry(0, 0, 0, 0);             // Null (0x00)

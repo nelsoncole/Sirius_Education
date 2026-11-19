@@ -38,4 +38,7 @@
  */
 pid_t pthread(stack_frame_t* frame);
 
+void pthread_join(thread_t *target, void **retval);
+void pthread_exit(thread_t *thread, void *retval);
+
 #endif /* _PTHREAD_H_ */

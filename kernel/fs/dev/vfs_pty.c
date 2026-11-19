@@ -295,26 +295,23 @@ static int tfs_pty_replica_write(vfs_node_t* node, uint64_t offset, uint32_t siz
         bytes_escritos = size;
     }
 
-    struct tty_device* tty_tmp = pty_vfs_get_active_engine();
-    if (tty_tmp == pair->replica_tty)
+    // 2. REGRA DO JOGO: Resolve a tty0 e bombeia síncronamente os dados nela
+    vfs_node_t *tty0_node = tty_vfs_get_node_by_name("tty0");
+    if (tty0_node && tty0_node->private_data)
     {
-        // 2. REGRA DO JOGO: Resolve a tty0 e bombeia síncronamente os dados nela
-        vfs_node_t *tty0_node = tty_vfs_get_node_by_name("tty0");
-        if (tty0_node && tty0_node->private_data)
-        { 
-            struct tty_device *tty0_device = (struct tty_device *)tty0_node->private_data;
+        struct tty_device *tty_tmp = (struct tty_device*)tty0_node->private_data;
+        if (tty_tmp->pty_foco == pair->replica_tty && pair->replica_tty->c_lflag & TTY_ECHO)
+        {
             const char *src = (const char *)buffer;
             // tty_write(tty0_device, (const char*)buffer, bytes_escritos);
             for (int i = 0; i < bytes_escritos; i++)
             {
-                tty_putc_backbuffer_X(tty0_device, src[i]);
+                tty_putc_backbuffer_X(tty_tmp, src[i]);
             }
 
-            __sync_lock_test_and_set(&tty0_device->refresh_needed, 1);
+            __sync_lock_test_and_set(&tty_tmp->refresh_needed, 1);
         }
     }
-
-    pty_vfs_get_active_engine_close(tty_tmp);
 
     return bytes_escritos;
 }

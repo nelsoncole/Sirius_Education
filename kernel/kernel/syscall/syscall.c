@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  *
  *    Modified By: Nelson Cole / AI Collaborator
- *  Modified Date: 01/11/2026
+ *  Modified Date: 19/11/2026
  *
  *        License: MIT
  * ============================================================================
@@ -118,13 +118,13 @@ static const void *sys_call_table[MAX_SYSCALLS] = {
     [SYS_CHDIR]     = sys_chdir,
     [SYS_GETCWD]    = sys_getcwd,
 
-    [SYS_ACTIVE_TTY] = sys_active_tty,
-
     [SYS_PROCESS_SPAWN] = sys_process_spawn,
 
     [SYS_PTHREAD_CREATE] = sys_pthread_create,
     [SYS_PTHREAD_EXIT] = sys_pthread_exit,
     [SYS_PTHREAD_JOIN] = sys_pthread_join,
+
+    [SYS_THREAD_POINTER] = sys_thread_pointer,
 
     [SYS_UWAIT] = sys_uwait,
     [SYS_UWAKEUP] = sys_uwakeup
@@ -164,6 +164,7 @@ static inline int syscall_is_blocking(uint64_t syscall_num) {
         case SYS_PTHREAD_CREATE:
         case SYS_PTHREAD_EXIT:
         case SYS_PTHREAD_JOIN:
+        case SYS_THREAD_POINTER:
             return 0; // GRUPO: CLI ESTRITO
 
         default:
@@ -591,22 +592,26 @@ uint64_t sys_fork(void)
 
     /* 
      * 3. EXTRAÇÃO COMPLETA DA PILHA (Baseado estritamente no seu syscall_stub.asm):
-     *   stack_ptr[-1] -> push r14 (RIP de retorno real)
-     *   stack_ptr[-2] -> push r15 (RFLAGS originais)
-     *   stack_ptr[-3] -> push rbp (Preserva o RBP legítimo)
-     *   stack_ptr[-4] -> push rbx (Preserva o RBX legítimo)
-     *   stack_ptr[-5] -> push r10 (Continha o antigo RSP ou argumento)
-     *   stack_ptr[-6] -> push qword 0 (Padding de alinhamento)
+     *   stack_ptr[-1]  -> push rbp (Preserva o RBP legítimo)
+     *   stack_ptr[-2]  -> push rbx (Preserva o RBX legítimo)
+     *   stack_ptr[-3]  -> push r10 (Antigo RSP do utilizador ou 4.º argumento)
+     *   stack_ptr[-4]  -> push r12 (Preserva registador não-volátil)
+     *   stack_ptr[-5]  -> push r13 (Preserva registador não-volátil)
+     *   stack_ptr[-6]  -> push r14 (Preserva registador não-volátil)
+     *   stack_ptr[-7]  -> push r15 (Preserva registador não-volátil)
+     *   stack_ptr[-8]  -> push rdi (1.º argumento original da syscall)
+     *   stack_ptr[-9]  -> push rsi (2.º argumento original da syscall)
+     *   stack_ptr[-10] -> push rdx (3.º argumento original da syscall)
+     *   stack_ptr[-11] -> push r8  (5.º argumento original da syscall)
+     *   stack_ptr[-12] -> push r9  (6.º argumento original da syscall)
      */
+
+
     uint64_t saved_rip    = 0;
     uint64_t saved_rflags = 0;
 
     __asm__ __volatile__("movq %%gs:16, %0" : "=r"(saved_rip));
     __asm__ __volatile__("movq %%gs:24, %0" : "=r"(saved_rflags));
-
-    uint64_t saved_rbp    = stack_ptr[-1];
-    uint64_t saved_rbx    = stack_ptr[-2];
-    uint64_t saved_r10    = stack_ptr[-3];
 
     /* 4. Sintetiza o frame local SEM ZERAR os outros registadores gerais */
     stack_frame_t frame;
@@ -618,9 +623,19 @@ uint64_t sys_fork(void)
     frame.rflags = saved_rflags;
     
     // Preserva os registadores gerais do Pai para o Filho não acordar com zeros!
-    frame.rbp    = saved_rbp;
-    frame.rbx    = saved_rbx;
-    frame.r10    = saved_r10;
+    frame.rbp    = stack_ptr[-1];
+    frame.rbx    = stack_ptr[-2];
+    frame.r10    = stack_ptr[-3];
+    frame.r12    = stack_ptr[-4];
+    frame.r13    = stack_ptr[-5];
+    frame.r14    = stack_ptr[-6];
+    frame.r15    = stack_ptr[-7];
+    frame.rdi    = stack_ptr[-8];
+    frame.rsi    = stack_ptr[-9];
+    frame.rdx    = stack_ptr[-10];
+    frame.r8     = stack_ptr[-11];
+    frame.r9     = stack_ptr[-12];
+
 
     // Configura os seletores legítimos de Ring 3 da sua GDT
     frame.cs     = 0x2B; 
@@ -948,14 +963,15 @@ uint64_t sys_kill(int32_t pid, int sig)
     // Mecanismo de Wake-up da Thread Principal
     // Se a thread principal do processo estiver congelada em I/O (ex: lendo do PTY ou Pipe),
     // o estado dela não será THREAD_READY/RUNNING. Forçamos a sua reativação para tratar o sinal.
-    if (target_proc->main_thread) 
+    if (target_proc->main_thread &&
+        target_proc->main_thread->state != THREAD_DEAD &&
+        target_proc->main_thread->state != THREAD_READY &&
+        target_proc->main_thread->state != THREAD_RUNNING)
     {
-        if (target_proc->main_thread->state != THREAD_READY && 
-            target_proc->main_thread->state != THREAD_RUNNING) 
-        {
-            kprintf("[SCI] sys_kill: Acordando thread principal do processo %d\n", target_proc->pid);
-            scheduler_ready_thread(target_proc->main_thread);
-        }
+        kprintf("[SCI] sys_kill: Acordando thread principal do processo %d\n",
+                target_proc->pid);
+
+        scheduler_ready_thread(target_proc->main_thread);
     }
 
     return (uint64_t)0;
@@ -1266,31 +1282,6 @@ uint64_t sys_getcwd(char *buf, size_t size)
     return 0; // Sucesso (A libc receberá 0 e retornará o ponteiro do buffer ao utilizador)
 }
 
-uint64_t sys_active_tty()
-{
-     process_t* proc = get_current_process();
-    if (!proc || !proc->file_descriptor_table[0]) {
-        return (uint64_t)-1;
-    }
-
-    vfs_file_t* file = proc->file_descriptor_table[0];
-    if (!file) {
-        return (uint64_t)-1;
-    }
-
-    vfs_node_t* node = file->node;
-    if(!node && node->flags != VFS_CHAR_DEV) {
-        return (uint64_t)-1;
-    }
-    
-    pty_pair_t* pair = (pty_pair_t*) node->private_data;
-    if(!pair || !pair->replica_tty) return (uint64_t)-1;
-
-    pty_vfs_set_active_engine(pair->replica_tty);
-
-    return (uint64_t)0;
-}
-
 uint64_t sys_process_spawn(pid_t * pid, const char *path,
                 const void *file_actions,
                 const void *attrp,
@@ -1351,12 +1342,33 @@ uint64_t sys_pthread_create(uint64_t start_routine, uint64_t stack)
 uint64_t sys_pthread_exit(void *retval)
 {
     kprintf("[SCI] sys_pthread_exit\n");
+
+    cpu_data_block_t* cpu = get_current_cpu();
+    thread_t* thread = cpu->current_thread;
+
+    pthread_exit(thread, retval);
+
     return (uint64_t)0;
 }
 
 uint64_t sys_pthread_join(void* thread, void **retval)
 {
+    if(!thread) return (uint64_t)1;
+
+    thread_t *target = (thread_t *)thread;
+
+    kprintf("[SCI] sys_pthread_join thread p: %p tid: %d\n", thread, target->tid);
+
+    pthread_join(target, retval);
+
     return (uint64_t)0;
+}
+
+uint64_t sys_thread_pointer(uint64_t tid)
+{
+    cpu_data_block_t* cpu = get_current_cpu();
+    thread_t* thread = get_process_thread(cpu->current_thread->owner, tid);
+    return (uint64_t)thread;
 }
 
 uint64_t sys_uwait(void *chan)

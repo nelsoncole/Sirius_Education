@@ -116,22 +116,30 @@ void handle_mouse_event(int delta_x, int delta_y, int buttons)
     {
         event_t ev_tmp = {0};
 
-        if (buttons & 0x01)
+        static uint8_t previous_buttons = 0;
+
+        if ((buttons & 0x01) && !(previous_buttons & 0x01))
         {
             ev_tmp.type = EVENT_MOUSE_LEFT_DOWN;
         }
-        else if (buttons & 0x02)
+        else if ((buttons & 0x02) && !(previous_buttons & 0x02))
         {
             ev_tmp.type = EVENT_MOUSE_RIGHT_DOWN;
         }
-        else if (buttons & 0x04)
+        else if ((buttons & 0x04) && !(previous_buttons & 0x04))
         {
             ev_tmp.type = EVENT_MOUSE_MIDDLE_DOWN;
         }
-        else
+        else if (buttons != previous_buttons)
         {
             ev_tmp.type = EVENT_MOUSE_UP;
         }
+        else
+        {
+            ev_tmp.type = EVENT_MOUSE_MOVE;
+        }
+
+        previous_buttons = buttons;
 
         ev_tmp.clock = 0;
         ev_tmp.mouse.x = delta_x - g_focused_window->x;
@@ -142,4 +150,30 @@ void handle_mouse_event(int delta_x, int delta_y, int buttons)
     }
 
     co_unlock(&compositor_lock);
+}
+
+void handle_key_event(int key, int mods, int type) {
+    window_t* win = get_focused_window();
+    if (!win) return;
+
+    event_t ev;
+    if(type == 0) {
+        ev.type = EVENT_TEXT_INPUT;
+        ev.text.codepoint = key;
+        ev.key.mods = mods; // Ex: Shift/Ctrl
+    }else if(type == 1) {
+        ev.type = EVENT_KEY_DOWN;
+        ev.key.keycode = key;
+        ev.key.mods = mods; // Ex: Shift/Ctrl
+    }
+    else if(type == 2) {
+        ev.type = EVENT_KEY_UP;
+        ev.key.keycode = key;
+        ev.key.mods = mods; // Ex: Shift/Ctrl
+    }else
+    {
+        return;
+    }
+
+    push_event_to_window(win, ev);
 }

@@ -21,7 +21,7 @@ int draw_gridview(component_t* c, window_t* win) {
 
     if (gv->row_count <= 1) { // apenas cabeçalho
         draw_rect_border(win->buffer, win->width, win->height, c->x, c->y, c->w, c->h, 0x000000);
-        c->render--;
+        c->render = 0;
         ui_unlock(&gv->spinlock);
         ui_unlock(&win->lock);
         return 1;
@@ -74,7 +74,7 @@ int draw_gridview(component_t* c, window_t* win) {
         draw_rect_border(win->buffer, win->width, win->height, c->x + c->w - 8, bar_y, 8, bar_h, 0xFF555555);
     }
 
-    c->render--;
+    c->render = 0;
     ui_unlock(&gv->spinlock);
     ui_unlock(&win->lock);
 
@@ -84,7 +84,7 @@ int draw_gridview(component_t* c, window_t* win) {
 // ------------------------------
 // Evento do GridView com setas
 // ------------------------------
-void gridview_event(component_t* c, event_t ev) {
+int gridview_event(component_t* c, event_t ev) {
     gridview_data_t* gv = (gridview_data_t*)c->data;
     int visible_rows = c->h / gv->row_height - 1; // -1 para cabeçalho
 
@@ -95,7 +95,7 @@ void gridview_event(component_t* c, event_t ev) {
     if (ev.type == EVENT_MOUSE_LEFT_DOWN) {
         gv->focused = inside ? 1 : 0;
     }
-    if (!gv->focused) return;
+    if (!gv->focused) return 0;
 
     switch (ev.type) {
         case EVENT_MOUSE_LEFT_DOWN: {
@@ -165,6 +165,7 @@ void gridview_event(component_t* c, event_t ev) {
         default:
             break;
     }
+    return c->render;
 }
 
 // ------------------------------
@@ -198,7 +199,7 @@ void gridview_set_items(component_t* c, char*** new_data, int rows, int cols) {
 component_t* create_gridview(ui_context_t* ctx, int x, int y, int w, int h,
                              char*** data, int rows, int cols,
                              void (*on_select)(int, char**)) {
-    if (ctx->count >= 64) return NULL;
+    if (!ctx)return NULL;
 
     component_t* c = malloc(sizeof(component_t));
     memset(c, 0, sizeof(component_t));
@@ -232,7 +233,7 @@ component_t* create_gridview(ui_context_t* ctx, int x, int y, int w, int h,
     build_font_cache(&c->font, c->font_size, &c->font_cache);
 
     c->ctx = ctx;
-    ctx->components[ctx->count++] = c;
+    ui_add_component(ctx, c);
 
     return c;
 }

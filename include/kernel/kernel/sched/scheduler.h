@@ -42,6 +42,10 @@ void enqueue_thread(cpu_data_block_t* cpu, thread_t* thread);
  * Remove e retorna a próxima thread do início da fila de prontos de um CPU.
  */
 thread_t* dequeue_thread(cpu_data_block_t* cpu);
+/*
+ * Remove uma thread específica da fila de prontos de um CPU.
+ */
+void remove_thread(cpu_data_block_t *cpu, thread_t *thread);
 /**
  * Insere uma thread terminada (THREAD_DEAD) na fila de descarte local do CPU.
  * Nota: Garanta que adicionou 'dead_queue_head' e 'dead_queue_tail' na sua 'cpu_data_block_t'.
@@ -53,12 +57,7 @@ void enqueue_dead_thread(cpu_data_block_t* cpu, thread_t* thread);
  * está a depender das pilhas a serem eliminadas.
  */
 void scheduler_reclaim_dead_threads(void);
-/**
- * Rotina da Thread Ociosa (Idle Thread).
- * Executada continuamente quando não existem outras tarefas prontas.
- * Agora, atua também como o Coletor de Lixo básico do núcleo.
- */
-void idle_thread_routine(void);
+
 /**
  * Inicializa o agendador local para o núcleo de processamento atual.
  * Deve ser chamada individualmente pelo BSP e por cada AP no arranque.

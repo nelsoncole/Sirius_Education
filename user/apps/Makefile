@@ -5,8 +5,8 @@ BASE_DIR    	:= ../
 LIBC_DIR        := $(BASE_DIR)libc
 LIBC_INC        := $(LIBC_DIR)/include
 CRT0_DIR        := $(LIBC_DIR)/src/arch/x86_64
-SYSROOT_USER_APP 	:= $(BASE_DIR)../sysroot/apps/user.elf
-SYSROOT_TEST_APP 	:= $(BASE_DIR)../sysroot/apps/test.elf
+SYSROOT_USER_APP 	:= $(BASE_DIR)../sysroot/usr/app/user.elf
+SYSROOT_TEST_APP 	:= $(BASE_DIR)../sysroot/usr/app/test.elf
 LINKER_SCR  	:= $(BASE_DIR)libc/user_x86_64.ld
 
 CFLAGS  := -Wall -Wextra -m64 -nostdinc -ffreestanding -O2

@@ -415,7 +415,12 @@ process_t* process_create(void* binary_buffer, unsigned long binary_size, int ar
     // Nasce como um embrião/protegido, impedindo o escalonador de o puxar antes do tempo
     proc->state = PROCESS_EMBRYO;
 
-     /* 
+    proc->threads_head = NULL;
+    proc->threads_tail = NULL;
+    proc->thread_count = 0;
+    spin_lock_init(&proc->thread_lock);
+
+    /*
      * INICIALIZAÇÃO OBRIGATÓRIA DO DIRETÓRIO DE TRABALHO (PWD)
      * Garante que o processo começa de forma limpa e segura no diretório raiz.
      */
@@ -668,4 +673,132 @@ process_t* get_current_process(void) {
 
     /* 2. Extrai o processo dono da thread através da hierarquia do agendador */
     return (process_t*)cpu->current_thread->owner;
+}
+
+
+void process_add_thread(process_t *process, thread_t *thread)
+{
+    if (!process || !thread)
+        return;
+
+    process_thread_node_t *node = kmalloc(sizeof(process_thread_node_t));
+
+    if (!node)
+        return;
+
+    node->thread = thread;
+    node->next = NULL;
+
+    unsigned long flags = spinlock_lock_irqsave(&process->thread_lock);
+
+    if (!process->threads_head)
+    {
+        process->threads_head = node;
+        process->threads_tail = node;
+    }
+    else
+    {
+        process->threads_tail->next = node;
+        process->threads_tail = node;
+    }
+
+    process->thread_count++;
+
+    spinlock_unlock_irqrestore(&process->thread_lock, flags);
+}
+
+void process_remove_thread(process_t *process, thread_t *thread)
+{
+    if (!process || !thread)
+        return;
+
+    unsigned long flags = spinlock_lock_irqsave(&process->thread_lock);
+
+    process_thread_node_t *current = process->threads_head;
+    process_thread_node_t *previous = NULL;
+
+    while (current)
+    {
+        if (current->thread == thread)
+        {
+            if (previous)
+                previous->next = current->next;
+            else
+                process->threads_head = current->next;
+
+            if (process->threads_tail == current)
+                process->threads_tail = previous;
+
+            process->thread_count--;
+
+            kfree(current);
+
+            break;
+        }
+
+        previous = current;
+        current = current->next;
+    }
+
+    spinlock_unlock_irqrestore(&process->thread_lock, flags);
+}
+
+/*
+ * Verifica se uma thread pertence à lista de threads do processo.
+ */
+bool process_has_thread(process_t *process, thread_t *thread, spinlock_t *lock)
+{
+    if (!process || !thread)
+        return false;
+
+    unsigned long flags = 0;
+    if(lock) {
+
+        flags = spinlock_lock_irqsave(lock);
+    }
+
+    process_thread_node_t *current = process->threads_head;
+
+    while (current)
+    {
+        if (current->thread == thread)
+        {
+            if(lock) {
+                spinlock_unlock_irqrestore(lock, flags);
+            }
+            return true;
+        }
+
+        current = current->next;
+    }
+
+    if(lock) {
+        spinlock_unlock_irqrestore(lock, flags);
+    }
+    return false;
+}
+
+thread_t * get_process_thread(process_t *process, uint64_t tid)
+{
+    if (!process || !tid)
+        return NULL;
+
+    unsigned long flags = flags = spinlock_lock_irqsave(&process->thread_lock);
+
+    process_thread_node_t *current = process->threads_head;
+
+    while (current)
+    {
+        if (current->thread->tid == tid)
+        {
+            spinlock_unlock_irqrestore(&process->thread_lock, flags);
+            return current->thread;
+        }
+
+        current = current->next;
+    }
+
+
+    spinlock_unlock_irqrestore(&process->thread_lock, flags);
+    return NULL;
 }

@@ -42,7 +42,7 @@ int draw_editbox(component_t* c, window_t* win) {
         draw_line(win->buffer, win->width, win->height, cx, cy1, cx, cy2, c->fg);
     }
 
-    c->render--;
+    c->render = 0;
     ui_unlock(&e->spinlock);
     ui_unlock(&win->lock);
 
@@ -92,7 +92,7 @@ static void editbox_delete_char(editbox_data_t* e, int backspace) {
     ui_unlock(&e->spinlock);
 }
 
-void editbox_event(component_t* c, event_t ev) {
+int editbox_event(component_t* c, event_t ev) {
     editbox_data_t* e = (editbox_data_t*)c->data;
 
     int inside = (ev.mouse.x >= c->x && ev.mouse.x < c->x + c->w &&
@@ -156,9 +156,11 @@ void editbox_event(component_t* c, event_t ev) {
         default:
             break;
     }
+
+    return c->render;
 }
 component_t* create_editbox(ui_context_t* ctx, int x, int y, int w, int h) {
-    if (ctx->count >= 64) return NULL;
+    if (!ctx)return NULL;
 
     component_t* comp = malloc(sizeof(component_t));
     memset(comp, 0, sizeof(component_t));
@@ -172,25 +174,26 @@ component_t* create_editbox(ui_context_t* ctx, int x, int y, int w, int h) {
     comp->on_draw = draw_editbox;
 	comp->on_event = editbox_event;
     comp->font = *(stbtt_fontinfo *)ctx->window->font;
-    comp->font_size = 16;
-    comp->fg = 0x000000;
-    comp->bg = 0xFFFFFF;
-    comp->border_color = 0x444444;
+    comp->font_size = 18;
+    comp->fg = 0xFF000000;
+    comp->bg = 0xFFFFFFFF;
+    comp->border_color = 0xFF444444;
 	comp->render = 1;
 
-    editbox_data_t* e = malloc(sizeof(editbox_data_t));
+    editbox_data_t* e = calloc(1, sizeof(editbox_data_t));
     memset(e->text, 0, sizeof(e->text));
     e->cursor_pos = 0;
     e->focused = 0;
     e->border_radius = 6;
     e->border_thickness = 1;
+    e->spinlock = 0;
     comp->data = e;
 
     // --- inicializar cache da fonte aqui ---
     build_font_cache(&comp->font, comp->font_size, &comp->font_cache);
 
     comp->ctx = ctx;
-    ctx->components[ctx->count++] = comp;
+    ui_add_component(ctx, comp);
     return comp;
 }
 

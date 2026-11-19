@@ -127,6 +127,29 @@ struct tty_device* tty_get_current(void) {
     return tty;
 }
 
+int tty_set_keyboard_focus(struct tty_device *tty, struct tty_device *tty_foco) {
+    if (!tty || !tty_foco) return -2;
+
+    unsigned long flags = spinlock_lock_irqsave(&tty->lock);
+
+    tty->pty_foco = tty_foco;
+
+    spinlock_unlock_irqrestore(&tty->lock, flags);
+    return 0; /* Sucesso */
+}
+
+int tty_get_keyboard_focus(struct tty_device *tty, struct tty_device *tty_foco) {
+    if (!tty || !tty_foco) return -2;
+
+    unsigned long flags = spinlock_lock_irqsave(&tty->lock);
+
+    if(tty->pty_foco != tty_foco) 
+        return -1;
+
+    spinlock_unlock_irqrestore(&tty->lock, flags);
+    return 0; /* Sucesso */
+}
+
 int tty_pop_output(struct tty_device *tty, char *out_c) {
     if (!tty || !out_c) return 0;
 
@@ -561,6 +584,8 @@ size_t tty_video_write(struct tty_device *tty, struct tty_user *user)
     if (user->size < src_pitch * user->height)
         return 0;
 
+    spin_lock(&tty->video_mutex);
+
     while (__atomic_load_n(&tty->refresh_needed, __ATOMIC_ACQUIRE))
         cpu_relax();
 
@@ -580,6 +605,8 @@ size_t tty_video_write(struct tty_device *tty, struct tty_user *user)
     }
 
     __atomic_store_n(&tty->refresh_needed, 1, __ATOMIC_RELEASE);
+
+    spin_unlock(&tty->video_mutex);
 
     return line_size * copy_height;
 }

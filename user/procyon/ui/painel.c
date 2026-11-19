@@ -20,7 +20,7 @@ int draw_panel(component_t* c, window_t* win) {
                     p->border ? p->border_thickness : 0,        // espessura borda
                     p->border_radius);          // raio do canto
 
-    c->render--;
+    c->render = 0;
 
     ui_unlock(&win->lock);
 
@@ -29,7 +29,7 @@ int draw_panel(component_t* c, window_t* win) {
 
 component_t* create_panel(ui_context_t* ctx, int x, int y, int w, int h,
                           unsigned int bg_color, int border, unsigned int border_color) {
-    if (ctx->count >= 64) return NULL;
+    if (!ctx)return NULL;
 
     component_t* comp = malloc(sizeof(component_t));
     memset(comp, 0, sizeof(component_t));
@@ -54,6 +54,6 @@ component_t* create_panel(ui_context_t* ctx, int x, int y, int w, int h,
     comp->data = p;
 
     comp->ctx = ctx;
-    ctx->components[ctx->count++] = comp;
+    ui_add_component(ctx, comp);
     return comp;
 }

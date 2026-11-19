@@ -502,7 +502,3 @@ void uwait(void *chan) {
 void uwakeup(void *chan) {
     syscall1(SYS_UWAKEUP, (uint64_t)chan); 
 }
-
-int __sys_active_tty() {
-     return(int)syscall0(SYS_ACTIVE_TTY);
-}

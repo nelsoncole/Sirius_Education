@@ -107,6 +107,7 @@ C_OBJ := \
 	$(BUILD_DIR)/vfs_tty.o \
 	$(BUILD_DIR)/vfs_pty.o \
 	$(BUILD_DIR)/vfs_mouse.o \
+	$(BUILD_DIR)/vfs_keyboard.o \
 	$(BUILD_DIR)/console.o \
 	$(BUILD_DIR)/fat32.o \
 	$(BUILD_DIR)/socket.o \
@@ -397,6 +398,9 @@ $(BUILD_DIR)/vfs_pty.o: $(FS_DIR)/dev/vfs_pty.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/vfs_mouse.o: $(FS_DIR)/dev/vfs_mouse.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/vfs_keyboard.o: $(FS_DIR)/dev/vfs_keyboard.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/fat32.o: $(FS_DIR)/fat/fat32.c | $(BUILD_DIR)

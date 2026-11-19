@@ -50,6 +50,7 @@
 #include <kernel/kernel/net/net.h>
 #include <kernel/drivers/net/net_core.h>
 #include <kernel/fs/dev/vfs_mouse.h>
+#include <kernel/fs/dev/vfs_keyboard.h>
 #include <kernel/arch/x86_64/cpu/mtrr.h>
 
 extern void test(void* arg);
@@ -242,6 +243,7 @@ void kernel_main(BOOT_INFO *boot_info)
             tty_vfs_init(dev);
             pty_vfs_init(dev);
             mouse_vfs_init(dev);
+            keyboard_vfs_init(dev);
         }
         else
         {
@@ -370,7 +372,7 @@ void kernel_main(BOOT_INFO *boot_info)
 
     int init_argc = 3;
     char *init_argv[] = {
-        "/mnt/hd0/apps/user.elf",       // argv[0]: Caminho do executável
+        "/mnt/hd0/usr/app/user.elf",       // argv[0]: Caminho do executável
         "text_mode",                    // argv[2]: Modo gráfico/texto base
         "/dev/tty0",                    // argv[3]: Terminal padrão do sistema
         NULL

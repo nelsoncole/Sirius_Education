@@ -8,6 +8,7 @@
 #include "../../image.h"
 #include "../../draw_rect.h"
 #include "../../draw_line.h"
+#include "../../color.h"
 
 typedef enum {
     UI_NONE,
@@ -23,12 +24,15 @@ typedef enum {
     UI_CONTEXTMENU,
     UI_CONTEXTSUBMENU,
     UI_PANEL,
+    UI_SCROLL,
+    UI_CONSOLE,
     UI_FILE_LISTBOX,
-    UI_TERMINAL,
-    UI_VIEWPORT
+    UI_VIEWPORT,
 } component_type_t;
 
 typedef struct component {
+    int id;
+    char command[256];
     int x, y, w, h;       // posição relativa à janela
     component_type_t type;
     int visible;
@@ -40,9 +44,11 @@ typedef struct component {
     int render;
 
     int (*on_draw)(struct component*, window_t* win);
-    void (*on_event)(struct component*, event_t ev);
+    int (*on_event)(struct component*, event_t ev);
     void* data; // ponteiro para dados específicos (ex: texto do botão)
     int clear;
+
+    unsigned char *free_font_buffer;
 
     struct ui_context* ctx; 
 } component_t;
@@ -50,11 +56,12 @@ typedef struct component {
 typedef struct ui_context {
     int fd;
     window_t* window;
-    component_t* components[64]; // até 64 widgets por janela
+    component_t** components;
     int count;
     int modal_active;   // 0 = normal, 1 = algum menu/combobox aberto
     component_t* modal_owner; // quem está ativo (menu/combobox)
     component_t* sub_modal_owner; // sub componente quem está ativo (menu/combobox)
+    volatile int lock;
 } ui_context_t;
 
 
@@ -68,6 +75,7 @@ static inline void ui_unlock(volatile int *lock) {
     __sync_lock_release(lock);
 }
 
+int ui_add_component(ui_context_t *ctx, component_t *component);
 void ui_draw(ui_context_t* ctx);
 void ui_event(ui_context_t* ctx, event_t ev);
 

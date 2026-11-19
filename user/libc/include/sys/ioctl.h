@@ -17,18 +17,21 @@
 #define _IOCTL_H
 
 /* Comando Mágico customizado do Sirius OS para diagnóstico do VFS */
-#define VFS_CMD_PRINT_TREE    0x1001
+#define VFS_CMD_PRINT_TREE      0x1001
 
-#define TTY_IOCTL_VIDEO_WRITE  0x2001
-#define TTY_IOCTL_VIDEO_INFO   0x2002
+#define TTY_IOCTL_VIDEO_WRITE   0x2001
+#define TTY_IOCTL_VIDEO_INFO    0x2002
 
 /* Comandos de controlo para Pseudo-Terminais (PTY) e Terminais (TTY) */
-#define TIOCGPTN              0x5430  /* Obtém o número/ID da PTY escrava (Get PTY Number) */
-#define TIOCSPTLCK            0x40045431 /* Tranca/Destranca o nó da PTY escrava (Set PTY Lock) */
+#define TIOCGPTN                0x5430  /* Obtém o número/ID da PTY escrava (Get PTY Number) */
+#define TIOCSPTLCK              0x40045431 /* Tranca/Destranca o nó da PTY escrava (Set PTY Lock) */
 
 /* Comandos adicionais de controlo de janela (Útil para o encaminhamento do SSH) */
-#define TIOCGWINSZ            0x5413  /* Obtém o tamanho da janela (Get Window Size) */
-#define TIOCSWINSZ            0x5414  /* Define o tamanho da janela (Set Window Size) */
+#define TIOCGWINSZ              0x5413  /* Obtém o tamanho da janela (Get Window Size) */
+#define TIOCSWINSZ              0x5414  /* Define o tamanho da janela (Set Window Size) */
+
+#define TIOCSFOCUS              0X5401   // Solicita o foco do teclado
+#define TIOCGFOCUS              0X5402   // Consulta o foco
 
 /* Estrutura padrão para redimensionamento de terminal */
 struct winsize {
