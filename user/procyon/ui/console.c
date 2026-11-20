@@ -6,6 +6,10 @@
 #include <string.h>
 #include <limits.h>
 
+#ifndef CONSOLE_MAX_LINES
+#define CONSOLE_MAX_LINES 1000
+#endif
+
 static int console_clamp_offset(console_data_t *d, int height)
 {
     if (!d)
@@ -44,33 +48,110 @@ static void console_invalidate(component_t *c)
         c->ctx->window->invalid = 1;
 }
 
-static int console_resize_buffer(console_data_t *d, int required_height)
+static void console_scroll_to_bottom(component_t *console)
 {
-    if (!d || !d->ctx->window || required_height <= 0)
+    if (!console || console->type != UI_CONSOLE)
+        return;
+
+    console_data_t *d = console->data;
+    if (!d)
+        return;
+
+    int max_offset = d->content_height - console->h;
+    if (max_offset < 0)
+        max_offset = 0;
+
+    if (d->scroll_offset != max_offset) {
+        d->scroll_offset = max_offset;
+        d->background_render = 1;
+        console_invalidate(console);
+    }
+}
+
+int console_clear(component_t *console)
+{
+    if (!console || console->type != UI_CONSOLE)
+        return -1;
+
+    console_data_t *d = console->data;
+
+    if (!d || !d->ctx || !d->ctx->window)
         return -1;
 
     window_t *win = d->ctx->window;
 
-    if (required_height <= win->height)
-        return 0;
-
-    if (win->width <= 0 || win->height <= 0 || !win->buffer)
+    if (!win->buffer || win->width <= 0 || win->height <= 0)
         return -1;
-    
+
+    size_t width = (size_t)win->width;
+    size_t height = (size_t)win->height;
+
+    if (height > SIZE_MAX / width)
+        return -1;
+
     ui_lock(&win->lock);
+
+    size_t total = width * height;
+
+    for (size_t i = 0; i < total; i++)
+        win->buffer[i] = win->bg;
+
+    ui_unlock(&win->lock);
+
+    d->cursor_x = 0;
+    d->cursor_y = 0;
+    d->content_height = d->height;
+    d->scroll_offset = 0;
+    d->dragging_scroll = 0;
+    d->drag_offset_y = 0;
+    d->background_render = 1;
+
+    console_invalidate(console);
+
+    return 0;
+}
+
+static int console_resize_buffer(console_data_t *d, int required_height)
+{
+    if (!d || !d->ctx || !d->ctx->window || required_height <= 0)
+        return -1;
+
+    window_t *win = d->ctx->window;
+
+    ui_lock(&win->lock);
+
+    if (required_height <= win->height) {
+        ui_unlock(&win->lock);
+        return 0;
+    }
+
+    if (win->width <= 0 || win->height <= 0 || !win->buffer) {
+        ui_unlock(&win->lock);
+        return -1;
+    }
 
     size_t width = (size_t)win->width;
     size_t height = (size_t)required_height;
+    size_t old_height = (size_t)win->height;
+
+    if (height > SIZE_MAX / width) {
+        ui_unlock(&win->lock);
+        return -1;
+    }
 
     size_t new_pixels = width * height;
+    size_t old_pixels = width * old_height;
 
-    size_t old_pixels = width * (size_t)win->height;
-    
+    if (new_pixels > SIZE_MAX / sizeof(uint32_t)) {
+        ui_unlock(&win->lock);
+        return -1;
+    }
+
     uint32_t *new_buffer = realloc(
         win->buffer,
         new_pixels * sizeof(uint32_t)
     );
-    
+
     if (!new_buffer) {
         ui_unlock(&win->lock);
         return -1;
@@ -83,7 +164,6 @@ static int console_resize_buffer(console_data_t *d, int required_height)
     win->height = required_height;
 
     ui_unlock(&win->lock);
-
     return 0;
 }
 
@@ -132,6 +212,7 @@ component_t *create_console(
     d->ctx->fd = ctx->fd;
     d->width = w - (d->scrollbar_width+(d->border_thickness*2));
     d->height = h - (d->border_thickness*2);
+    d->content_height = d->height;
 
     d->ctx->window = component_window_create(
         ctx->window,
@@ -142,6 +223,7 @@ component_t *create_console(
     );
 
     if (!d->ctx->window) {
+        free(d->ctx);
         free(d);
         free(c);
         return NULL;
@@ -168,6 +250,8 @@ component_t *create_console(
         {
             c->free_font_buffer = free_font_buffer;
             c->font = *(stbtt_fontinfo *)font;
+            free(font);
+            font = NULL;
         }
         else
         {
@@ -192,6 +276,7 @@ component_t *create_console(
     if (ui_add_component(ctx, c) != 0) {
         free(d->ctx->window->buffer);
         free(d->ctx->window);
+        free(d->ctx);
         free(d);
         free(c);
         return NULL;
@@ -269,8 +354,10 @@ static void console_get_metrics(
 
     int thumb = (int)(numerator / d->content_height);
 
-    if (thumb < 20 && height >= 20)
-        thumb = 20;
+    int minimum_thumb = d->char_height > 0 ? d->char_height : 1;
+
+    if (thumb < minimum_thumb)
+        thumb = minimum_thumb;
 
     if (thumb > height)
         thumb = height;
@@ -278,21 +365,6 @@ static void console_get_metrics(
     *thumb_height = thumb;
     *max_offset = d->content_height - height;
     *max_thumb_y = height - thumb;
-}
-
-static int console_is_at_bottom(component_t *console)
-{
-    if (!console)
-        return 1;
-
-    console_data_t *d = console->data;
-
-    if (!d)
-        return 1;
-
-    int max_offset = d->content_height - console->h;
-
-    return max_offset <= 0 || d->scroll_offset >= max_offset;
 }
 
 static int console_ensure_height(component_t *console, int required_height)
@@ -308,19 +380,14 @@ static int console_ensure_height(component_t *console, int required_height)
     if (required_height < console->h)
         required_height = console->h;
 
-    if (required_height <= d->content_height)
-        return 0;
+    if (required_height > d->content_height) {
+        console_set_content_height(console, required_height);
 
-    int was_at_bottom = console_is_at_bottom(console);
+        if (d->content_height < required_height)
+            return -1;
+    }
 
-    console_set_content_height(console, required_height);
-
-    if (d->content_height < required_height)
-        return -1;
-
-    if (was_at_bottom)
-        console_set_offset(console, INT_MAX);
-
+    console_scroll_to_bottom(console);
     return 0;
 }
 
@@ -336,6 +403,12 @@ int console_newline(component_t *console)
 
     d->cursor_x = 0;
 
+    if (d->cursor_y / d->char_height >= CONSOLE_MAX_LINES - 1) {
+        console_clear(console);
+        console->render = 1;
+        return 0;
+    }
+
     if (d->cursor_y > INT_MAX - d->char_height)
         return -1;
 
@@ -346,6 +419,7 @@ int console_newline(component_t *console)
             d->cursor_y + d->char_height) != 0)
         return -1;
 
+    console_scroll_to_bottom(console);
     console->render = 1;
 
     return 0;
@@ -371,6 +445,7 @@ int console_put_char(component_t *console, char ch)
 
     if (ch == '\r') {
         d->cursor_x = 0;
+        console_scroll_to_bottom(console);
         console->render = 1;
         return 0;
     }
@@ -393,6 +468,7 @@ int console_put_char(component_t *console, char ch)
             console->render = 1;
         }
 
+        console_scroll_to_bottom(console);
         return 0;
     }
 
@@ -436,6 +512,7 @@ int console_put_char(component_t *console, char ch)
 
     d->cursor_x += d->char_width;
 
+    console_scroll_to_bottom(console);
     console->render = 1;
 
     return 0;
@@ -605,9 +682,9 @@ int console_event(component_t *c, event_t ev)
                 if (new_thumb_y > max_thumb_y)
                     new_thumb_y = max_thumb_y;
 
-                d->scroll_offset = (int)(
-                    ((int64_t)new_thumb_y * max_offset) /
-                    max_thumb_y
+                console_set_offset(
+                    c,
+                    (int)(((int64_t)new_thumb_y * max_offset) / max_thumb_y)
                 );
             }
 
@@ -641,15 +718,10 @@ int console_event(component_t *c, event_t ev)
             if (new_thumb_y > max_thumb_y)
                 new_thumb_y = max_thumb_y;
 
-            d->scroll_offset = (int)(
-                ((int64_t)new_thumb_y * max_offset) /
-                max_thumb_y
+            console_set_offset(
+                c,
+                (int)(((int64_t)new_thumb_y * max_offset) / max_thumb_y)
             );
-
-            console_clamp_offset(d, c->h);
-
-            d->background_render = 1;
-            console_invalidate(c);
         }
 
         return c->render;

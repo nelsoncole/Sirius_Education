@@ -1,12 +1,4 @@
-#include <procyon/procyon.h>
-
-#define CTRL_MASK  0x02
-#define ALT_MASK   0x04
-
-/* Máscaras de bits para o campo 'modifiers_state' */
-#define KBD_MOD_LSHIFT   (1 << 0)
-#define KBD_MOD_RSHIFT   (1 << 1)
-#define KBD_MOD_CAPS     (1 << 2)
+#include "keymap.h"
 
 // Sem Shift
 static const char kbd_map[128] = {
@@ -74,6 +66,7 @@ char scancode_to_ascii(int scancode, int mods) {
 int scancode_to_key(int scancode, int extended) {
     if (!extended) {
         switch (scancode) {
+            case 0x01: return KEY_ESCAPE;
             case 0x0E: return KEY_BACKSPACE;
             case 0x0F: return KEY_TAB;
             case 0x1C: return KEY_ENTER;
@@ -81,37 +74,51 @@ int scancode_to_key(int scancode, int extended) {
             case 0x2A: return KEY_LSHIFT;
             case 0x36: return KEY_RSHIFT;
             case 0x3A: return KEY_CAPSLOCK;
-            case 0x5B: return KEY_WIN;
             case 0x38: return KEY_LALT;
+
+            // Teclas de Função (F1 - F12)
+            case 0x3B: return KEY_F1;
+            case 0x3C: return KEY_F2;
+            case 0x3D: return KEY_F3;
+            case 0x3E: return KEY_F4;
+            case 0x3F: return KEY_F5;
+            case 0x40: return KEY_F6;
+            case 0x41: return KEY_F7;
+            case 0x42: return KEY_F8;
+            case 0x43: return KEY_F9;
+            case 0x44: return KEY_F10;
+            case 0x57: return KEY_F11;
+            case 0x58: return KEY_F12;
         }
     } else {
         // Scancodes que começam com 0xE0
         switch (scancode) {
+            case 0x1D: return KEY_CTRL;      // Right Ctrl
+            case 0x38: return KEY_RALT;      // Right Alt
+            case 0x5B: return KEY_WIN;       // Left Win
+            case 0x5C: return KEY_WIN;       // Right Win
+
             case 0x53: return KEY_DELETE;
             case 0x4B: return KEY_LEFT;
             case 0x4D: return KEY_RIGHT;
             case 0x48: return KEY_UP;
             case 0x50: return KEY_DOWN;
+
+            case 0x47: return KEY_HOME;
+            case 0x4F: return KEY_END;
+            case 0x49: return KEY_PAGEUP;
+            case 0x51: return KEY_PAGEDOWN;
+
+            // Volume e Multimédia (HP)
+            case 0x20: return KEY_VOLUME_MUTE;
+            case 0x2E: return KEY_VOLUME_DOWN;
+            case 0x30: return KEY_VOLUME_UP;
+            case 0x19: return KEY_MEDIA_NEXT;
+            case 0x10: return KEY_MEDIA_PREV;
+            case 0x24: return KEY_MEDIA_STOP;
+            case 0x22: return KEY_MEDIA_PLAY;
+
         }
     }
     return 0;
-}
-
-int scancode_is_especial(int scancode) {
-
-    switch (scancode) {
-        case 0x0E:
-        case 0x0F:
-        case 0x1C:
-        case 0x1D:
-        case 0x2A:
-        case 0x36:
-        case 0x3A:
-        case 0x5B:
-        case 0x38:
-            return 1; // GRUPO: ESPECIAL
-
-        default:
-            return 0; // GRUPO: ASCII
-    }
 }

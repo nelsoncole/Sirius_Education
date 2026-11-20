@@ -10,11 +10,11 @@ TARGET   := procyon.a
 PROCYON_BASE_OBJ := cpu_memory.o utf8_decode.o procyon_file.o window.o pixel.o \
                     text.o text_cache.o event.o image.o icon.o color.o draw_rect.o \
 					draw_line.o layer.o compositor.o framebuffer.o mouse_cursor.o \
-					procyon_ipc.o
+					procyon_ipc.o keymap.o
 
 PROCYON_UI_OBJ   := components.o label.o button.o iconbutton.o checkbox.o listbox.o radiobutton.o \
                     slider.o progressbar.o painel.o combobox.o editbox.o gridview.o scroll.o \
-					console.o
+					console.o textbox.o
 
 OBJS     := $(PROCYON_BASE_OBJ) $(PROCYON_UI_OBJ)
 

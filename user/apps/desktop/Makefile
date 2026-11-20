@@ -31,7 +31,7 @@ CFLAGS  += -I$(LIBC_INC) -I$(PROCYON_INC)
 LDFLAGS := -m elf_x86_64 -nostdlib -T $(LINKER_SCR)
 
 CRT0    := $(CRT0_DIR)/crt0.o
-PROCYON_OBJ := procyon.o keymap.o desktop.o app_loader.o
+PROCYON_OBJ := procyon.o desktop.o app_loader.o
 
 # Biblioteca estática gerada pelo teu Makefile base
 LIBC_A   := $(LIBC_DIR)/libc.a

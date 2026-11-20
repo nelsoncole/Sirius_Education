@@ -9,6 +9,7 @@
 #include "mouse_cursor.h"
 #include "cpu_memory.h"
 #include "color.h"
+#include "keymap.h"
 
 //UI
 #include "ui/include/components.h"

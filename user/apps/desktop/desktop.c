@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <spawn.h>
+#include <sys/mman.h>
 #include <procyon/procyon.h>
 #include <string.h>
 
@@ -24,16 +25,20 @@ extern char **environ;
 #define START_MENU_START_Y         95
 
 
-int start_all_apps, start_power_requested;
-
 
 #define START_MENU_WIDTH (START_APP_ICON_WIDTH*5 + START_MENU_ICON_SPACING_X*5 + START_MENU_START_X*2)
 #define START_MENU_HEIGHT 550
 
-static int startmenu_visible = 0;
 window_t *menu_win = 0;
 
-static int width, height;
+typedef struct {
+    int start_all_apps;
+    int start_power_requested;
+    int startmenu_visible;
+} shared_data_t;
+
+shared_data_t *shared;
+
 // Estrutura para gerir os ícones da barra de tarefas
 typedef struct {
     ui_context_t *tui;
@@ -49,18 +54,56 @@ void on_start_menu_click(component_t *comp)
 {
     (void)comp;
 
-    startmenu_visible = !startmenu_visible;
-    if (startmenu_visible)
+    /*shared->startmenu_visible = !shared->startmenu_visible;
+    if (shared->startmenu_visible)
     {
         pid_t pid = fork();
         if(pid == 0) run_start_menu_process();
-    }
+    }*/
+
+    if (shared->startmenu_visible)
+        return;
+
+    shared->startmenu_visible = 1;
+    shared->start_all_apps = 0;
+    shared->start_power_requested = 0;
+
+    pid_t pid = fork();
+
+    if (pid == 0)
+        run_start_menu_process();
+
+    if (pid < 0)
+        shared->startmenu_visible = 0;
 }
 
 void on_dummy_click(component_t *comp)
 {
     (void)comp;
     // Ação de exemplo para outros ícones
+}
+
+void on_menu_click(component_t *comp)
+{
+    shared->start_power_requested = 1;
+    
+    if(!comp || comp->command[0] == '\0') return;
+
+    pid_t pid;
+    int ret;
+
+    char *argv[] = {
+        comp->command,
+        NULL
+    };
+
+    ret = posix_spawn(&pid, argv[0], NULL, NULL, argv, environ);
+    if (ret != 0) {
+        printf("[on_menu_click] Erro ao executar processo: %d\n", ret);
+    }else {
+        printf("[on_menu_click] Processo criado: PID %d\n", pid);
+    }
+
 }
 
 // 1. Inicializa o gestor da barra de tarefas
@@ -77,7 +120,25 @@ void start_app_init(ui_context_t *ui)
     
     component_t *panel = create_panel(ui, 0, 0, START_MENU_WIDTH, START_MENU_START_Y - 10, RGBA_TO_ARGB(rgba(200, 200, 200, 255)), 4, 0xFFE0E0E0);
     
-    create_editbox(ui, START_MENU_START_X, (START_MENU_START_Y - 40)/2, START_MENU_WIDTH-(START_MENU_START_X*2), 40);
+    component_t *editbox = create_editbox(ui, START_MENU_START_X, (START_MENU_START_Y - 40)/2, START_MENU_WIDTH-(START_MENU_START_X*2), 40, 24, EDITBOX_TEXT);
+
+    editbox_data_t *d = (editbox_data_t*) editbox->data;
+    d->border_radius = 8;
+    d->border_thickness = 4;
+    d->ctx->window->bg = ui->window->bg;
+    editbox->bg = ui->window->bg;
+    editbox->fg = argb(255, 0, 0 , 0);
+    editbox->border_color = ui->window->bg;
+
+    editbox_set_multiline(editbox, 0);
+
+    editbox_set_vertical_alignment(editbox, EDITBOX_ALIGN_VCENTER);
+
+    editbox_set_scrollbars(
+        editbox,
+        0,  // Vertical
+        0   // Horizontal
+    );
 
     panel = create_panel(ui, 0, START_MENU_HEIGHT-(START_MENU_START_Y - 10), START_MENU_WIDTH, START_MENU_START_Y - 10, RGBA_TO_ARGB(rgba(200, 200, 200, 255)), 4, 0xFFE0E0E0);
     if (panel)
@@ -155,27 +216,6 @@ component_t* taskbar_add_icon(const char *label, const char *icon_path, void (*c
     return icon;
 }
 
-void on_menu_click(component_t *comp)
-{
-    if(!comp || comp->command[0] == '\0') return;
-
-    pid_t pid;
-    int ret;
-
-    char *argv[] = {
-        comp->command,
-        NULL
-    };
-
-    ret = posix_spawn(&pid, argv[0], NULL, NULL, argv, environ);
-    if (ret != 0) {
-        printf("[on_menu_click] Erro ao executar processo: %d\n", ret);
-    }else {
-        printf("[on_menu_click] Processo criado: PID %d\n", pid);
-    }
-
-}
-
 static component_t* scroll_start_menu_add_app(component_t *scroll, int id, const char *name, const char *icon_path, char *command) {
 
     scroll_data_t *d = (scroll_data_t*)scroll->data;
@@ -208,18 +248,22 @@ static component_t* scroll_start_menu_add_app(component_t *scroll, int id, const
 
 void procyon_desktop_main(int info_width, int info_height) {
 
-    width = info_width;
-    height = info_height;
+    shared = mmap(NULL, sizeof(shared_data_t),
+        PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+    if (shared == MAP_FAILED) exit(-1);
+
+    memset(shared, 0, sizeof(shared_data_t));
 
     int socket_fd = procyon_init_client();
     if (socket_fd < 0) {
-        exit(-1);
+        exit(-2);
     }
 
-    window_t* desktop_win = overlay_window_create(0, 0, width, height, 0xFF000000, 0x0000FF);
+    window_t* desktop_win = overlay_window_create(0, 0, info_width, info_height, 0xFF000000, 0x0000FF);
     if (!desktop_win) {
         procyon_finish_client(socket_fd);
-        exit(-1);
+        exit(-3);
     }
 
     image_t img;
@@ -252,15 +296,15 @@ void procyon_desktop_main(int info_width, int info_height) {
         int fd = procyon_init_client();
         if (fd < 0)
         {
-            exit(-1);
+            exit(-4);
         }
 
         int taskbar_height = 50;
-        window_t *win = overlay_window_create(0, height - taskbar_height, width, taskbar_height, RGBA_TO_ARGB(rgba(245, 245, 255, 255)), 0xFF000000);
+        window_t *win = overlay_window_create(0, info_height - taskbar_height, info_width, taskbar_height, RGBA_TO_ARGB(rgba(245, 245, 255, 255)), 0xFF000000);
         if (!win)
         {
             procyon_finish_client(fd);
-            exit(-2);
+            exit(-5);
         }
 
         ui_context_t tui = {
@@ -274,15 +318,15 @@ void procyon_desktop_main(int info_width, int info_height) {
             .lock = 0
         };
         // Inicializa o gestor da barra de tarefas
-        taskbar_init(&tui, width, taskbar_height);
+        taskbar_init(&tui, info_width, taskbar_height);
 
         int taskbar_h = 50;
 
         int menu_w = START_MENU_WIDTH;
         int menu_h = START_MENU_HEIGHT;
 
-        int menu_x = (width - menu_w) / 2;
-        int menu_y = height - taskbar_h - menu_h - 12;
+        int menu_x = (info_width - menu_w) / 2;
+        int menu_y = info_height - taskbar_h - menu_h - 12;
 
         menu_win = overlay_window_create(
             menu_x,
@@ -371,9 +415,6 @@ void run_start_menu_process(void)
 
     enviar_janela_ao_servidor(menu_fd, menu_win, 2);
 
-    start_all_apps = 0;
-    start_power_requested = 0;
-
     while (1)
     {
         ui_draw(&mui);
@@ -382,26 +423,27 @@ void run_start_menu_process(void)
 
         ui_event(&mui, ev);
 
-        if (start_power_requested)
+        if (shared->start_power_requested)
         {
-            enviar_remocao_janela(menu_fd, menu_win);
             break;
         }
 
         if (ev.type == EVENT_FOCUS_LOST ||
             ev.type == EVENT_WINDOW_CLOSE)
         {
-            enviar_remocao_janela(menu_fd, menu_win);
             break;
         }
 
         if (ev.type == EVENT_KEY_DOWN &&
             ev.key.keycode == KEY_ESCAPE)
         {
-            enviar_remocao_janela(menu_fd, menu_win);
             break;
         }
     }
+
+    enviar_remocao_janela(menu_fd, menu_win);
+
+    shared->startmenu_visible = 0;
 
     procyon_finish_client(menu_fd);
     _exit(0);

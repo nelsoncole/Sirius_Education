@@ -82,7 +82,7 @@ static int tfs_keyboard_read(vfs_node_t* node, uint64_t offset,
 
     memcpy(buffer, &packet, sizeof(keyboard_packet_t));
 
-    //kprintf("%x %x\n", packet.scancode, packet.mods);
+    //kprintf("%x %x %x\n", packet.scancode, packet.mods, packet.is_e0_extended);
 
     return sizeof(keyboard_packet_t);
 }

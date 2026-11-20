@@ -44,4 +44,6 @@ int console_put_char(component_t *console, char ch);
 int console_write(component_t *console, const char *text);
 int console_newline(component_t *console);
 
+int console_clear(component_t *console);
+
 #endif

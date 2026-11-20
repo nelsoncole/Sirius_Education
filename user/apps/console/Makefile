@@ -16,7 +16,7 @@ CFLAGS  += -I$(LIBC_INC) -I$(PROCYON_INC)
 LDFLAGS := -m elf_x86_64 -nostdlib -T $(LINKER_SCR)
 
 CRT0    := $(CRT0_DIR)/crt0.o
-CONSOLE_OBJ := console.o
+CONSOLE_OBJ := console.o ansi_parser.o
 
 LIBC_A   := $(LIBC_DIR)/libc.a
 PROCYON_A := $(PROCYON_DIR)/procyon.a

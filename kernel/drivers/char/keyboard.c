@@ -90,51 +90,61 @@ void keyboard_handler(void)
         return;
     }
 
+    /* Captura o estado estendido numa variável local e limpa a global imediatamente */
+    uint8_t is_extended = g_is_e0_extended;
+    g_is_e0_extended = 0;
+
     /* 
      * LÓGICA DE ATUALIZAÇÃO DO ESTADO VIVO DOS MODIFICADORES
-     * Feito imediatamente na interrupção para manter precisão de tempo real.
+     * Só atualizamos LSHIFT, RSHIFT e CAPSLOCK se NÃO for estendido (!is_extended).
+     * Isto evita que sequências como E0 2A (Fake Shift das setas/PrintScreen) corrompam o estado do Shift!
      */
     uint8_t packet_modifiers = g_current_modifiers;
 
     if (byte & 0x80) {
         /* CASO A: A tecla foi Solta (Key Up) */
-        packet_modifiers |= KBD_MOD_RELEASE; // Sinaliza no pacote
+        packet_modifiers |= KBD_MOD_RELEASE;
         uint8_t pure_scancode = byte & ~0x80;
 
-        if (pure_scancode == SCAN_LSHIFT)  g_current_modifiers &= ~KBD_MOD_LSHIFT;
-        if (pure_scancode == SCAN_RSHIFT)  g_current_modifiers &= ~KBD_MOD_RSHIFT;
+        if (!is_extended) {
+            if (pure_scancode == SCAN_LSHIFT)  g_current_modifiers &= ~KBD_MOD_LSHIFT;
+            if (pure_scancode == SCAN_RSHIFT)  g_current_modifiers &= ~KBD_MOD_RSHIFT;
+        }
         
-        byte = pure_scancode; // Preserva o scancode puro para inserção
+        byte = pure_scancode;
     } 
     else {
         /* CASO B: A tecla foi Pressionada (Key Down) */
-        if (byte == SCAN_LSHIFT)   g_current_modifiers |= KBD_MOD_LSHIFT;
-        if (byte == SCAN_RSHIFT)   g_current_modifiers |= KBD_MOD_RSHIFT;
-        if (byte == SCAN_CAPSLOCK) g_current_modifiers ^= KBD_MOD_CAPS; // Inverte (Toggle)
+        if (!is_extended) {
+            if (byte == SCAN_LSHIFT)   g_current_modifiers |= KBD_MOD_LSHIFT;
+            if (byte == SCAN_RSHIFT)   g_current_modifiers |= KBD_MOD_RSHIFT;
+            if (byte == SCAN_CAPSLOCK) g_current_modifiers ^= KBD_MOD_CAPS;
+        }
 
-        packet_modifiers = g_current_modifiers; // Atualiza o snapshot do pacote
+        packet_modifiers = g_current_modifiers;
     }
 
-    g_is_e0_extended = 0; // Consome o prefixo temporário nesta fase simples
-
-    /* Injeta a estrutura montada no buffer circular */
+    /* Injeta no buffer antigo (se ainda o usares, podes guardar is_extended ou flag nos modifiers) */
     int next = (g_kbd_head + 1) % KBD_BUFFER_SIZE;
     if (next != g_kbd_tail) {
+        
         g_kbd_raw_buffer[g_kbd_head].scancode = byte;
         g_kbd_raw_buffer[g_kbd_head].modifiers_state = packet_modifiers;
+        //g_kbd_raw_buffer[g_kbd_head].is_e0_extended = is_extended;
+        
         g_kbd_head = next;
         wakeup_thread(&g_kbd_wait, thread_kbd);
     }
 
-    keyboard_packet_t packet;
-
-    packet.is_e0_extended = g_is_e0_extended;
-    packet.mods = packet_modifiers;
-    packet.scancode = byte;
-    /* Enfileira o pacote estável montado no buffer circular */
+    /* Monta o pacote estável com o is_extended capturado */
     next = (g_keyboard_head + 1) % KBD_BUFFER_SIZE;
     if (next != g_keyboard_tail)
     {
+        keyboard_packet_t packet;
+        packet.is_e0_extended = is_extended;
+        packet.mods = packet_modifiers;
+        packet.scancode = byte;
+
         g_keyboard_buffer[g_keyboard_head] = packet;
         g_keyboard_head = next;
 

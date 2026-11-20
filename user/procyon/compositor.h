@@ -25,7 +25,6 @@ void compositor_draw_window(window_t* win);
 void compositor_draw_cursor(unsigned int *buffer);
 
 // Handler
-void compositor_handle_key_down(int key, int type);
 void compositor_remove_invalid_window();
 
 

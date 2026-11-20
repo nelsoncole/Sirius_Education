@@ -14,7 +14,7 @@ int draw_button(component_t* c, window_t* win) {
                     c->x, c->y, c->w, c->h,
                     c->bg,   // cor de fundo (cinza claro)
                     c->border_color,   // borda preta
-                    b->border_thickness,            // espessura borda
+                    b->border_thickness,         // espessura borda
                     b->border_radius);           // raio do canto
 
 	// Texto centralizado

@@ -43,7 +43,6 @@
 
 #include <procyon/procyon.h>
 
-#define KBD_MOD_RELEASE  (1 << 7) /* Tecla solta (Key Up) */
 
 struct tty_user {
     uint64_t user_buffer;
@@ -58,10 +57,6 @@ struct tty_user {
 
 struct tty_user *info;
 int tty;
-
-extern char scancode_to_ascii(int scancode, int mods);
-extern int scancode_to_key(int scancode, int extended);
-extern int scancode_is_especial(int scancode);
 
 extern void procyon_desktop_main(int info_width, int info_height);
 
@@ -147,17 +142,14 @@ void *thread_keyboard_func(void *arg)
                 continue;
             }
 
-            if(kpacket.is_e0_extended) {
-                char key = scancode_to_key(scancode, 1);
-                handle_key_event(key, kpacket.mods, 1);
-            }
-            else if(scancode_is_especial(scancode)){
-                char key = scancode_to_key(scancode, 0);
+            int key = scancode_to_key(scancode, kpacket.is_e0_extended);
+            if(key) {
                 handle_key_event(key, kpacket.mods, 1);
             }
             else {
-                char key = scancode_to_ascii(scancode, kpacket.mods);
-                if(key) handle_key_event(key, kpacket.mods, 0);
+                key = scancode_to_ascii(scancode, kpacket.mods);
+                if(key) 
+                    handle_key_event(key, kpacket.mods, 0);
             }
             
         }

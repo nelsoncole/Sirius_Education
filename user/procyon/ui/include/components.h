@@ -9,11 +9,13 @@
 #include "../../draw_rect.h"
 #include "../../draw_line.h"
 #include "../../color.h"
+#include "../../keymap.h"
 
 typedef enum {
     UI_NONE,
     UI_BUTTON,
     UI_EDITTEXT,
+    UI_TEXTBOX,
     UI_LABEL,
     UI_CHECKBOX,
     UI_PROGRESSBAR,

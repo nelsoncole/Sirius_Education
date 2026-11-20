@@ -39,6 +39,13 @@ void compositor_add_window(window_t* win, int layer) {
     if(!win) return;
     co_lock(&compositor_lock);
 
+    // reiniciar eventos
+    win->event_head = 0;
+    win->event_tail = 0;
+    for (int i = 0; i < MAX_EVENTS; i++) {
+        win->event_queue[i].type = EVENT_NONE;
+    }
+
     if (layer < LAYER_COUNT && layer_counts[layer] < MAX_WINDOWS_PER_LAYER) {
         layers[layer][layer_counts[layer]++] = win;
 
@@ -296,27 +303,6 @@ void compositor_draw_cursor(unsigned int *buffer)
         }
     }
 }
-
-// Handlers
-void compositor_handle_key_down(int key, int type) {
-    window_t* win = get_focused_window();
-    if (!win) return;
-
-    event_t ev;
-    if(!type) {
-        ev.type = EVENT_TEXT_INPUT;
-        ev.text.codepoint = key;
-        ev.key.mods = 0;//get_keyboard_modifiers(); // Ex: Shift/Ctrl
-    }else {
-        ev.type = EVENT_KEY_DOWN;
-        ev.key.keycode = key;
-        ev.key.mods = 0;//get_keyboard_modifiers(); // Ex: Shift/Ctrl
-    }
-
-    push_event_to_window(win, ev);
-
-}
-
 
 
 // Redesenha todas as janelas de todas as camadas

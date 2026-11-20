@@ -74,6 +74,8 @@ typedef uint64_t uintmax_t;
 #define INTMAX_MAX INT64_MAX
 #define UINTMAX_MAX UINT64_MAX
 
+#define SIZE_MAX UINT64_MAX
+
 /* Suporte para divisão de inteiros com resto */
 typedef struct {
     intmax_t quot;

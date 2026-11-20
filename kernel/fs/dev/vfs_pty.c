@@ -24,6 +24,7 @@
 #include <kernel/fs/dev/vfs_tty.h>
 #include <kernel/klib.h>
 #include <kernel/kernel/core/panic.h>
+#include <kernel/fs/dev/termios.h>
 
 /* Protótipos das operações em conformidade estrita com vfs_operations_t */
 static int tfs_ptmx_open(vfs_node_t* node, uint32_t flags);
@@ -316,26 +317,98 @@ static int tfs_pty_replica_write(vfs_node_t* node, uint64_t offset, uint32_t siz
     return bytes_escritos;
 }
 
-static int tfs_ptmx_ioctl(vfs_node_t* node, uint32_t cmd, unsigned long arg) {
-    if (!node || !node->private_data) return -1;
+
+static int tfs_ptmx_ioctl(vfs_node_t* node, uint32_t cmd, unsigned long arg)
+{
+    if (!node || !node->private_data)
+        return -1;
 
     pty_pair_t* pair = (pty_pair_t*)node->private_data;
 
-    if (cmd == TIOCGPTN) {
-        
-        unsigned int* user_pty_num = (unsigned int*)arg;
-        if (!user_pty_num) return -1;
-        
-        *user_pty_num = pair->id;
+    if (cmd == TIOCGPTN)
+    {
+        if (node->ops != &g_ptmx_vfs_ops || !arg)
+            return -1;
 
-        // ATIVAÇÃO DO MASTER: O Espaço de Utilizador (ex: SSHD) requisitou o ID.
-        // Isto indica que existe um processo Master ativo que vai ler a out_queue.
-        pair->master_present = 1; 
+        *(unsigned int*)arg = pair->id;
+        pair->master_present = 1;
 
         return 0;
     }
 
-    return -1; // Comando não implementado/suportado
+    struct tty_device* tty = pair->replica_tty;
+
+    if (!tty)
+        return -1;
+
+    switch (cmd)
+    {
+        case TCGETS:
+        {
+            if (!arg)
+                return -1;
+
+            struct termios term;
+            memset(&term, 0, sizeof(term));
+
+            spin_lock(&tty->lock);
+            term.c_lflag = tty_to_termios_lflag(tty->c_lflag);
+            spin_unlock(&tty->lock);
+
+            memcpy((void*)arg, &term, sizeof(term));
+            return 0;
+        }
+
+        case TCSETS:
+        {
+            if (!arg)
+                return -1;
+
+            struct termios term;
+            memcpy(&term, (void*)arg, sizeof(term));
+
+            spin_lock(&tty->lock);
+
+            tty->c_lflag =
+                (tty->c_lflag & ~(TTY_ICANON | TTY_ECHO)) |
+                termios_to_tty_lflag(term.c_lflag);
+
+            spin_unlock(&tty->lock);
+
+            return 0;
+        }
+
+        case TCSETSF:
+        {
+            if (!arg)
+                return -1;
+
+            struct termios term;
+            memcpy(&term, (void*)arg, sizeof(term));
+
+            spin_lock(&tty->lock);
+
+            tty->in_head = 0;
+            tty->in_tail = 0;
+            tty->raw_count = 0;
+            tty->lines_available = 0;
+            tty->line_start = 0;
+
+            tty->c_lflag =
+                (tty->c_lflag & ~(TTY_ICANON | TTY_ECHO)) |
+                termios_to_tty_lflag(term.c_lflag);
+
+            spin_unlock(&tty->lock);
+
+            return 0;
+        }
+
+        case TCSETSW:
+            /* Ainda não implementado: aguardar a drenagem da saída. */
+            return -1;
+    }
+
+    return -1;
 }
 
 /**
