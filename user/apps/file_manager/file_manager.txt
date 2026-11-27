@@ -1,0 +1,22 @@
+file-manager/
+│
+├── include/
+│   ├── file_manager.h
+│   └── file_dialog.h
+│
+├── src/
+│   ├── file_manager.c
+│   ├── file_dialog.c
+│   └── file_dialog_ui.c
+│
+├── apps/
+│   ├── file_manager_main.c
+│   ├── open_file_main.c
+│   └── save_file_main.c
+│
+├── Makefile
+│
+└── bin/
+    ├── file_manager
+    ├── open_file
+    └── save_file

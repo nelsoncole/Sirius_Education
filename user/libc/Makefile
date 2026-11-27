@@ -27,7 +27,7 @@ TARGET  := libc.a
 
 # 4. Mapeamento Automático de Diretorias e Ficheiros de Origem
 SRC_DIRS := \
-			src src/stdio src/string src/ctype src/stdlib \
+			src/stdio src/string src/ctype src/stdlib \
 			src/errno src/assert src/math src/sys src/sys/arpa src/time \
 			src/signal src/setjmp src/wchar src/pthread
 

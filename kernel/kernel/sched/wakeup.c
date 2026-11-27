@@ -18,63 +18,85 @@
  *   Created Date: 24/10/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 26/10/2026
+ *  Modified Date: 23/11/2026
  * 
  *        License: MIT
  * ============================================================================
  */
+
 #include <kernel/kernel/sched/scheduler.h>
 #include <kernel/kernel/sched/wakeup.h>
 #include <kernel/kernel/sched/wait.h>
 #include <kernel/klib.h>
 
 extern spinlock_t g_wait_lock;
+extern spinlock_t g_wait_no_queue_lock;
 
-void wakeup(void *chan) {
-    if (chan == NULL) return;
-    
-    unsigned long flags = spinlock_lock_irqsave(&g_wait_lock);
+void wakeup(void *chan)
+{
+    if (!chan)
+        return;
 
-    wait_queue_t *node = wait_queue_remove(chan);
+    unsigned long flags =
+        spinlock_lock_irqsave(&g_wait_lock);
 
-    if (node)
+    wait_queue_t *node;
+
+    while ((node = wait_queue_find(chan)) != NULL)
     {
-        /*kprintf("[SCHED] wakeup: Acordando a Thread TID %d bloqueada no canal %p...\n",
-                    node->thread->tid, chan);*/
+        thread_t *thread = node->thread;
 
-        /* 1. Remove a âncora de bloqueio */
-        node->thread->chan = NULL;
+        if (thread &&
+            thread->state == THREAD_WAITING &&
+            thread->chan == chan)
+        {
+            if (wait_queue_remove_node(node))
+            {
+                //kprintf("wakeup tid %ld chan %p cpu id %d\n", thread->tid, thread->chan, thread->cpu_id);
 
-        /* 2. Devolve o estado para READY */
-        node->thread->state = THREAD_READY;
+                thread->chan = NULL;
+                thread->state = THREAD_READY;
+                enqueue_thread(node->cpu, thread);
+                // Nota:
+                // O node e liberado dentro do wait
+                //kfree(node);
 
-        /* 3. Insere a thread de volta na Runqueue do Core para voltar a executar */
-        enqueue_thread(node->cpu, node->thread);
-        kfree(node);
+            }else 
+            {
+                kprintf("no wakeup tid %ld chan %p cpu id %d\n", thread->tid, thread->chan, thread->cpu_id);
+            }
+        }
+        else
+        {
+            break;
+        }
     }
-    spinlock_unlock_irqrestore(&g_wait_lock , flags);
+
+    spinlock_unlock_irqrestore(&g_wait_lock, flags);
 }
 
-void wakeup_thread(void *chan, void *th) {
-    if (!chan || !th ) return;
+void wakeup_no_queue(void *chan, void *th)
+{
+    if (!chan || !th)
+        return;
 
-    unsigned long flags_local = spinlock_lock_irqsave(&g_wait_lock );
+    unsigned long flags =
+        spinlock_lock_irqsave(&g_wait_no_queue_lock);
 
-    thread_t *thread = (thread_t*)th;
-     if (thread != NULL && 
-            thread->state == THREAD_WAITING && 
-            thread->chan == chan) 
-        {
+    thread_t *thread = (thread_t *)th;
 
-            /*kprintf("[SCHED] wakeup: Acordando a Thread TID %d bloqueada no canal %p...\n", 
-                    thread->tid, chan);*/
-            
-            thread->chan = NULL;
+    if (thread->state == THREAD_WAITING &&
+        thread->chan == chan)
+    {
+        thread->chan = NULL;
+        thread->state = THREAD_READY;
 
-            thread->state = THREAD_READY;
-            
-            cpu_data_block_t *cpu = get_cpu_data_block(thread->cpu_id);
+        cpu_data_block_t *cpu =
+            get_cpu_data_block(thread->cpu_id);
+
+        if (cpu)
             enqueue_thread(cpu, thread);
-        }
-    spinlock_unlock_irqrestore(&g_wait_lock , flags_local);
+    }
+
+    spinlock_unlock_irqrestore(&g_wait_no_queue_lock, flags);
 }

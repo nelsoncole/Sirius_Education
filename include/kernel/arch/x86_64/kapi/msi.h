@@ -21,7 +21,7 @@
 #ifndef _MSI_H_
 #define _MSI_H_
 
-#include <kernel/drivers/bus/pci.h>
+#include <kernel/drivers/bus/pci/pci.h>
 
 /* Limite estendido do hardware para suportar as 48 GSIs do IOAPIC moderno */
 #define MAX_MSI_PINS    32

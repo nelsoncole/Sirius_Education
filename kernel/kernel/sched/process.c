@@ -16,6 +16,7 @@
  * ============================================================================
  */
 
+#include <kernel/arch/x86_64/mm/paging.h>
 #include <kernel/kernel/sched/process.h>
 #include <kernel/kernel/sched/scheduler.h>
 #include <kernel/kernel/sched/process_loader.h>
@@ -25,6 +26,7 @@
 #include <kernel/klib.h>
 #include <kernel/kernel/core/spinlock.h>
 #include <kernel/kernel/sched/wait.h>
+
 
 extern unsigned long g_kernel_pml4_phys;
 
@@ -125,6 +127,43 @@ process_t* process_find_by_pid(pid_t pid)
     /* Liberta a região crítica para os outros Cores */
     process_list_spinlock_release(flags);
     return target;
+}
+
+process_t* process_create_kernel(uint32_t cpu_id)
+{
+    process_t* proc = kmalloc(sizeof(process_t));
+
+    if (!proc)
+        return NULL;
+
+    memset(proc, 0, sizeof(process_t));
+
+    proc->pid = 0;
+    proc->ppid = 0;
+    proc->state = PROCESS_READY;
+
+    proc->threads_head = NULL;
+    proc->threads_tail = NULL;
+    proc->thread_count = 0;
+    spin_lock_init(&proc->thread_lock);
+    strncpy(proc->pwd, "/", MAX_PATH_LENGTH);
+
+    proc->cr3 = read_cr3();
+
+
+    /* 4. Criação e vinculação da Thread Principal em Ring 3 usando o RSP ajustado */
+    thread_t* main_th = thread_create_init(cpu_id);
+
+    if (!main_th) 
+    {
+        kprintf("[Process] Erro: Falha ao criar a thread indler. cpu id %\n", cpu_id);
+        for(;;) asm("hlt");
+    }
+
+    main_th->owner = proc;
+    proc->main_thread = main_th;
+
+    return proc;
 }
 
 
@@ -602,8 +641,10 @@ void process_destroy(process_t* proc)
         // LIMPEZA DO VFS: Fecho regulamentar baseado em Contagem de Referências
         process_file_destroy(proc);
 
-        wait_queue_t *chan = wait_queue_remove(proc->main_thread->chan);
-        if(chan) kfree(chan);
+        wait_queue_t *chan = wait_queue_find(proc->main_thread->chan);
+        if (wait_queue_remove_node(chan)) {
+            kfree(chan);
+        }
 
         kfree(proc->main_thread);
 

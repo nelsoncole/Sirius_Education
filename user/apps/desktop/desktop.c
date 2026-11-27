@@ -219,7 +219,7 @@ component_t* taskbar_add_icon(const char *label, const char *icon_path, void (*c
 static component_t* scroll_start_menu_add_app(component_t *scroll, int id, const char *name, const char *icon_path, char *command) {
 
     scroll_data_t *d = (scroll_data_t*)scroll->data;
-    if(!d) return NULL;
+    if(!d || !d->ctx) return NULL;
    
     component_t *app = create_iconbutton(d->ctx, 0, 0,
         START_APP_ICON_WIDTH, START_APP_ICON_HEIGHT,
@@ -338,7 +338,7 @@ void procyon_desktop_main(int info_width, int info_height) {
 
         // Adiciona os ícones (cada chamada recalcula e centraliza o conjunto)
         taskbar_add_icon("Start", "usr/share/icons/menu.png", on_start_menu_click);
-        taskbar_add_icon("Files", "usr/share/icons/folder.png", on_dummy_click);
+        taskbar_add_icon("Files", "usr/share/icons/file_manager.png", on_dummy_click);
         taskbar_add_icon("Terminal", "usr/share/icons/terminal.png", on_dummy_click);
 
         enviar_janela_ao_servidor(fd, win, 2);

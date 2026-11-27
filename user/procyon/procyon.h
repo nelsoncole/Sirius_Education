@@ -27,5 +27,7 @@
 #include "ui/include/gridview.h"
 #include "ui/include/scroll.h"
 #include "ui/include/console.h"
+#include "ui/include/window_controls.h"
+#include "ui/include/ui_file_manager.h"
 
 #endif

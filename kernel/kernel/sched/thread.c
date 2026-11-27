@@ -83,9 +83,11 @@ static thread_t* thread_create_common(void (*entry_point)(void*), void* arg, voi
     return thread;
 }
 
+
+
 thread_t* thread_create_init(uint32_t cpu_id)
 {
-    thread_t* thread = (thread_t*)kmalloc(sizeof(thread_t));
+     thread_t* thread = (thread_t*)kmalloc(sizeof(thread_t));
     void* kernel_stack_raw = (void*)kmalloc(8192);
 
     if (!thread || !kernel_stack_raw) 
@@ -101,7 +103,7 @@ thread_t* thread_create_init(uint32_t cpu_id)
 
     uint64_t absolute_top = (uint64_t)kernel_stack_raw + 8192;
 
-    uint64_t stack_top = absolute_top - sizeof(stack_frame_t);
+    uint64_t stack_top = absolute_top;// - sizeof(stack_frame_t);
     stack_frame_t* frame = (stack_frame_t*)stack_top;
 
     memset(frame, 0, sizeof(stack_frame_t));
@@ -129,6 +131,7 @@ thread_t* thread_create_init(uint32_t cpu_id)
     thread->next        = NULL;
 
     return thread;
+
 }
 
 /**

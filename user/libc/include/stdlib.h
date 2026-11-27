@@ -74,4 +74,6 @@ int system(const char *string);
 void srand(unsigned int seed);
 int rand(void);
 
+char *realpath(const char *path, char *resolved_path);
+
 #endif

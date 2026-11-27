@@ -8,13 +8,14 @@
  *   Created Date: 15/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 15/09/2026
+ *  Modified Date: 23/11/2026
  * 
  *        License: MIT
  * ============================================================================
  */
 
 #include <kernel/kernel/core/spinlock.h>
+#include <kernel/arch/x86_64/kapi/irq.h>
 
 void spin_lock_init(spinlock_t *lock) {
     if (!lock) return;
@@ -52,15 +53,12 @@ void spinlock_release(spinlock_t* lock)
 
 /* Trincos blindados contra interrupções - Substitua pelas funções equivalentes da kapi.h do Sirius */
 unsigned long spinlock_lock_irqsave(spinlock_t* lock) {
-    unsigned long flags;
-    /* 1. Desativa interrupções locais do núcleo atual e guarda o estado anterior */
-    __asm__ __volatile__("pushf; pop %0; cli" : "=g"(flags) :: "memory");
+    unsigned long flags = irq_save();
     spinlock_acquire(lock);
     return flags;
 }
 
 void spinlock_unlock_irqrestore(spinlock_t* lock, unsigned long flags) {
     spinlock_release(lock);
-    /* 2. Restaura o estado anterior das interrupções */
-    __asm__ __volatile__("push %0; popf" : : "g"(flags) : "memory", "cc");
+    irq_restore(flags);
 }

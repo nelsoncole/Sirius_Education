@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <limits.h>
 
 static int scroll_clamp_offset(scroll_data_t *d, int h)
 {
@@ -26,13 +27,103 @@ static int scroll_clamp_offset(scroll_data_t *d, int h)
 
 static int scroll_contains(component_t *c, int x, int y)
 {
-    return x >= c->x && y >= c->y &&
-           x < c->x + c->w && y < c->y + c->h;
+    if (!c || c->w <= 0 || c->h <= 0)
+        return 0;
+
+    return (int64_t)x >= c->x && (int64_t)y >= c->y &&
+           (int64_t)x < (int64_t)c->x + c->w &&
+           (int64_t)y < (int64_t)c->y + c->h;
+}
+
+static void scroll_invalidate(component_t *c)
+{
+    if (!c)
+        return;
+
+    c->render = 1;
+    c->dirty = 1;
+}
+
+static void scroll_on_clear(component_t *c)
+{
+    if (!c || !c->data)
+        return;
+
+    scroll_data_t *d = (scroll_data_t *)c->data;
+
+    for (int i = 0; i < d->child_count; i++) {
+        component_t *child = d->children[i];
+        d->children[i] = NULL;
+
+         if (child)
+            ui_destroy_component(child);
+    }
+
+    d->child_count = 0;
+    d->content_height = 0;
+    d->scroll_offset = 0;
+    d->dragging_scroll = 0;
+    d->background_render = 1;
+
+    if (d->ctx && d->ctx->window)
+        d->ctx->window->invalid = 1;
+
+    scroll_invalidate(c);
+}
+
+static void scroll_on_enable(component_t *c)
+{
+    if (!c || !c->data)
+        return;
+
+    ((scroll_data_t *)c->data)->background_render = 1;
+    scroll_invalidate(c);
+}
+
+static void scroll_on_disable(component_t *c)
+{
+    if (!c || !c->data)
+        return;
+
+    ((scroll_data_t *)c->data)->dragging_scroll = 0;
+    scroll_invalidate(c);
+}
+
+static void scroll_on_destroy(component_t *c)
+{
+    if (!c)
+        return;
+
+    scroll_data_t *d = (scroll_data_t *)c->data;
+    if (!d)
+        return;
+
+    /*
+     * Os filhos não são libertados: a propriedade continua a pertencer
+     * ao código que os criou.
+     */
+    if (d->ctx) {
+        if (d->ctx->window) {
+            free(d->ctx->window->buffer);
+            d->ctx->window->buffer = NULL;
+            free(d->ctx->window);
+            d->ctx->window = NULL;
+        }
+
+        free(d->ctx);
+        d->ctx = NULL;
+    }
+
+    free(d->children);
+    d->children = NULL;
+    free(d);
+    c->data = NULL;
 }
 
 component_t *create_scroll(ui_context_t *ctx, int x, int y, int w, int h)
 {
-    if (!ctx || w <= 0 || h <= 0)
+    if (!ctx || !ctx->window || !ctx->window->font ||
+        w <= SCROLLBAR_WIDTH || h <= 0)
         return NULL;
 
     component_t *c = calloc(1, sizeof(component_t));
@@ -72,9 +163,25 @@ component_t *create_scroll(ui_context_t *ctx, int x, int y, int w, int h)
     memset(d->ctx, 0, sizeof(ui_context_t));
 
     d->ctx->fd = ctx->fd;
-    d->width = w - (d->scrollbar_width+(d->border_thickness*2));
-    d->height = h - (d->border_thickness*2);
-    d->ctx->window = component_window_create(ctx->window, d->width, d->height, argb(255, 245, 245, 245), 0);
+    d->ctx->suppress_server_notify = 1;
+    d->width = w - d->scrollbar_width - (d->border_thickness * 2);
+    d->height = h - (d->border_thickness * 2);
+
+    if (d->width <= 0 || d->height <= 0) {
+        free(d->ctx);
+        free(d->children);
+        free(d);
+        free(c);
+        return NULL;
+    }
+
+    d->ctx->window = component_window_create(
+        ctx->window,
+        d->width,
+        d->height,
+        argb(255, 245, 245, 245),
+        0
+    );
 
     if (!d->ctx->window)
     {
@@ -91,7 +198,9 @@ component_t *create_scroll(ui_context_t *ctx, int x, int y, int w, int h)
     c->h = h;
     c->type = UI_SCROLL;
     c->visible = 1;
+    c->enabled = 1;
     c->render = 1;
+    c->dirty = 1;
     c->ctx = ctx;
     c->data = d;
     c->font = *(stbtt_fontinfo *)ctx->window->font;
@@ -101,8 +210,16 @@ component_t *create_scroll(ui_context_t *ctx, int x, int y, int w, int h)
 
     c->on_draw = draw_scroll;
     c->on_event = scroll_event;
+    c->on_clear = scroll_on_clear;
+    c->on_enable = scroll_on_enable;
+    c->on_disable = scroll_on_disable;
+    c->on_destroy = scroll_on_destroy;
 
     if (ui_add_component(ctx, c) != 0) {
+        if (d->ctx->window) {
+            free(d->ctx->window->buffer);
+            free(d->ctx->window);
+        }
         free(d->ctx);
         free(d->children);
         free(d);
@@ -245,7 +362,10 @@ void scroll_set_layout(
 
     scroll_data_t *d = scroll->data;
 
-    if (!d)
+    if (!d || layout < SCROLL_LAYOUT_VERTICAL ||
+        layout > SCROLL_LAYOUT_GRID ||
+        spacing_x < 0 || spacing_y < 0 ||
+        item_width < 0 || item_height < 0)
         return;
 
     d->layout = layout;
@@ -257,62 +377,63 @@ void scroll_set_layout(
     scroll_recalculate_layout(scroll);
 }
 
+static int scroll_resize_content_buffer(scroll_data_t *d, int required_height)
+{
+    if (!d || !d->ctx || !d->ctx->window || required_height <= 0)
+        return -1;
+
+    window_t *win = d->ctx->window;
+
+    if (!win->buffer || win->width <= 0 || win->height <= 0)
+        return -1;
+
+    if (required_height <= win->height)
+        return 0;
+
+    if ((size_t)required_height >
+        SIZE_MAX / (size_t)win->width / sizeof(uint32_t))
+        return -1;
+
+    size_t old_pixels = (size_t)win->width * (size_t)win->height;
+    size_t new_pixels = (size_t)win->width * (size_t)required_height;
+    size_t new_size = new_pixels * sizeof(uint32_t);
+
+    uint32_t *new_buffer = realloc(win->buffer, new_size);
+    if (!new_buffer)
+        return -1;
+
+    for (size_t i = old_pixels; i < new_pixels; i++)
+        new_buffer[i] = win->bg;
+
+    win->buffer = new_buffer;
+    win->height = required_height;
+
+    return 0;
+}
+
 int scroll_add_component(component_t *scroll, component_t *child)
 {
     if (!scroll || !child || scroll->type != UI_SCROLL)
         return -1;
 
-    scroll_data_t *d = scroll->data;
+    scroll_data_t *d = (scroll_data_t *)scroll->data;
 
     if (!d || !d->ctx || !d->ctx->window)
         return -1;
 
-    window_t *win = d->ctx->window;
-
-    if (child->y < 0 || child->h <= 0)
+    if (child->h <= 0 || child->w <= 0)
         return -1;
 
-    int bottom = child->y + child->h;
-
-    if (bottom < child->y)
+    if (d->child_count < 0 || d->child_capacity <= 0 ||
+        d->child_count > d->child_capacity)
         return -1;
-
-    int required_height = bottom;
-
-    if (required_height < d->content_height)
-        required_height = d->content_height;
-
-    if (required_height > win->height) {
-        
-        size_t new_size =
-            (size_t)win->width * required_height * sizeof(uint32_t);
-
-        uint32_t *new_buffer = realloc(win->buffer, new_size);
-
-        if (!new_buffer)
-            return -1;
-
-        uint32_t *buffer = new_buffer;
-
-        size_t old_pixels =
-            (size_t)win->width * win->height;
-
-        size_t new_pixels =
-            (size_t)win->width * required_height;
-
-        for (size_t i = old_pixels; i < new_pixels; i++)
-            buffer[i] = win->bg;
-
-        win->buffer = new_buffer;
-        win->height = required_height;
-    }
 
     if (d->child_count >= d->child_capacity) {
+        if (d->child_capacity > INT_MAX / 2 ||
+            (size_t)d->child_capacity * 2 > SIZE_MAX / sizeof(component_t *))
+            return -1;
 
         int new_capacity = d->child_capacity * 2;
-
-        if (new_capacity <= d->child_capacity)
-            return -1;
 
         component_t **new_children = realloc(
             d->children,
@@ -328,13 +449,21 @@ int scroll_add_component(component_t *scroll, component_t *child)
 
     d->children[d->child_count++] = child;
 
+    /*
+     * O layout altera child->x e child->y. Por isso, o buffer só pode
+     * ser redimensionado depois do recálculo, usando content_height.
+     */
     scroll_recalculate_layout(scroll);
 
-    d->background_render = 1;
-    scroll->render = 1;
+    if (scroll_resize_content_buffer(d, d->content_height) != 0) {
+        d->child_count--;
+        scroll_recalculate_layout(scroll);
+        return -1;
+    }
 
-    if (scroll->ctx && scroll->ctx->window)
-        scroll->ctx->window->invalid = 1;
+    d->background_render = 1;
+    child->render = 1;
+    scroll_invalidate(scroll);
 
     return 0;
 }
@@ -349,6 +478,9 @@ void scroll_set_content_height(component_t *scroll, int content_height)
     if (!d)
         return;
 
+    if (content_height < 0)
+        content_height = 0;
+
     d->content_height = content_height;
 
     scroll_clamp_offset(d, scroll->h);
@@ -356,8 +488,7 @@ void scroll_set_content_height(component_t *scroll, int content_height)
     d->background_render = 1;
     scroll->render = 1;
 
-    if (scroll->ctx && scroll->ctx->window)
-        scroll->ctx->window->invalid = 1;
+    scroll_invalidate(scroll);
 }
 
 void scroll_set_offset(component_t *scroll, int offset)
@@ -377,8 +508,7 @@ void scroll_set_offset(component_t *scroll, int offset)
     d->background_render = 1;
     scroll->render = 1;
 
-    if (scroll->ctx && scroll->ctx->window)
-        scroll->ctx->window->invalid = 1;
+    scroll_invalidate(scroll);
 }
 
 
@@ -421,12 +551,14 @@ static void scroll_get_metrics(
 
 int draw_scroll(component_t *c, window_t *win)
 {
-    if (!c || !win || !c->visible || !c->render)
+    if (!c || !win || !win->buffer || !c->visible ||
+        !c->enabled || !c->render)
         return 0;
 
-    scroll_data_t *d = c->data;
+    scroll_data_t *d = (scroll_data_t *)c->data;
 
-    if (!d)
+    if (!d || !d->ctx || !d->ctx->window ||
+        !d->ctx->window->buffer)
         return 0;
 
     ui_lock(&win->lock);
@@ -445,8 +577,8 @@ int draw_scroll(component_t *c, window_t *win)
             d->ctx->window->buffer,
             d->ctx->window->width,
             d->ctx->window->height,
-            d->ctx->window->x,
-            d->ctx->window->y,
+            0,
+            0,
             d->ctx->window->width,
             d->ctx->window->height,
             d->ctx->window->bg
@@ -549,7 +681,8 @@ int draw_scroll(component_t *c, window_t *win)
 
 int scroll_event(component_t *c, event_t ev)
 {
-    if (!c || !c->visible || c->type != UI_SCROLL)
+    if (!c || !c->visible || !c->enabled ||
+        c->type != UI_SCROLL || !c->ctx || !c->ctx->window)
         return 0;
 
     scroll_data_t *d = c->data;
@@ -670,15 +803,19 @@ int scroll_event(component_t *c, event_t ev)
         d->dragging_scroll = 0;
     }
 
-    if ((ev.type == EVENT_MOUSE_LEFT_DOWN || ev.type == EVENT_MOUSE_MOVE ) &&
+    /*if ((ev.type == EVENT_MOUSE_LEFT_DOWN || ev.type == EVENT_MOUSE_MOVE ) &&
         !scroll_contains(c, ev.mouse.x, ev.mouse.y))
-        return c->render;
+        return c->render;*/
 
     int event = 0;
     int viewport_w = c->w - d->scrollbar_width;
 
     if (viewport_w < 0)
         viewport_w = 0;
+
+    if (ev.type == EVENT_MOUSE_LEFT_DOWN &&
+        ev.mouse.x >= c->x + viewport_w)
+        return c->render;
 
     for (int i = d->child_count - 1; i >= 0; i--)
     {
@@ -696,7 +833,8 @@ int scroll_event(component_t *c, event_t ev)
         event += child->on_event(child, child_ev);
     }
 
-    if(event > 0) c->render = 1;
+    if (event > 0)
+        scroll_invalidate(c);
 
     return c->render;
 }

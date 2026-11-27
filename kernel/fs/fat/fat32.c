@@ -692,8 +692,17 @@ static int fat32_close(vfs_node_t *node) {
             }
 
             // 2. Persiste o tamanho real atualizado em memória RAM diretamente nos setores do disco físico
-            fat32_update_entry_size(&parent_node, node->name, (uint32_t)node->size);
-            
+            if (fat32_update_entry_size(
+                    &parent_node,
+                    node->name,
+                    (uint32_t)node->size) != 0)
+            {
+
+                kprintf("[FAT32] Erro ao atualizar tamanho de '%s'. Pai: %u\n",
+                        node->name, parent_node.inode);
+
+                return -1;
+            }
         }
     }
 
@@ -890,7 +899,8 @@ static int fat32_readdir(vfs_node_t *node, uint32_t index, vfs_node_t *out_node)
                 out_node->flags = (entry->attr & 0x10) ? VFS_DIRECTORY : VFS_FILE;
                 out_node->size = entry->file_size;
                 out_node->inode = ((uint32_t)entry->first_cluster_hi << 16) | entry->first_cluster_lo;
-                
+                out_node->parent_inode = node->inode;
+
                 /* Mapeia os atributos do FAT32 para permissões lógicas do VFS */
                 if (entry->attr & 0x01) {
                     out_node->permissions = 0x0155; // Read-Only (Equivalente a r-xr-xr-x)
@@ -1238,44 +1248,21 @@ static int fat32_rename(vfs_node_t* old_parent, const char* old_name, vfs_node_t
  * @param buf  O buffer da estrutura stat de saída que será preenchido.
  * @return 0 em caso de sucesso, ou -1 em caso de erro.
  */
-static int fat32_stat(vfs_node_t* node, struct vfs_stat* buf) {
-    if (!node || !buf) return -1;
+static int fat32_stat(vfs_node_t *node, vfs_stat_t *buf)
+{
+    if (!node || !buf)
+        return -1;
 
-    fat32_volume_t* vol = (fat32_volume_t*)node->private_data;
-    if (!vol) return -1;
+    vfs_stat_init(node, buf);
 
-    kprintf("[FAT32] A recolher metadados e estatísticas de '%s'...\n", node->name);
+    buf->st_attr = 0;
 
-    // 1. O número do Inode no ecossistema FAT32 mapeia estritamente para o Cluster Inicial
-    buf->st_ino = node->inode;
-    
-    // 2. Transpõe o tamanho físico real em Bytes guardado no nó em cache
-    buf->st_size = node->size;
-    
-    // 3. Mapeia o modo lógico (Tipo e Permissões baseadas nas flags do VFS)
-    buf->st_mode = node->permissions;
-    if (node->flags & VFS_DIRECTORY) {
-        buf->st_mode |= 0x4000; // Máscara POSIX S_IFDIR para marcar como Diretório
-    } else {
-        buf->st_mode |= 0x8000; // Máscara POSIX S_IFREG para marcar como Ficheiro Regular
-    }
+    if (node->flags & VFS_DIRECTORY)
+        buf->st_attr = 0x10;
+    else
+        buf->st_attr = 0x20;
 
-    // 4. O FAT32 não suporta Donos/Grupos Unix nativos; fixa como root (0) por compatibilidade
-    buf->st_uid = 0;
-    buf->st_gid = 0;
-
-    // 5. Preserva os atributos brutos de hardware (Hidden, System, Archive, Read-Only)
-    // Infere o atributo Read-Only (0x01) com base nas permissões em cache do nó
-    buf->st_attr = (node->permissions == 0x0155) ? 0x01 : 0x00;
-    
-    // Se for uma subpasta, garante que o atributo de Diretório (0x10) está presente
-    if (node->flags & VFS_DIRECTORY) {
-        buf->st_attr |= 0x10;
-    } else {
-        buf->st_attr |= 0x20; // Atributo padrão Archive (0x20) para ficheiros normais
-    }
-
-    return 0; // Sucesso: Estrutura stat preenchida de forma fidedigna
+    return 0;
 }
 
 /* ============================================================================

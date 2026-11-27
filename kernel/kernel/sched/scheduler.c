@@ -10,7 +10,7 @@
  *   Created Date: 05/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 01/11/2026
+ *  Modified Date: 23/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -21,6 +21,9 @@
 #include <kernel/klib.h>
 #include <kernel/kernel/core/spinlock.h>
 #include <kernel/arch/x86_64/kapi/irq.h>
+
+extern spinlock_t g_wait_lock;
+extern spinlock_t g_wait_no_queue_lock;
 
 /*
  * ----------------------------------------------------------------------------
@@ -163,6 +166,7 @@ void scheduler_reclaim_dead_threads(void)
 void scheduler_init(void)
 {
     cpu_data_block_t* cpu = get_current_cpu();
+    process_t* proc = process_create_kernel(cpu->cpu_id);
 
     cpu->ready_queue_head = NULL;
     cpu->ready_queue_tail = NULL;
@@ -171,9 +175,7 @@ void scheduler_init(void)
     cpu->current_thread   = NULL;
     cpu->fpu_owner_thread = NULL;
 
-    cpu->idle_thread = thread_create_init(cpu->cpu_id);
-
-    // O Core arranca a executar diretamente esta Idle Task
+    cpu->idle_thread = proc->main_thread;
     cpu->current_thread = cpu->idle_thread;
 }
 
@@ -302,6 +304,18 @@ void* task_switch(void* regs)
         arch_fpu_set_ts(); 
     }
 
+    if (cpu->release_wait_no_queue_lock)
+    {
+        cpu->release_wait_no_queue_lock = false;
+        spinlock_release(&g_wait_no_queue_lock);
+    }
+
+    if (cpu->release_wait_lock)
+    {
+        cpu->release_wait_lock = false;
+        spinlock_release(&g_wait_lock);
+    }
+
     return next->context_frame;
 }
 
@@ -317,6 +331,7 @@ void schedule(void)
     thread_t* current = cpu->current_thread;
 
     if (!current) {
+        kprintf("[SCHENDULE] ERROR....\n");
         irq_restore(flags);
         return;
     }
@@ -326,25 +341,27 @@ void schedule(void)
      * Monta o registers_t estrutural diretamente na stack de Kernel atual.
      */
     __asm__ __volatile__(
+        "pushq %%rax\n"
+        
         "movq %%ss, %%rax\n"
-        "pushq %%rax\n"      // registers_t.ss
-        "pushq %%rsp\n"      // registers_t.rsp
-        "addq $8, (%%rsp)\n" // Ajusta o RSP fictício para ignorar os pushes do iretq
-        "pushfq\n"           // registers_t.rflags
+        "pushq %%rax\n"
+        "pushq %%rsp\n"
+        "addq $16, (%%rsp)\n"
+        "pushfq\n"
         "movq %%cs, %%rax\n"
-        "pushq %%rax\n"           // registers_t.cs
-        "leaq 1f(%%rip), %%rax\n" // RIP de aterragem seguro (etiqueta 1)
-        "pushq %%rax\n"           // registers_t.rip
+        "pushq %%rax\n"
+        "leaq 1f(%%rip), %%rax\n"
+        "pushq %%rax\n"
 
-        "pushq $0\n"    // registers_t.error_code
-        "pushq $0x82\n" // registers_t.int_no
+        "pushq $0\n"
+        "pushq $0x82\n"
 
         "pushq %%rbp\n"
         "pushq %%rdi\n"
         "pushq %%rsi\n"
         "pushq %%rdx\n"
         "pushq %%rcx\n"
-        "pushq %%rax\n"
+        "pushq 96(%%rsp)\n"
         "pushq %%rbx\n"
         "pushq %%r8\n"
         "pushq %%r9\n"
@@ -355,10 +372,12 @@ void schedule(void)
         "pushq %%r14\n"
         "pushq %%r15\n"
 
-        "movq %%rsp, %%rdi\n" // 1º Parâmetro da task_switch (RDI = RSP atual)
+        "movq %%rsp, %%rdi\n"
+        "andq $-16, %%rsp\n"
         "call task_switch\n"
 
-        "movq %%rax, %%rsp\n" // RAX contém o RSP retornado da próxima tarefa
+        "movq %%rax, %%rsp\n"
+
         "popq %%r15\n"
         "popq %%r14\n"
         "popq %%r13\n"
@@ -374,14 +393,17 @@ void schedule(void)
         "popq %%rsi\n"
         "popq %%rdi\n"
         "popq %%rbp\n"
-        "addq $16, %%rsp\n" // Limpa int_no e error_code
-        "sti\n"             // Força activação de interrupção
-        "iretq\n"           // Salto supersónico para a nova tarefa
-        "1:\n"              // PONTO DE ATERRAGEM CRUCIAL QUANDO ESTA THREAD ACORDAR
+
+        "addq $16, %%rsp\n"                 // Limpa int_no e error_code
+        "orq $0x200, 16(%%rsp)\n"           // Força activação de interrupção
+        "iretq\n"                           // Salto supersónico para a nova tarefa
+        "1:\n"                              // PONTO DE ATERRAGEM CRUCIAL QUANDO ESTA THREAD ACORDAR
         :
         :
         : "rax", "rdi", "memory"
     );
+
+    irq_restore(flags);
 }
 
 
@@ -391,15 +413,6 @@ void schedule(void)
  */ 
 void scheduler_yield(void)
 {
-    unsigned long flags = irq_save();
-
-    cpu_data_block_t *cpu = get_current_cpu();
-    thread_t *current = cpu->current_thread;
-    if (!current || current->tid == 0 || current->state != THREAD_RUNNING)
-    {
-        irq_restore(flags);
-        return;
-    } /* Reaproveita o motor completo de desvio atómico */
     schedule();
 }
 
@@ -567,7 +580,7 @@ void scheduler_exit(int exit_code)
         "popq %%rdi\n"
         "popq %%rbp\n"
         "addq $16, %%rsp\n"         // Limpa int_no e error_code
-        "sti\n"
+        "orq $0x200, 16(%%rsp)\n"   // Força activação de interrupção
         "iretq\n"                   // Executa o retorno de hardware para a nova tarefa
         :
         : "r"(next->context_frame)

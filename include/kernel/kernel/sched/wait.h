@@ -29,7 +29,8 @@ typedef struct wait_queue {
 } wait_queue_t;
 
 
-wait_queue_t *wait_queue_remove(void *chan);
+int wait_queue_remove_node(wait_queue_t *node);
+wait_queue_t *wait_queue_find(void *chan);
 void wait(void *chan, spinlock_t *lk);
 void wait_no_queue(void *chan, spinlock_t *lk);
 

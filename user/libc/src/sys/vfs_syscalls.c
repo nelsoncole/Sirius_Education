@@ -29,7 +29,7 @@ extern int errno;
 #define MAX_PATH_LEN 4096
 #endif
 
-static int _resolve_absolute_path(char* out_buf, const char* pathname) {
+int _resolve_absolute_path(char* out_buf, const char* pathname) {
     if (!pathname || !out_buf) return -1;
 
     memset(out_buf, 0, MAX_PATH_LEN);

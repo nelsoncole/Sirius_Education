@@ -49,6 +49,7 @@ RM_OBJ 		:= rm.o
 CAT_OBJ 	:= cat.o
 ECHO_OBJ 	:= echo.o
 
+
 CRT0    := $(CRT0_DIR)/crt0.o
 LIBC_A  := $(LIBC_DIR)/libc.a
 

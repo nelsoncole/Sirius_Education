@@ -9,7 +9,7 @@
  *   Created Date: 07/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 07/09/2026
+ *  Modified Date: 23/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -42,14 +42,6 @@
 #define KBD_MOD_CAPS     (1 << 2)
 #define KBD_MOD_RELEASE  (1 << 7) /* Tecla solta (Key Up) */
 
-/**
- * Estrutura atómica do pacote de teclado guardado no buffer
- */
-typedef struct {
-    uint8_t  scancode;         /* O código físico base puro (Set 1) */
-    uint8_t  modifiers_state;  /* Mapa de bits com o estado atual do teclado */
-} kbd_event_t;
-
 #define KBD_BUFFER_SIZE 128
 
 /**
@@ -75,9 +67,9 @@ void keyboard_ps2_init(void);
 void keyboard_handler(void);
 
 /* Retorna o evento bruto de scancode de 16 bits */
-kbd_event_t keyboard_get_event(void);
+keyboard_packet_t keyboard_get_packet(void);
 
 /* Interface pública para capturar o pacote tratado do buffer */
-int keyboard_get_packet(keyboard_packet_t *packet);
+int keyboard_get_packet_replica(keyboard_packet_t* packet);
 
 #endif

@@ -81,12 +81,27 @@ static int editbox_measure_text(
     if (!expanded)
         return 0;
 
-    int width = text_get_string_width(
-        &c->font,
-        (float)c->font_size,
-        expanded,
-        (int)strlen(expanded)
-    );
+    size_t expanded_length = strlen(expanded);
+    int fixed_char_width = e->font_size / 2;
+
+    if (fixed_char_width < 1)
+        fixed_char_width = 1;
+
+    int width;
+
+    if (e->char_width == fixed_char_width) {
+        if (expanded_length > (size_t)INT_MAX / (size_t)fixed_char_width)
+            width = INT_MAX;
+        else
+            width = (int)expanded_length * fixed_char_width;
+    } else {
+        width = text_get_string_width(
+            &c->font,
+            (float)c->font_size,
+            expanded,
+            (int)expanded_length
+        );
+    }
 
     free(expanded);
     return width > 0 ? width : 0;
@@ -150,13 +165,14 @@ static void editbox_invalidate(component_t *c)
         return;
 
     c->render = 1;
-
-    if (c->ctx && c->ctx->window)
-        c->ctx->window->invalid = 1;
+    c->dirty = 1;
 }
 
 static int editbox_contains(component_t *c, int x, int y)
 {
+    if (!c)
+        return 0;
+
     return x >= c->x &&
            y >= c->y &&
            x < c->x + c->w &&
@@ -275,6 +291,10 @@ static int editbox_rebuild(component_t *c, editbox_data_t *e)
         }
     }
 
+    if (max_width > INT_MAX - c->font_size ||
+        lines > INT_MAX / e->char_height)
+        return -1;
+
     int content_width = max_width + c->font_size;
     int content_height = lines * e->char_height;
 
@@ -290,66 +310,8 @@ static int editbox_rebuild(component_t *c, editbox_data_t *e)
     e->content_width = content_width;
     e->content_height = content_height;
 
-    if (editbox_resize_buffer(e, content_width, content_height) != 0)
+    if (editbox_resize_buffer(e, view_width, view_height) != 0)
         return -1;
-
-    window_t *win = e->ctx->window;
-
-    ui_lock(&win->lock);
-
-    for (int y = 0; y < win->height; y++) {
-        for (int x = 0; x < win->width; x++) {
-            win->buffer[(size_t)y * win->width + x] = win->bg;
-        }
-    }
-
-    int y = editbox_vertical_offset(c, e);
-
-    size_t start = 0;
-
-    while (start < e->text_length) {
-        size_t end = start;
-
-        while (end < e->text_length &&
-               !(e->text[end] == '\n' && e->multiline))
-            end++;
-
-        size_t length = end - start;
-        int line_x = editbox_horizontal_offset(c, e, (int)start, (int)end);
-
-        if (length > 0) {
-            char *line = editbox_expand_tabs(
-                c,
-                e,
-                e->text + start,
-                length
-            );
-
-            if (!line) {
-                ui_unlock(&win->lock);
-                return -1;
-            }
-
-            draw_text_cached(
-                &c->font_cache,
-                win->buffer,
-                win->width,
-                win->height,
-                line,
-                line_x,
-                y,
-                win->width,
-                c->fg
-            );
-
-            free(line);
-        }
-
-        y += e->char_height;
-        start = end + 1;
-    }
-
-    ui_unlock(&win->lock);
 
     editbox_get_cursor_position(c, e, &e->cursor_x, &e->cursor_y);
 
@@ -809,34 +771,111 @@ static void editbox_move_vertical(
     editbox_invalidate(c);
 }
 
-component_t *create_editbox(
+static void editbox_on_clear(component_t *c)
+{
+    if (!c || c->type != UI_EDITTEXT)
+        return;
+
+    editbox_set_text(c, "");
+}
+
+static void editbox_on_enable(component_t *c)
+{
+    if (!c || c->type != UI_EDITTEXT)
+        return;
+
+    editbox_data_t *e = c->data;
+    if (!e)
+        return;
+
+    ui_lock(&e->spinlock);
+    e->background_render = 1;
+    editbox_invalidate(c);
+    ui_unlock(&e->spinlock);
+}
+
+static void editbox_on_disable(component_t *c)
+{
+    if (!c || c->type != UI_EDITTEXT)
+        return;
+
+    editbox_data_t *e = c->data;
+    if (!e)
+        return;
+
+    ui_lock(&e->spinlock);
+
+    e->focused = 0;
+    e->dragging_vertical = 0;
+    e->dragging_horizontal = 0;
+    e->drag_offset_x = 0;
+    e->drag_offset_y = 0;
+
+    editbox_invalidate(c);
+
+    ui_unlock(&e->spinlock);
+}
+
+static void editbox_on_destroy(component_t *c)
+{
+    if (!c)
+        return;
+
+    editbox_data_t *e = c->data;
+    if (!e)
+        return;
+
+    if (e->ctx) {
+        if (e->ctx->window) {
+            free(e->ctx->window->buffer);
+            e->ctx->window->buffer = NULL;
+            free(e->ctx->window);
+            e->ctx->window = NULL;
+        }
+
+        free(e->ctx->components);
+        e->ctx->components = NULL;
+        free(e->ctx);
+        e->ctx = NULL;
+    }
+
+    free(e->text);
+    e->text = NULL;
+    e->text_length = 0;
+    e->text_capacity = 0;
+
+    free(e);
+    c->data = NULL;
+}
+
+static component_t *editbox_create_internal(
     ui_context_t *ctx,
     int x,
     int y,
     int w,
     int h,
     int font_size,
-    editbox_type_t type
+    editbox_type_t type,
+    const char *font_path,
+    int simple
 )
 {
-    if (!ctx || !ctx->window || w <= 0 || h <= 0 ||
-        font_size <= 0 || type < EDITBOX_TEXT || type > EDITBOX_NUMBER)
+    if (!ctx || !ctx->window || !ctx->window->font ||
+        w <= 0 || h <= 0 || font_size <= 0 ||
+        type < EDITBOX_TEXT || type > EDITBOX_NUMBER)
         return NULL;
 
     component_t *c = calloc(1, sizeof(component_t));
-
     if (!c)
         return NULL;
 
     editbox_data_t *e = calloc(1, sizeof(editbox_data_t));
-
     if (!e) {
         free(c);
         return NULL;
     }
 
     e->ctx = calloc(1, sizeof(ui_context_t));
-
     if (!e->ctx) {
         free(e);
         free(c);
@@ -844,6 +883,7 @@ component_t *create_editbox(
     }
 
     e->ctx->fd = ctx->fd;
+    e->ctx->suppress_server_notify = 1;
     e->input_type = type;
     e->font_size = font_size;
     e->horizontal_align = EDITBOX_ALIGN_LEFT;
@@ -865,7 +905,6 @@ component_t *create_editbox(
 
     e->text_capacity = 64;
     e->text = calloc(1, e->text_capacity);
-
     if (!e->text) {
         free(e->ctx);
         free(e);
@@ -880,14 +919,15 @@ component_t *create_editbox(
 
     c->type = UI_EDITTEXT;
     c->visible = 1;
+    c->enabled = 1;
     c->render = 1;
+    c->dirty = 1;
     c->ctx = ctx;
     c->data = e;
 
     c->bg = argb(255, 30, 32, 38);
     c->fg = argb(255, 235, 235, 235);
     c->border_color = argb(255, 80, 85, 95);
-
     c->font_size = font_size;
 
     unsigned char *font_buffer = NULL;
@@ -898,12 +938,14 @@ component_t *create_editbox(
 
         if (stbtt_font_init(
                 font,
-                "usr/share/fonts/Ubuntu.ttf",
+                font_path,
                 &font_buffer
             ) == 0) {
             c->free_font_buffer = font_buffer;
             c->font = *font;
         } else {
+            free(font_buffer);
+            font_buffer = NULL;
             c->font = *(stbtt_fontinfo *)ctx->window->font;
         }
 
@@ -912,56 +954,104 @@ component_t *create_editbox(
         c->font = *(stbtt_fontinfo *)ctx->window->font;
     }
 
-    e->char_width = text_get_string_width(
-        &c->font,
-        (float)c->font_size,
-        " ",
-        1
-    );
+    if (simple) {
+        e->char_width = font_size / 2;
+    } else {
+        e->char_width = text_get_string_width(
+            &c->font,
+            (float)c->font_size,
+            " ",
+            1
+        );
+    }
+
     e->char_height = c->font_size;
 
     if (e->char_width <= 0)
         e->char_width = 1;
-
     if (e->char_height <= 0)
         e->char_height = 1;
 
     e->ctx->window = component_window_create(
         ctx->window,
-        w,
-        h,
+        editbox_view_width(c, e),
+        editbox_view_height(c, e),
         c->bg,
         0
     );
 
-    if (!e->ctx->window) {
-        free(e->text);
-        free(e->ctx);
-        free(e);
-        free(c->free_font_buffer);
-        free(c);
-        return NULL;
-    }
+    if (!e->ctx->window)
+        goto fail;
 
     build_font_cache(&c->font, c->font_size, &c->font_cache);
 
     c->on_draw = draw_editbox;
     c->on_event = editbox_event;
 
-    if (ui_add_component(ctx, c) != 0) {
-        free(e->ctx->window->buffer);
-        free(e->ctx->window);
-        free(e->text);
-        free(e->ctx);
-        free(e);
-        free(c->free_font_buffer);
-        free(c);
-        return NULL;
-    }
+    c->on_clear = editbox_on_clear;
+    c->on_enable = editbox_on_enable;
+    c->on_disable = editbox_on_disable;
+    c->on_destroy = editbox_on_destroy;
 
-    editbox_rebuild(c, e);
+    if (editbox_rebuild(c, e) != 0)
+        goto fail;
+
+    if (ui_add_component(ctx, c) != 0)
+        goto fail;
 
     return c;
+
+fail:
+    if (e->ctx && e->ctx->window) {
+        free(e->ctx->window->buffer);
+        e->ctx->window->buffer = NULL;
+        free(e->ctx->window);
+        e->ctx->window = NULL;
+    }
+
+    if (e->ctx) {
+        free(e->ctx->components);
+        free(e->ctx);
+    }
+
+    free(e->text);
+    free(e);
+    free(c->free_font_buffer);
+    free(c);
+
+    return NULL;
+}
+
+component_t *create_editbox(
+    ui_context_t *ctx,
+    int x,
+    int y,
+    int w,
+    int h,
+    int font_size,
+    editbox_type_t type
+)
+{
+    return editbox_create_internal(
+        ctx, x, y, w, h, font_size, type,
+        "usr/share/fonts/Ubuntu.ttf", 0
+    );
+}
+
+component_t *create_simple_editbox(
+    ui_context_t *ctx,
+    int x,
+    int y,
+    int w,
+    int h,
+    int font_size,
+    editbox_type_t type
+)
+{
+    return editbox_create_internal(
+        ctx, x, y, w, h, font_size, type,
+        "usr/share/fonts/UbuntuMono.ttf", 1
+    );
 }
 
 void editbox_set_alignment(
@@ -1218,9 +1308,92 @@ int editbox_write(component_t *c, const char *text)
     return result;
 }
 
+static int editbox_render_viewport(
+    component_t *c,
+    editbox_data_t *e,
+    window_t *win
+)
+{
+    if (!c || !e || !win || !win->buffer)
+        return -1;
+
+    for (int y = 0; y < win->height; y++) {
+        for (int x = 0; x < win->width; x++)
+            win->buffer[(size_t)y * win->width + x] = win->bg;
+    }
+
+    int y = editbox_vertical_offset(c, e) - e->scroll_offset_y;
+    size_t start = 0;
+
+    while (start < e->text_length) {
+        size_t end = start;
+
+        while (end < e->text_length &&
+               !(e->text[end] == '\n' && e->multiline))
+            end++;
+
+        if (y + e->char_height > 0 && y < win->height && end > start) {
+            char *line = editbox_expand_tabs(
+                c, e, e->text + start, end - start
+            );
+
+            if (!line)
+                return -1;
+
+            int line_x = editbox_horizontal_offset(
+                c, e, (int)start, (int)end
+            ) - e->scroll_offset_x;
+
+            const char *visible_line = line;
+            int draw_x = line_x;
+
+            /*
+             * draw_text_cached recebe coordenadas dentro do buffer.
+             * Evita enviar X negativo: descarta os caracteres que
+             * ficaram totalmente antes da margem esquerda.
+             */
+            while (*visible_line && draw_x < 0) {
+                int char_width = text_get_string_width(
+                    &c->font,
+                    (float)c->font_size,
+                    visible_line,
+                    1
+                );
+
+                if (char_width < 1)
+                    char_width = 1;
+
+                draw_x += char_width;
+                visible_line++;
+            }
+
+            if (*visible_line && draw_x < win->width) {
+                draw_text_cached(
+                    &c->font_cache,
+                    win->buffer,
+                    win->width,
+                    win->height,
+                    visible_line,
+                    draw_x,
+                    y,
+                    win->width - draw_x,
+                    c->fg
+                );
+            }
+
+            free(line);
+        }
+
+        y += e->char_height;
+        start = end + 1;
+    }
+
+    return 0;
+}
+
 int draw_editbox(component_t *c, window_t *win)
 {
-    if (!c || !win || !c->visible || !c->render)
+    if (!c || !win || !c->visible || !c->enabled || !c->render)
         return 0;
 
     editbox_data_t *e = c->data;
@@ -1250,16 +1423,22 @@ int draw_editbox(component_t *c, window_t *win)
 
     window_t *private_win = e->ctx->window;
 
+    ui_lock(&private_win->lock);
+
+    editbox_render_viewport(c, e, private_win);
+
     editbox_copy_view(
         win,
         private_win,
-        e->scroll_offset_x,
-        e->scroll_offset_y,
+        0,
+        0,
         view_width,
         view_height,
         c->x + e->border_thickness,
         c->y + e->border_thickness
     );
+
+    ui_unlock(&private_win->lock);
 
     int max_y = e->content_height - view_height;
 
@@ -1391,6 +1570,8 @@ int draw_editbox(component_t *c, window_t *win)
     }
 
     c->render = 0;
+    c->dirty = 0;
+    c->clear = 0;
 
     ui_unlock(&win->lock);
     ui_unlock(&e->spinlock);
@@ -1400,7 +1581,8 @@ int draw_editbox(component_t *c, window_t *win)
 
 int editbox_event(component_t *c, event_t ev)
 {
-    if (!c || !c->visible || c->type != UI_EDITTEXT)
+    if (!c || !c->visible || !c->enabled ||
+        c->type != UI_EDITTEXT)
         return 0;
 
     editbox_data_t *e = c->data;

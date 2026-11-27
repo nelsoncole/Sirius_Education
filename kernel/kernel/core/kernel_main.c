@@ -9,7 +9,7 @@
  *   Created Date: 25/08/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 15/09/2026
+ *  Modified Date: 26/11/2026
  *
  *        License: MIT
  * ============================================================================
@@ -31,8 +31,8 @@
 #include <kernel/arch/x86_64/cpu/smp.h>
 #include <kernel/arch/x86_64/kapi/msi.h>
 #include <kernel/kernel/sched/scheduler.h>
-#include <kernel/drivers/bus/pci.h>
-#include <kernel/drivers/char/keyboard.h>
+#include <kernel/drivers/bus/pci/pci.h>
+#include <kernel/drivers/input/keyboard.h>
 #include <kernel/drivers/input/mouse.h>
 #include <kernel/drivers/storage/ahci.h>
 #include <kernel/drivers/storage/block.h>
@@ -52,10 +52,13 @@
 #include <kernel/fs/dev/vfs_mouse.h>
 #include <kernel/fs/dev/vfs_keyboard.h>
 #include <kernel/arch/x86_64/cpu/mtrr.h>
+#include <kernel/drivers/bus/usb/usb.h>
 
 extern void test(void* arg);
 extern void tty_emulator_thread(void* arg);
 extern void tty_keyboard_bridge_thread(void* arg);
+
+
 
 /*
  * IMPORTANTE: Declara o rótulo do Assembly como um símbolo externo.
@@ -279,6 +282,8 @@ void kernel_main(BOOT_INFO *boot_info)
     // dando-lhe o nome literal de "ahci%d".
     ahci_driver_init();
 
+    usb_driver_init();
+
     net_init();
 
     // 17. Regista o Driver do Sistema de Ficheiros FAT32 no catálogo do VFS
@@ -299,6 +304,8 @@ void kernel_main(BOOT_INFO *boot_info)
         }
     }
 
+    for(;;);
+
     kprintf("[BOOT] Montando a partição de boot como raiz do VFS...\n");
     int status = vfs_mount(g_boot_partition_name, "/mnt/hd0", "fat32");
     if (status != 0)
@@ -316,6 +323,7 @@ void kernel_main(BOOT_INFO *boot_info)
     /* 18. Modules */
     kmod_init();
 
+
     if (kmod_load_by_name("/mnt/hd0/mods/sample_mod.ko", NULL) != 0)
     {
         kprintf("[kmod]: Erro critico: Falha ao carregar o modulo '/mnt/hd0/mods/sample_mod.ko'.\n");
@@ -326,7 +334,6 @@ void kernel_main(BOOT_INFO *boot_info)
     }
 
     kmod_net_init("/mnt/hd0/mods");
-    
     
 
     kprintf("\n========================================================================\n");
@@ -342,8 +349,9 @@ void kernel_main(BOOT_INFO *boot_info)
     thread_create(tty_emulator_thread,NULL, 0, proc);
     thread_create(tty_keyboard_bridge_thread, NULL, 0, proc);
     thread_create(network_rx_thread, NULL, 0, proc);
+    thread_create(network_ev_thread, NULL, 0, proc);
 
-    //thread_create(test, NULL, 0);
+    //thread_create(test, NULL, 0, proc);
     /*
      * ============================================================================
      * ARRANQUE DO PROCESSO INICIAL DO ESPAÇO DE UTILIZADOR (INIT / USER.ELF)

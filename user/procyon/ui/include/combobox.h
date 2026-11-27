@@ -14,7 +14,7 @@ typedef struct {
     int dragging_scroll;
     int drag_offset_y;
     window_t* win;
-    volatile int spinlock;
+    volatile int lock;
     void (*on_select)(int index, const char* item);
 } combobox_data_t;
 

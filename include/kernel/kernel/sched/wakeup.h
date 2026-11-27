@@ -18,6 +18,6 @@
 #define _WAKEUP_H_
 
 void wakeup(void *chan);
-void wakeup_thread(void *chan, void *th);
+void wakeup_no_queue(void *chan, void *th);
 
 #endif

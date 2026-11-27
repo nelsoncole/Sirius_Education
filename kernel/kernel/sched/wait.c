@@ -19,28 +19,33 @@
  *   Created Date: 24/10/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 26/10/2026
+ *  Modified Date: 22/11/2026
  * 
  *        License: MIT
  * ============================================================================
  */
 
+
 #include <kernel/kernel/sched/scheduler.h>
 #include <kernel/kernel/sched/wait.h>
 #include <kernel/klib.h>
+#include <kernel/arch/x86_64/kapi/irq.h>
 
 spinlock_t g_wait_lock = {0};
+spinlock_t g_wait_no_queue_lock = {0};
 spinlock_t g_queue_lock = {0};
 
 wait_queue_t *g_wait_head = NULL;
 wait_queue_t *g_wait_tail = NULL;
 
-static void wait_queue_add(cpu_data_block_t *cpu, thread_t *thread, void *chan)
+static bool wait_queue_add(cpu_data_block_t *cpu,
+                           thread_t *thread,
+                           void *chan, wait_queue_t **node_out)
 {
     wait_queue_t *node = kmalloc(sizeof(wait_queue_t));
 
     if (!node)
-        return;
+        return false;
 
     node->cpu = cpu;
     node->thread = thread;
@@ -58,22 +63,33 @@ static void wait_queue_add(cpu_data_block_t *cpu, thread_t *thread, void *chan)
         g_wait_tail = node;
     }
 
+    *node_out = node;
+
     spinlock_release(&g_queue_lock);
+
+    return true;
 }
 
-wait_queue_t *wait_queue_remove(void *chan)
+int wait_queue_remove_node(wait_queue_t *node)
 {
-    if (!g_wait_head || !chan)
-        return NULL;
+    if (!node)
+        return 0;
+
+    spinlock_acquire(&g_queue_lock);
+
+    if (!g_wait_head) {
+        spinlock_release(&g_queue_lock);
+        return 0;
+    }
 
     wait_queue_t *current = g_wait_head;
     wait_queue_t *previous = g_wait_tail;
 
-    spinlock_acquire(&g_queue_lock);
     do {
-        if (current->chan == chan)
+        if (current == node)
         {
-            if (current == g_wait_head && current == g_wait_tail)
+            if (current == g_wait_head &&
+                current == g_wait_tail)
             {
                 g_wait_head = NULL;
                 g_wait_tail = NULL;
@@ -90,8 +106,9 @@ wait_queue_t *wait_queue_remove(void *chan)
             }
 
             current->next = NULL;
+
             spinlock_release(&g_queue_lock);
-            return current;
+            return 1;
         }
 
         previous = current;
@@ -101,63 +118,103 @@ wait_queue_t *wait_queue_remove(void *chan)
 
     spinlock_release(&g_queue_lock);
 
+    return 0;
+}
+
+wait_queue_t *wait_queue_find(void *chan)
+{
+    if (!chan)
+        return NULL;
+
+    spinlock_acquire(&g_queue_lock);
+
+    if (!g_wait_head) {
+        spinlock_release(&g_queue_lock);
+        return NULL;
+    }
+
+    wait_queue_t *current = g_wait_head;
+
+    do {
+        if (current->chan == chan &&
+            current->thread != NULL &&
+            current->thread->state == THREAD_WAITING &&
+            current->thread->chan == chan)
+        {
+            spinlock_release(&g_queue_lock);
+            return current;
+        }
+
+        current = current->next;
+
+    } while (current != g_wait_head);
+
+    spinlock_release(&g_queue_lock);
+
     return NULL;
 }
 
-void wait(void *chan, spinlock_t *lk) {
-    if(!chan) return;
+void wait(void *chan, spinlock_t *lk)
+{
+    if (!chan)
+        return;
 
-    unsigned long flags = spinlock_lock_irqsave(&g_wait_lock);
+    unsigned long flags =
+        spinlock_lock_irqsave(&g_wait_lock);
+
     cpu_data_block_t *cpu = get_current_cpu();
     thread_t *current = cpu->current_thread;
 
+    wait_queue_t *node = NULL;
 
-    wait_queue_add(cpu, current, chan);
-    
-    current->chan = chan; // Guarda a âncora (ex: &tty->read_wait)
+    if (!wait_queue_add(cpu, current, chan, &node)) {
+        spinlock_unlock_irqrestore(&g_wait_lock, flags);
+        return;
+    }
+
+    current->chan = chan;
     current->state = THREAD_WAITING;
 
-    spinlock_unlock_irqrestore(&g_wait_lock , flags);
-    
-    // Liberta o lock do TTY para que o Mestre possa escrever no buffer
-    if(lk != NULL) spin_unlock(lk);
+    cpu->release_wait_lock = true;
 
-    /*kprintf("[SCHED] wait: Dormindo a Thread TID %d bloqueada no canal %p...\n", 
-                    current->tid, chan);*/
-    
+    //kprintf("wait tid %ld chan %p cpu id %d\n", current->tid, current->chan, current->cpu_id);
+
+    if (lk)
+        spin_unlock(lk);
+
     schedule();
-    
-    // Quando a thread for acordada pelo wakeup, ela retoma aqui
-    // e precisa de recuperar o lock antes de voltar para o loop do TTY
 
-    if(lk != NULL) spin_lock(lk);
+    if (lk)
+        spin_lock(lk);
+
+    if(node != NULL)
+        kfree(node);
+
+    irq_restore(flags);
 }
 
+void wait_no_queue(void *chan, spinlock_t *lk)
+{
+    if (!chan)
+        return;
 
-void wait_no_queue(void *chan, spinlock_t *lk) {
-    if(!chan) return;
+    unsigned long flags = spinlock_lock_irqsave(&g_wait_no_queue_lock);
 
-    unsigned long flags = spinlock_lock_irqsave(&g_wait_lock);
     cpu_data_block_t *cpu = get_current_cpu();
     thread_t *current = cpu->current_thread;
 
-    
-    current->chan = chan; // Guarda a âncora (ex: &tty->read_wait)
+    current->chan = chan;
     current->state = THREAD_WAITING;
 
-    spinlock_unlock_irqrestore(&g_wait_lock , flags);
-    
-    // Liberta o lock do TTY para que o Mestre possa escrever no buffer
-    if(lk != NULL) spin_unlock(lk);
+    cpu->release_wait_no_queue_lock = true;
 
-    /*kprintf("[SCHED] wait: Dormindo a Thread TID %d bloqueada no canal %p...\n", 
-                    current->tid, chan);*/
-    
+    if (lk)
+        spin_unlock(lk);
+
     schedule();
-    
-    // Quando a thread for acordada pelo wakeup, ela retoma aqui
-    // e precisa de recuperar o lock antes de voltar para o loop do TTY
 
-    if(lk != NULL) spin_lock(lk);
+    if (lk)
+        spin_lock(lk);
+
+    irq_restore(flags);
 }
-

@@ -9,7 +9,7 @@
  *   Created Date: 28/08/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 04/09/2026
+ *  Modified Date: 23/11/2026
  *
  *        License: MIT
  * ============================================================================
@@ -244,6 +244,9 @@ void cpu_initialize_local(uint32_t cpu_id, uint32_t lapic_id, uint64_t stack_top
     cpu->self = cpu;
 
     spin_lock_init(&cpu->scheduler_lock);
+    cpu->release_wait_lock = false;
+    cpu->release_wait_no_queue_lock = false;
+
 
     // Configuração dos segmentos base da GDT (Índices 0 a 3)
     cpu->gdt_entries[0] = create_gdt_entry(0, 0, 0, 0);             // Null (0x00)

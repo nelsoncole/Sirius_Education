@@ -573,54 +573,58 @@ int vfs_umount(const char* mount_path) {
  * vfs_open - Abre ou cria de forma dinâmica um nó no VFS do Kernel.
  *            Garante isolamento de drivers polimórficos e proteção contra memory leaks.
  */
-vfs_node_t* vfs_open(const char* path, uint32_t flags) {
-    if (!path || path[0] == '\0') return NULL;
 
-    char file_name[64];
-    memset(file_name, 0, sizeof(file_name));
+vfs_node_t* vfs_open(const char* path, uint32_t flags)
+{
+    if (!path || path[0] == '\0')
+        return NULL;
 
-    // 1. Obtém o nó pai e o nome isolado do filho antes de tomar decisões
-    vfs_node_t* parent_node = vfs_get_parent_and_child(path, file_name);
+    char file_name[64] = {0};
+
+    vfs_node_t* parent_node =
+        vfs_get_parent_and_child(path, file_name);
 
     vfs_node_t* target_node = vfs_path_to_node(path);
 
-    // 3. Se o ficheiro NÃO existe e o utilizador passou a flag O_CREAT, ordena a criação física
     if (!target_node && parent_node && (flags & O_CREAT)) {
-        if (parent_node->ops && parent_node->ops->create) {
-            
-            int res = parent_node->ops->create(parent_node, file_name, 0644);
-            
-            if (res == 0) { 
-                // Se a criação física teve sucesso, resgata o nó gerado através do finddir do pai
-                target_node = parent_node->ops->finddir(parent_node, file_name);
-            }
-        }
+
+        parent_node = vfs_resolve_mountpoint(parent_node);
+
+        if (!parent_node || !parent_node->ops ||
+            !parent_node->ops->create ||
+            !parent_node->ops->finddir)
+            return NULL;
+
+        int result = parent_node->ops->create(
+            parent_node, file_name, 0644
+        );
+
+        if (result != 0)
+            return NULL;
+
+        target_node = parent_node->ops->finddir(
+            parent_node, file_name
+        );
     }
 
-    // Se o ficheiro não existia e não foi pedida a criação (ou se a criação falhou), aborta
-    if (!target_node) {
+    if (!target_node)
         return NULL;
-    }
 
-    // Garante que o nó filho sabe quem é o seu diretório pai
-    if(!parent_node) {
-        target_node->parent_inode = 0;
-    }
-    else {
-        target_node->parent_inode = parent_node->inode;
-    }
-    
-    // 4. Dispara a inicialização polimórfica específica do driver
     if (target_node->ops && target_node->ops->open) {
-        int res_open = target_node->ops->open(target_node, flags);
-        if (res_open != 0) {
-            kprintf("[VFS OPEN] Erro: O driver falhou ao abrir o ficheiro '%s' (Codigo: %d).\n", path, res_open);
-            return NULL; 
+        int result = target_node->ops->open(target_node, flags);
+
+        if (result != 0) {
+            kprintf(
+                "[VFS OPEN] Erro ao abrir '%s': %d\n",
+                path, result
+            );
+            return NULL;
         }
     }
 
-    return target_node; 
+    return target_node;
 }
+
 
 /**
  * FUNÇÃO INTERNA DO VFS: Procura ou aloca dinamicamente uma página na lista do nó.

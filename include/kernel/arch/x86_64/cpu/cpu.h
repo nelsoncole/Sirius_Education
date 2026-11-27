@@ -19,6 +19,7 @@
 #define _CPU_H_
 
 #include <kernel/lib/stdint.h>
+#include <kernel/lib/stdbool.h>
 #include <kernel/kernel/sched/thread.h>
 #include <kernel/kernel/core/spinlock.h>
 
@@ -78,6 +79,9 @@ typedef struct cpu_data_block {
     thread_t* fpu_owner_thread; /* Controla quem é o dono do FPU neste Core */
     
     spinlock_t scheduler_lock;
+
+    bool release_wait_lock;
+    bool release_wait_no_queue_lock;
     
 } __attribute__((aligned(16))) cpu_data_block_t;
 

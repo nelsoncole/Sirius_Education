@@ -10,7 +10,7 @@
  *   Created Date: 07/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 07/09/2026
+ *  Modified Date: 26/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -29,7 +29,15 @@
  * Vetor estendido indexado estritamente de 0 a 47 (Pinos do IOAPIC).
  * Consumido via técnica de subtração pela rotina central em isr.c.
  */
-irq_handler_t g_interrupt_handlers[MAX_IOAPIC_PINS];
+#define MAX_HANDLERS_PER_IRQ 8
+
+typedef struct
+{
+    irq_handler_t handlers[MAX_HANDLERS_PER_IRQ];
+    uint8_t count;
+} irq_shared_handler_t;
+
+static irq_shared_handler_t g_irq_handlers[MAX_IOAPIC_PINS];
 
 
 /**
@@ -37,18 +45,46 @@ irq_handler_t g_interrupt_handlers[MAX_IOAPIC_PINS];
  */
 int irq_handler(uint8_t irq_number, irq_handler_t handler)
 {
-    /* Validação defensiva contra transbordo de memória do pool de hardware */
-    if (irq_number >= MAX_IOAPIC_PINS)
+    if (irq_number >= MAX_IOAPIC_PINS || !handler)
+        return -1;
+
+    irq_shared_handler_t *entry = &g_irq_handlers[irq_number];
+
+    if (entry->count >= MAX_HANDLERS_PER_IRQ)
     {
-        kprintf("[IRQ Core] Erro: Linha fisica IOAPIC %d excede as 48 suportadas.\n", irq_number);
+        kprintf("[IRQ Core] Limite de handlers atingido para GSI %u.\n",
+                irq_number);
         return -1;
     }
 
-    g_interrupt_handlers[irq_number] = handler;
+    for (uint8_t i = 0; i < entry->count; i++)
+    {
+        if (entry->handlers[i] == handler)
+            return 0;
+    }
 
-    enable_irq(irq_number);
+    entry->handlers[entry->count++] = handler;
+
+    if (entry->count == 1)
+        enable_irq(irq_number);
 
     return 0;
+}
+
+void irq_dispatch(uint8_t irq_number)
+{
+    if (irq_number >= MAX_IOAPIC_PINS)
+        return;
+
+    irq_shared_handler_t *entry = &g_irq_handlers[irq_number];
+
+    for (uint8_t i = 0; i < entry->count; i++)
+    {
+        irq_handler_t handler = entry->handlers[i];
+
+        if (handler)
+            handler();
+    }
 }
 
 /**
@@ -78,18 +114,33 @@ void disable_irq(uint8_t irq_number)
     ioapic_set_irq(irq_number, 0, masked_flags);
 }
 
-void kapi_register_irq_handler(pci_device_t *dev, void (*fuc)(void))
+void kapi_register_irq_handler(pci_device_t *dev, void (*func)(void))
 {
-    if (apic_send_msi(dev, fuc) == 0)
+    if (!dev || !func)
+        return;
+
+    if (apic_send_msi(dev, func) == 0)
     {
-        kprintf("[KAPI] Dispositivo PCI %x:%x registado com sucesso via MSI (Vetor: %d)\n", 
-                dev->vendor_id, dev->device_id, dev->irq_line);
-        return; // Sucesso absoluto por mensagem. Ignora o IOAPIC.
+        kprintf("[KAPI] Dispositivo PCI %x:%x registado via MSI.\n",
+                dev->vendor_id, dev->device_id);
+        return;
     }
 
     int ioapic_pin = pci_route_ioapic_irq(dev);
-    
-    kprintf("[KAPI] MSI nao suportado. Fallback para IOAPIC no pino GSI: %d\n", ioapic_pin);
-    
-    irq_handler(ioapic_pin, fuc);
+
+    if (ioapic_pin < 0 || ioapic_pin >= MAX_IOAPIC_PINS)
+    {
+        kprintf("[KAPI] GSI invalido para dispositivo PCI %x:%x.\n",
+                dev->vendor_id, dev->device_id);
+        return;
+    }
+
+    kprintf("[KAPI] MSI nao suportado. Registando handler no GSI: %d\n",
+            ioapic_pin);
+
+    if (irq_handler((uint8_t)ioapic_pin, func) != 0)
+    {
+        kprintf("[KAPI] Falha ao registar handler no GSI %d.\n",
+                ioapic_pin);
+    }
 }

@@ -27,6 +27,8 @@ void video_init(BOOT_INFO *boot_info)
     g_display.width                 = graphic_info->Width;
     g_display.height                = graphic_info->Height;
     g_display.pixels_per_scanLine   = graphic_info->PixelsPerScanLine;
+    g_display.bpp                   = g_boot_info->Graphics.BitsPerPixel;
+    g_display.pitch                 = g_display.pixels_per_scanLine * (g_display.bpp/8);
     g_display.pixel_format          = graphic_info->PixelFormat;
     g_display.cursor_x              = 0;
     g_display.cursor_y              = 0;

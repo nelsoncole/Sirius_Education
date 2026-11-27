@@ -10,7 +10,7 @@
  *   Created Date: 11/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 05/10/2026
+ *  Modified Date: 22/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -23,6 +23,8 @@
 #include <kernel/kernel.h>
 #include <kernel/lib/stddef.h>
 #include <kernel/lib/stdint.h>
+#include <kernel/lib/string.h>
+
 
 #define VFS_NAME_MAX 256
 
@@ -33,6 +35,9 @@
 #define VFS_BLOCK_DEV   (1 << 3)   /* Dispositivo de Blocos (ex: ahci_disk) */
 #define VFS_PIPE        (1 << 4)   /* Pipe IPC */
 #define VFS_MOUNTPOINT  (1 << 5)   /* Ponto de Montagem Ativo */
+#define VFS_SOCKET      (1 << 6)
+#define VFS_SYMLINK     (1 << 7)
+#define VFS_FIFO        (1 << 8)
 
 /* Modos de Abertura de Ficheiros */
 #define VFS_MODE_READ   0x00
@@ -50,8 +55,24 @@
 #define VFS_SEEK_END  2
 
 struct vfs_node;
-struct vfs_stat;
 struct vfs_filesystem;
+
+typedef struct {
+    uint32_t st_dev;
+    uint64_t st_ino;
+    uint32_t st_mode;
+    uint32_t st_nlink;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    uint32_t st_rdev;
+    uint64_t st_size;
+    uint64_t st_blksize;
+    uint64_t st_blocks;
+    uint64_t st_atime;
+    uint64_t st_mtime;
+    uint64_t st_ctime;
+    uint8_t st_attr;
+} vfs_stat_t;
 
 
 /**
@@ -84,7 +105,7 @@ typedef struct vfs_operations {
     int (*rmdir)(struct vfs_node* node, const char* name);
     
     // Preenche uma estrutura 'stat' com datas e atributos reais do disco
-    int (*stat)(struct vfs_node* node, struct vfs_stat* buf);
+    int (*stat)(struct vfs_node* node, vfs_stat_t* buf);
     
     // Altera permissões/atributos (ex: ativar/desativar Read-Only no FAT32, NTFS, DevFS)
     int (*chmod)(struct vfs_node* node, uint16_t mode);
@@ -136,14 +157,100 @@ typedef struct vfs_file {
     uint32_t    ref_count;          // Contador de referências para partilha entre processos
 } vfs_file_t;
 
-typedef struct vfs_stat {
-    uint32_t st_ino;       /* Número do Inode (No FAT32, mapeamos para o Cluster Inicial) */
-    uint64_t st_size;      /* Tamanho real do ficheiro em Bytes */
-    uint32_t st_mode;      /* Tipo e permissões lógicas (Diretório ou Ficheiro) */
-    uint32_t st_uid;       /* ID do utilizador (Donos - Fixo como 0 no FAT32) */
-    uint32_t st_gid;       /* ID do grupo (Fixo como 0 no FAT32) */
-    uint16_t st_attr;      /* Atributos nativos brutos do hardware FAT32 (Hidden, System, etc) */
-} vfs_stat_t;
+/*
+ * ============================================================================
+ *                 vfs_stat_t
+ *    Description: Define a estrutura padronizada de metadados dos ficheiros
+ *                 no Virtual File System (VFS) do Sirius OS. Disponibiliza
+ *                 constantes POSIX para identificação dos tipos de ficheiros,
+ *                 permissões de acesso e macros de verificação, bem como a
+ *                 estrutura vfs_stat_t e a função auxiliar vfs_stat_init()
+ *                 para inicialização genérica das informações estatísticas
+ *                 dos nós do VFS, garantindo uma interface uniforme entre
+ *                 diferentes sistemas de ficheiros, como RAMFS e FAT32.
+ * ============================================================================
+ */
+
+/* Tipos de ficheiros */
+#define S_IFMT    0170000
+#define S_IFIFO   0010000
+#define S_IFCHR   0020000
+#define S_IFDIR   0040000
+#define S_IFBLK   0060000
+#define S_IFREG   0100000
+#define S_IFLNK   0120000
+#define S_IFSOCK  0140000
+
+/* Permissões do proprietário */
+#define S_IRWXU   00700
+#define S_IRUSR   00400
+#define S_IWUSR   00200
+#define S_IXUSR   00100
+
+/* Permissões do grupo */
+#define S_IRWXG   00070
+#define S_IRGRP   00040
+#define S_IWGRP   00020
+#define S_IXGRP   00010
+
+/* Permissões dos outros */
+#define S_IRWXO   00007
+#define S_IROTH   00004
+#define S_IWOTH   00002
+#define S_IXOTH   00001
+
+/* Permissões especiais */
+#define S_ISUID   0004000
+#define S_ISGID   0002000
+#define S_ISVTX   0001000
+
+/* Verificação do tipo */
+#define S_ISFIFO(m)  (((m) & S_IFMT) == S_IFIFO)
+#define S_ISCHR(m)   (((m) & S_IFMT) == S_IFCHR)
+#define S_ISDIR(m)   (((m) & S_IFMT) == S_IFDIR)
+#define S_ISBLK(m)   (((m) & S_IFMT) == S_IFBLK)
+#define S_ISREG(m)   (((m) & S_IFMT) == S_IFREG)
+#define S_ISLNK(m)   (((m) & S_IFMT) == S_IFLNK)
+#define S_ISSOCK(m)  (((m) & S_IFMT) == S_IFSOCK)
+
+/*
+ * Inicialização genérica das informações stat.
+ * node->flags determina o tipo do nó.
+ * node->permissions determina as permissões.
+ */
+static inline void vfs_stat_init(vfs_node_t *node, vfs_stat_t *buf)
+{
+    if (!node || !buf)
+        return;
+
+    memset(buf, 0, sizeof(*buf));
+
+    buf->st_ino = node->inode;
+    buf->st_size = node->size;
+
+    buf->st_nlink = 1;
+    buf->st_uid = 0;
+    buf->st_gid = 0;
+    buf->st_rdev = 0;
+    buf->st_blksize = 4096;
+
+    buf->st_mode = node->permissions & 07777;
+
+    if (node->flags & VFS_DIRECTORY)
+        buf->st_mode |= S_IFDIR;
+    else if (node->flags & VFS_CHAR_DEV)
+        buf->st_mode |= S_IFCHR;
+    else if (node->flags & VFS_BLOCK_DEV)
+        buf->st_mode |= S_IFBLK;
+    else if (node->flags & VFS_SYMLINK)
+        buf->st_mode |= S_IFLNK;
+    else if (node->flags & VFS_FIFO)
+        buf->st_mode |= S_IFIFO;
+    else if (node->flags & VFS_SOCKET)
+        buf->st_mode |= S_IFSOCK;
+    else
+        buf->st_mode |= S_IFREG;
+}
 
 
 /**
@@ -241,6 +348,5 @@ struct process;
 int k_dup2(struct process* proc, int oldfd, int newfd);
 
 void vfs_print_tree(const char* start_path);
-
 
 #endif /* _VFS_H_ */

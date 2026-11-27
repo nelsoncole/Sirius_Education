@@ -82,6 +82,16 @@ component_t *create_editbox(
     editbox_type_t type
 );
 
+component_t *create_simple_editbox(
+    ui_context_t *ctx,
+    int x,
+    int y,
+    int w,
+    int h,
+    int font_size,
+    editbox_type_t type
+);
+
 void editbox_set_text(component_t *c, const char *text);
 void editbox_set_multiline(component_t *c, int enabled);
 

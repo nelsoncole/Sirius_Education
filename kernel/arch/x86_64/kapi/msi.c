@@ -18,7 +18,7 @@
  */
 
 #include <kernel/arch/x86_64/kapi/msi.h>
-#include <kernel/drivers/bus/pci.h>
+#include <kernel/drivers/bus/pci/pci.h>
 #include <kernel/arch/x86_64/cpu/cpu.h> /* Para get_current_cpu_id() */
 #include <kernel/klib.h>
 

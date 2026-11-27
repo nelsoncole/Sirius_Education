@@ -20,6 +20,7 @@
 #define _THREAD_H_
 
 #include <kernel/lib/stdint.h>
+#include <kernel/lib/stdbool.h>
 #include <kernel/arch/x86_64/cpu/reg.h>
 /* Pré-declaração para evitar loops com o process.h */
 struct process;

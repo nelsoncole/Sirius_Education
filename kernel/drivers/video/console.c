@@ -30,42 +30,60 @@ int tty_ready;
 /**
  * tty_flush_to_screen - Transfere a janela visível atual (Split Screen) para a VRAM.
  */
-void tty_flush_to_screen(struct tty_device *tty) {
-    if (!tty || !tty->video_buffer || !g_display.frame_buffer_base) return;
 
-    unsigned int max_virtual_height = tty->height * tty->total_pages;
-    
-    // Cast seguro para manipulação linear e precisa de bytes brutos pelo compilador
-    uint8_t *vram = (uint8_t*)g_display.frame_buffer_base;
-    uint8_t *buffer_base = (uint8_t*)tty->video_buffer;
-    
-    // Bytes contidos numa única linha horizontal do ecrã gráfico
-    uint32_t bytes_per_scanline = tty->pixels_per_scanLine * sizeof(uint32_t);
+void tty_flush_to_screen(struct tty_device *tty, int offset)
+{
+    if (!tty || !tty->video_buffer || !g_display.frame_buffer_base)
+        return;
 
-    /* Caso 1: A janela visível está linear dentro do buffer (Sem quebra circular) */
-    if (tty->scroll_y_offset + tty->height <= max_virtual_height) {
-        uint8_t *src = buffer_base + (tty->scroll_y_offset * bytes_per_scanline);
-        uint32_t size_bytes = tty->height * bytes_per_scanline;
-        
-        optimized_memcpy(vram, src, size_bytes);
-    } 
-    /* Caso 2: A janela quebrou na borda circular física! Divide a cópia em duas partes */
-    else {
-        // Parte 1: Do offset visível até ao fim absoluto do buffer de memória
-        unsigned int lines_part1 = max_virtual_height - tty->scroll_y_offset;
-        uint32_t size_part1 = lines_part1 * bytes_per_scanline;
-        uint8_t *src_part1 = buffer_base + (tty->scroll_y_offset * bytes_per_scanline);
-        
-        optimized_memcpy(vram, src_part1, size_part1);
+    if (g_display.bpp != 32)
+        return;
 
-        // Parte 2: Do início absoluto (0) do buffer até preencher o resto da altura da ecrã
-        unsigned int lines_part2 = tty->height - lines_part1;
-        uint32_t size_part2 = lines_part2 * bytes_per_scanline;
-        uint8_t *vram_part2 = vram + size_part1; // Avança os bytes que já foram copiados
-        
-        optimized_memcpy(vram_part2, buffer_base, size_part2);
+    if (tty->width == 0 || tty->height == 0 ||
+        tty->total_pages == 0 ||
+        g_display.width == 0 || g_display.height == 0)
+        return;
+
+    if (offset < 0 || tty->width > g_display.width)
+        return;
+
+    size_t total_lines = (size_t)tty->height * tty->total_pages;
+    size_t framebuffer_pitch = g_display.pitch;
+
+    if (framebuffer_pitch < (size_t)g_display.width * sizeof(uint32_t))
+        return;
+
+    if ((size_t)offset > total_lines ||
+        g_display.height > total_lines - (size_t)offset)
+        return;
+
+    size_t src_total_bytes =
+        total_lines * (size_t)tty->width * sizeof(uint32_t);
+
+    size_t dst_total_bytes =
+        framebuffer_pitch * (size_t)g_display.height;
+
+    if (src_total_bytes == 0 || dst_total_bytes == 0)
+        return;
+
+    const uint32_t *src_base = (const uint32_t *)tty->video_buffer;
+    uint8_t *dst_base = (uint8_t *)g_display.frame_buffer_base;
+
+    src_base += (size_t)offset * tty->width;
+
+    size_t copy_bytes = (size_t)tty->width * sizeof(uint32_t);
+
+    for (size_t y = 0; y < g_display.height; y++)
+    {
+        uint8_t *dst_row = dst_base + y * framebuffer_pitch;
+
+        const uint32_t *src_row =
+            src_base + y * (size_t)tty->width;
+
+        optimized_memcpy(dst_row, src_row, copy_bytes);
     }
 }
+
 
 /**
  * tty_emulator_thread - Ponto de entrada da Thread de Kernel do Emulador.
@@ -103,18 +121,21 @@ void tty_emulator_thread(void* arg) {
         
         struct tty_device* active_tty = (struct tty_device*)tty_get_current();
         
-        int mudou_foco = 0;
         int precisa_refresh = 0;
+        int mudou_foco = (active_node != last_active_node);
+        
+        for (int i = 0; i < MAX_TTY_DRV_DEVICES; i++) {
+            vfs_node_t* node = tty_vfs_get_node_by_index(i);
+            if (!node || !node->private_data) continue;
 
-        if (active_tty) {
-            
-            mudou_foco = (active_node != last_active_node);
-            precisa_refresh = __sync_lock_test_and_set(&active_tty->refresh_needed, 0);
-            if (precisa_refresh || mudou_foco) {
-                tty_flush_to_screen(active_tty);
+            struct tty_device* tty = (struct tty_device*)node->private_data;
+            precisa_refresh = __sync_lock_test_and_set(&tty->refresh_needed, 0);
+            if ((precisa_refresh && tty == active_tty) || (mudou_foco && tty == active_tty)) {
+                tty_flush_to_screen(active_tty, tty->scroll_y_offset);
                 // Garante a atualização imediata do ponteiro para travar loops infinitos
                 last_active_node = active_node; 
             }
+
         }
 
         /* 3. POLÍTICA DE COOPERAÇÃO OBRIGATÓRIA (FIM DO CONGELAMENTO) */

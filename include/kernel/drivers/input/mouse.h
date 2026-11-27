@@ -28,6 +28,11 @@
 #define MOUSE_CMD_WRITE_NEXT 0xD4  /* Avisa o 8042 para encaminhar o próximo byte para o rato */
 #define MOUSE_CMD_ENABLE_REPT 0xF4 /* Comando enviado ao rato para ativar o envio de pacotes */
 
+#define MOUSE_CMD_SET_SAMPLE_RATE  0xF3
+#define MOUSE_CMD_SET_RESOLUTION   0xE8
+#define MOUSE_CMD_SET_DEFAULTS     0xF6
+#define MOUSE_CMD_ENABLE_REPT      0xF4
+
 /* Sinalizadores de Estado do Primeiro Byte do Pacote */
 #define MOUSE_BTN_LEFT (1 << 0)   /* Bit 0: Botão Esquerdo Pressionado */
 #define MOUSE_BTN_RIGHT (1 << 1)  /* Bit 1: Botão Direito Pressionado */
@@ -41,6 +46,7 @@
 typedef struct
 {
     uint8_t buttons; /* Bitmask com os estados dos botões */
+    uint8_t padding;
     int16_t delta_x; /* Deslocamento relativo no eixo X */
     int16_t delta_y; /* Deslocamento relativo no eixo Y */
 } mouse_packet_t;

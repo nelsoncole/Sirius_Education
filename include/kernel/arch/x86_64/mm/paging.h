@@ -20,6 +20,7 @@
 
 #include <kernel/boot_info.h>
 #include <kernel/kernel/mm/memory_map.h>
+#include <kernel/lib/stdint.h>
 
 /*
  * ============================================================
@@ -208,5 +209,8 @@ extern unsigned long g_next_pt_number;
 
 void flush_tlb_local(void);
 void invlpg(void *addr);
+
+void write_cr3(uint64_t cr3);
+uint64_t read_cr3(void);
 
 #endif

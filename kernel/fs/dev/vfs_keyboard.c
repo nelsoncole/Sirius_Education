@@ -18,7 +18,7 @@
  */
 #include <kernel/fs/vfs/vfs.h>
 #include <kernel/fs/dev/vfs_keyboard.h>
-#include <kernel/drivers/char/keyboard.h>
+#include <kernel/drivers/input/keyboard.h>
 #include <kernel/klib.h>
 #include <kernel/kernel/core/spinlock.h>
 
@@ -77,7 +77,7 @@ static int tfs_keyboard_read(vfs_node_t* node, uint64_t offset,
 
     keyboard_packet_t packet;
 
-    if (!keyboard_get_packet(&packet))
+    if (!keyboard_get_packet_replica(&packet))
         return 0;
 
     memcpy(buffer, &packet, sizeof(keyboard_packet_t));

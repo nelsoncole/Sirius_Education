@@ -105,6 +105,9 @@ typedef struct process {
 
 extern process_t* g_process_list_head;
 
+
+process_t* process_create_kernel(uint32_t cpu_id);
+
 /**
  * process_init_standard_io - Inicializa os canais padrão (0, 1, 2) de um processo.
  * @proc:    O processo que está a ser configurado.

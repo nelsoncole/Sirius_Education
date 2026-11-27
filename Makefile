@@ -99,6 +99,19 @@ C_OBJ := \
 	$(BUILD_DIR)/ahci.o \
 	$(BUILD_DIR)/block.o \
 	$(BUILD_DIR)/partitions.o \
+	$(BUILD_DIR)/usb.o \
+	$(BUILD_DIR)/xhci_dma.o \
+	$(BUILD_DIR)/xhci_ring.o \
+	$(BUILD_DIR)/xhci_event.o \
+	$(BUILD_DIR)/xhci_port.o \
+	$(BUILD_DIR)/xhci.o \
+	$(BUILD_DIR)/xhci_command.o \
+	$(BUILD_DIR)/xhci_context.o \
+	$(BUILD_DIR)/xhci_transfer.o \
+	$(BUILD_DIR)/xhci_device.o \
+	$(BUILD_DIR)/usb_enum.o \
+	$(BUILD_DIR)/usb_hub.o \
+	$(BUILD_DIR)/usb_storage.o \
 	$(BUILD_DIR)/tty.o \
 	$(BUILD_DIR)/vfs_tty_kbd.o \
 	$(BUILD_DIR)/vfs.o \
@@ -273,7 +286,46 @@ $(BUILD_DIR)/kprintf.o: $(LIB_DIR)/kprintf.c | $(BUILD_DIR)
 $(BUILD_DIR)/video.o: $(DRIVERS_DIR)/video/video.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/pci.o: $(DRIVERS_DIR)/bus/pci.c | $(BUILD_DIR)
+$(BUILD_DIR)/pci.o: $(DRIVERS_DIR)/bus/pci/pci.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/usb.o: $(DRIVERS_DIR)/bus/usb/usb.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/xhci_dma.o: $(DRIVERS_DIR)/bus/usb/host/xhci/xhci_dma.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/xhci_ring.o: $(DRIVERS_DIR)/bus/usb/host/xhci/xhci_ring.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/xhci_event.o: $(DRIVERS_DIR)/bus/usb/host/xhci/xhci_event.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/xhci_port.o: $(DRIVERS_DIR)/bus/usb/host/xhci/xhci_port.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/xhci.o: $(DRIVERS_DIR)/bus/usb/host/xhci/xhci.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/xhci_command.o: $(DRIVERS_DIR)/bus/usb/host/xhci/xhci_command.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/xhci_context.o: $(DRIVERS_DIR)/bus/usb/host/xhci/xhci_context.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/xhci_transfer.o: $(DRIVERS_DIR)/bus/usb/host/xhci/xhci_transfer.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/xhci_device.o: $(DRIVERS_DIR)/bus/usb/host/xhci/xhci_device.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/usb_enum.o: $(DRIVERS_DIR)/bus/usb/core/usb_enum.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/usb_hub.o: $(DRIVERS_DIR)/bus/usb/core/usb_hub.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/usb_storage.o: $(DRIVERS_DIR)/bus/usb/class/storage/usb_storage.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/char.o: $(DRIVERS_DIR)/char/char.c | $(BUILD_DIR)
@@ -282,7 +334,7 @@ $(BUILD_DIR)/char.o: $(DRIVERS_DIR)/char/char.c | $(BUILD_DIR)
 $(BUILD_DIR)/font.o: $(DRIVERS_DIR)/char/font.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/keyboard.o: $(DRIVERS_DIR)/char/keyboard.c | $(BUILD_DIR)
+$(BUILD_DIR)/keyboard.o: $(DRIVERS_DIR)/input/keyboard.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/mouse.o: $(DRIVERS_DIR)/input/mouse.c | $(BUILD_DIR)

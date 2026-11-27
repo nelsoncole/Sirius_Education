@@ -10,13 +10,13 @@
  *   Created Date: 07/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 07/09/2026
+ *  Modified Date: 23/11/2026
  * 
  *        License: MIT
  * ============================================================================
  */
 
-#include <kernel/drivers/char/keyboard.h>
+#include <kernel/drivers/input/keyboard.h>
 #include <kernel/arch/x86_64/kapi/irq.h>
 #include <kernel/klib.h>
 #include <kernel/kernel/sched/wait.h>
@@ -29,20 +29,20 @@
 #define SCAN_RSHIFT    0x36
 #define SCAN_CAPSLOCK  0x3A
 
-/* Buffer circular de pacotes brutos para eventX*/
-static void* g_keyboard_read_wait = NULL;
-static keyboard_packet_t g_keyboard_buffer[KBD_BUFFER_SIZE];
-static int g_keyboard_head = 0;
-static int g_keyboard_tail = 0;
-
 /* Estado volátil de controle do fluxo de bytes do barramento */
 static int g_is_e0_extended = 0;
 static uint8_t g_current_modifiers = 0; // Guarda o estado vivo do Shift/Caps
 
-/* Buffer circular de pacotes brutos de 16 bits (Raw Scancodes) */
-static kbd_event_t g_kbd_raw_buffer[KBD_BUFFER_SIZE];
+/* Buffer circular de pacotes brutos (Raw Scancodes) */
+static keyboard_packet_t g_keyboard_buffer[KBD_BUFFER_SIZE];
 static int g_kbd_head = 0;
 static int g_kbd_tail = 0;
+
+static keyboard_packet_t g_keyboard_replica_buffer[KBD_BUFFER_SIZE];
+static int g_kbd_replica_head = 0;
+static int g_kbd_replica_tail = 0;
+
+static void* g_keyboard_read_wait = NULL;
 static void* g_kbd_wait = NULL;
 void* thread_kbd = NULL;
 
@@ -60,6 +60,8 @@ void keyboard_ps2_init(void)
     g_current_modifiers = 0;
     g_kbd_head = 0;
     g_kbd_tail = 0;
+    g_kbd_replica_head = 0;
+    g_kbd_replica_tail = 0;
     g_kbd_wait = NULL;
     thread_kbd = NULL;
 
@@ -127,58 +129,56 @@ void keyboard_handler(void)
     /* Injeta no buffer antigo (se ainda o usares, podes guardar is_extended ou flag nos modifiers) */
     int next = (g_kbd_head + 1) % KBD_BUFFER_SIZE;
     if (next != g_kbd_tail) {
-        
-        g_kbd_raw_buffer[g_kbd_head].scancode = byte;
-        g_kbd_raw_buffer[g_kbd_head].modifiers_state = packet_modifiers;
-        //g_kbd_raw_buffer[g_kbd_head].is_e0_extended = is_extended;
-        
-        g_kbd_head = next;
-        wakeup_thread(&g_kbd_wait, thread_kbd);
-    }
 
-    /* Monta o pacote estável com o is_extended capturado */
-    next = (g_keyboard_head + 1) % KBD_BUFFER_SIZE;
-    if (next != g_keyboard_tail)
-    {
         keyboard_packet_t packet;
         packet.is_e0_extended = is_extended;
         packet.mods = packet_modifiers;
         packet.scancode = byte;
 
-        g_keyboard_buffer[g_keyboard_head] = packet;
-        g_keyboard_head = next;
-
-        wakeup(&g_keyboard_read_wait);
+        g_keyboard_buffer[g_kbd_head] = packet;
+        g_kbd_head = next;
+        wakeup_no_queue(&g_kbd_wait, thread_kbd);
     }
 }
 
 /**
  * Retorna a estrutura completa do evento de tecla de forma bloqueante.
  */
-kbd_event_t keyboard_get_event(void)
-{
+keyboard_packet_t keyboard_get_packet(void) {
+
     while (g_kbd_tail == g_kbd_head) {
         wait_no_queue(&g_kbd_wait, NULL);
     }
     
-    kbd_event_t event = g_kbd_raw_buffer[g_kbd_tail];
+    keyboard_packet_t packet = g_keyboard_buffer[g_kbd_tail];
     g_kbd_tail = (g_kbd_tail + 1) % KBD_BUFFER_SIZE;
-    return event;
+
+    // Replica o evento
+    // A replica sera processada na thread do teclado
+    int next = (g_kbd_replica_head + 1) % KBD_BUFFER_SIZE;
+    if (next != g_kbd_replica_tail) {
+
+        g_keyboard_replica_buffer[g_kbd_replica_head] = packet;
+        g_kbd_replica_head = next;
+        wakeup(&g_keyboard_read_wait);
+    }
+
+    return packet;
 }
 
 
-int keyboard_get_packet(keyboard_packet_t* packet)
+int keyboard_get_packet_replica(keyboard_packet_t* packet)
 {
     if (!packet)
         return 0;
 
-    while (g_keyboard_tail == g_keyboard_head)
+    while (g_kbd_replica_tail == g_kbd_replica_head)
     {
         wait(&g_keyboard_read_wait, NULL);
     }
 
-    *packet = g_keyboard_buffer[g_keyboard_tail];
-    g_keyboard_tail = (g_keyboard_tail + 1) % KBD_BUFFER_SIZE;
+    *packet = g_keyboard_buffer[g_kbd_replica_tail];
+    g_kbd_replica_tail = (g_kbd_replica_tail + 1) % KBD_BUFFER_SIZE;
 
     return 1;
 }

@@ -18,7 +18,7 @@
  */
 
  #include <kernel/arch/x86_64/kapi/acpi.h>
-#include <kernel/drivers/bus/pci.h>
+#include <kernel/drivers/bus/pci/pci.h>
 #include <kernel/klib.h>
 
 #define MAX_PCI_DEVICES_POOL 128

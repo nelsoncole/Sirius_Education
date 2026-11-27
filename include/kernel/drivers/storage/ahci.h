@@ -20,7 +20,7 @@
 #define _AHCI_H_
 
 #include <kernel/lib/stdint.h>
-#include <kernel/drivers/bus/pci.h>
+#include <kernel/drivers/bus/pci/pci.h>
 
 #define PCI_CLASS_STORAGE       0x01
 #define PCI_SUBCLASS_SATA       0x06

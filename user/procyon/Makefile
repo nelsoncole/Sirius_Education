@@ -14,7 +14,7 @@ PROCYON_BASE_OBJ := cpu_memory.o utf8_decode.o procyon_file.o window.o pixel.o \
 
 PROCYON_UI_OBJ   := components.o label.o button.o iconbutton.o checkbox.o listbox.o radiobutton.o \
                     slider.o progressbar.o painel.o combobox.o editbox.o gridview.o scroll.o \
-					console.o textbox.o
+					console.o textbox.o window_controls.o ui_open_file.o ui_save_file.o
 
 OBJS     := $(PROCYON_BASE_OBJ) $(PROCYON_UI_OBJ)
 

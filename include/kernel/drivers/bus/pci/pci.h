@@ -59,9 +59,20 @@
 #define PCI_CLASS_BRIDGE        0x06  /* Pontes ISA, LPC, Host-to-PCI */
 #define PCI_CLASS_SERIAL_BUS    0x0C  /* Controladores USB (UHCI, EHCI, xHCI), FireWire */
 
-/* Subclasses úteis de Armazenamento */
+
+/* Subclasses de Interface IDE */
 #define PCI_SUBCLASS_IDE        0x01
-#define PCI_SUBCLASS_SATA       0x06  /* Interface AHCI enquadra-se aqui */
+
+/* Subclasses de Interface AHCI */
+#define PCI_SUBCLASS_SATA       0x06
+
+/* Subclasses de Barramento Serial */
+#define PCI_SUBCLASS_USB        0x03
+/* Interfaces USB (Programming Interface) */
+#define PCI_USB_UHCI            0x00
+#define PCI_USB_OHCI            0x10
+#define PCI_USB_EHCI            0x20
+#define PCI_USB_XHCI            0x30
 
 /* Estrutura que representa a localização física de uma função no barramento */
 typedef struct {

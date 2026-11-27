@@ -15,7 +15,7 @@
  */
 
 #include <kernel/kmods/kmod.h>
-#include <kernel/drivers/bus/pci.h>
+#include <kernel/drivers/bus/pci/pci.h>
 #include <kernel/drivers/net/net_core.h>
 #include <kernel/klib.h>
 

@@ -31,11 +31,14 @@
 
 #define NET_RX_QUEUE_SIZE 64
 #define MAX_NETWORK_INTERFACES 4
+#define NET_EVENT_BUFFER_SIZE 128
 
 extern int net_init_dhcp_client(void);
 extern void net_clear_dhcp_leases(void);
 extern void arp_init(void);
-volatile net_event_t g_net_link_event = NET_EVENT_NONE;
+net_event_t g_net_event_buffer[NET_EVENT_BUFFER_SIZE];
+static int g_net_ev_head = 0;
+static int g_net_ev_tail = 0;
 
 typedef struct 
 {
@@ -62,9 +65,10 @@ typedef struct
 static net_rx_packet_t g_net_rx_queue[NET_RX_QUEUE_SIZE];
 static uint32_t g_net_rx_head = 0;
 static uint32_t g_net_rx_tail = 0;
-static spinlock_t g_net_rx_lock = { SPINLOCK_RELEASED };
 void* g_net_rx_wait;
+void* g_net_ev_wait;
 void* thread_rx = NULL;
+void* thread_net_ev = NULL;
 
 /* Tabela centralizada de múltiplas interfaces de hardware */
 static net_interface_t g_net_interfaces[MAX_NETWORK_INTERFACES];
@@ -362,7 +366,7 @@ int net_driver_receive(const void* buffer, uint32_t packet_size)
     g_net_rx_queue[g_net_rx_head].len  = packet_size;
     g_net_rx_head = next_head;
 
-    wakeup_thread(&g_net_rx_wait, thread_rx);
+    wakeup_no_queue(&g_net_rx_wait, thread_rx);
 
     return 0; 
 }
@@ -370,23 +374,27 @@ int net_driver_receive(const void* buffer, uint32_t packet_size)
 void net_set_link_event(net_event_t event)
 {   
     /* Protege a escrita contra concorrência e preempção na IRQ */
-    spinlock_acquire(&g_net_rx_lock);
-    g_net_link_event = event;
-    wakeup_thread(&g_net_rx_wait, thread_rx);
-    spinlock_release(&g_net_rx_lock);
+
+    int next = (g_net_ev_head + 1) % NET_EVENT_BUFFER_SIZE;
+    if (next != g_net_ev_tail)
+    {
+        g_net_event_buffer[g_net_ev_head] = event;
+        g_net_ev_head = next;
+
+        wakeup_no_queue(&g_net_ev_wait, thread_net_ev);
+    }
 }
 
 net_event_t net_consume_link_event(void)
 {
-    if (g_net_link_event == NET_EVENT_NONE)
+
+    while (g_net_ev_tail == g_net_ev_head)
     {
-        return NET_EVENT_NONE;
+        wait_no_queue(&g_net_ev_wait, NULL);
     }
 
-    net_event_t event;
-    
-    event = g_net_link_event;
-    g_net_link_event = NET_EVENT_NONE; /* Consome o evento (Reset) */
+    net_event_t event = g_net_event_buffer[g_net_ev_tail];
+    g_net_ev_tail = (g_net_ev_tail + 1) % NET_EVENT_BUFFER_SIZE;
 
     return event;
 }
@@ -400,16 +408,6 @@ void network_rx_thread(void* arg) {
 
     while (1)
     {
-        // 1. Verifica se houve mudança no estado do cabo/link
-        net_event_t ev = net_consume_link_event();
-        
-        if (ev == NET_EVENT_LINK_UP) {
-            net_init_dhcp_client();
-        } 
-        else if (ev == NET_EVENT_LINK_DOWN) {
-            net_clear_dhcp_leases();
-        }
-
         uint8_t* packet_data = NULL;
         uint32_t packet_len  = 0;
 
@@ -417,16 +415,7 @@ void network_rx_thread(void* arg) {
         // BLOQUEIO PASSIVO: Enquanto a fila circular estiver vazia, a thread dorme!
         while (g_net_rx_head == g_net_rx_tail)
         {
-            if (g_net_rx_head == g_net_rx_tail)
-            {
-                // o wakeup e do evento
-                break;
-            }
-        }
-
-        if (g_net_rx_head == g_net_rx_tail)
-        {
-            continue;
+            wait_no_queue(&g_net_rx_wait, NULL);
         }
 
         packet_data = g_net_rx_queue[g_net_rx_tail].data;
@@ -460,6 +449,28 @@ void network_rx_thread(void* arg) {
         kfree(packet_data);
     }
 }
+
+void network_ev_thread(void* arg) {
+    (void)arg;
+    kprintf("[NET CORE] Thread de processamento de events ativa em Ring 0.\n");
+
+    cpu_data_block_t* cpu = get_current_cpu();
+    thread_net_ev = (void*) cpu->current_thread;
+
+    while (1)
+    {
+        // 1. Verifica se houve mudança no estado do cabo/link
+        net_event_t ev = net_consume_link_event();
+        
+        if (ev == NET_EVENT_LINK_UP) {
+            net_init_dhcp_client();
+        } 
+        else if (ev == NET_EVENT_LINK_DOWN) {
+            net_clear_dhcp_leases();
+        }
+    }
+}
+
 
 void net_init(void)
 {

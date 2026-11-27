@@ -67,6 +67,7 @@ extern void procyon_desktop_main(int info_width, int info_height);
 typedef struct
 {
     uint8_t buttons; /* Bitmask com os estados dos botões */
+    uint8_t padding;
     int16_t delta_x; /* Deslocamento relativo no eixo X */
     int16_t delta_y; /* Deslocamento relativo no eixo Y */
 } mouse_packet_t;
@@ -90,16 +91,16 @@ void *thread_mouse_func(void *arg)
 {
     (void)arg;
     int fd = open("/dev/mouse", O_RDONLY);
-
-    int x = 0;
-    int y = 0;
+    
+    int x = info->width/2;
+    int y = info->height/2;
+    set_cursor(x, y);
 
     if (fd >= 0)
     {
         while (1)
         {
             int ret = read(fd, &packet, sizeof(packet));
-
             if (ret == sizeof(packet))
             {
                 //printf("%dx%x %x", packet.delta_x, packet.delta_y, packet.buttons);
@@ -110,14 +111,15 @@ void *thread_mouse_func(void *arg)
                 if (y < 0) y = 0;
 
                 set_cursor(x, y);
-
+            
                 handle_mouse_event(x, y, packet.buttons);
-                
                 compositor_render();
                 ioctl(tty, TTY_IOCTL_VIDEO_WRITE, info);
             }
         }
     }
+
+    return NULL;
 }
 
 void *thread_keyboard_func(void *arg)
@@ -154,6 +156,8 @@ void *thread_keyboard_func(void *arg)
             
         }
     }
+
+    return NULL;
 }
 
 int main(int argc, char *argv[])
@@ -161,8 +165,12 @@ int main(int argc, char *argv[])
     (void)argc;
     (void)argv;
 
-    memcpy_init();
 
+    int fd = open("/dev/pts/0", O_RDWR);
+    if(fd >= 0)
+        dup2(fd, STDOUT_FILENO);
+
+    memcpy_init();
     
     int server_fd, client_fd;
     struct sockaddr_un server_addr;
@@ -230,8 +238,9 @@ int main(int argc, char *argv[])
     compositor_init(compositor_buffer, info->width, info->height, info->bpp);
     mouse_cursor_init();
     
-    pthread_create(&thread_mouse, NULL, thread_mouse_func, NULL);
+    
     pthread_create(&thread_keyboard, NULL, thread_keyboard_func, NULL);
+    pthread_create(&thread_mouse, NULL, thread_mouse_func, NULL);
 
     pid_t pid_desktop = fork();
 
@@ -253,7 +262,7 @@ int main(int argc, char *argv[])
 
         procyon_msg_header_t header;
         if (read(client_fd, &header, sizeof(procyon_msg_header_t)) > 0)
-        {
+        {   
             if (header.command == PROCYON_CMD_ADD_WINDOW)
             {
                 ipc_msg_add_window_t msg;
@@ -367,6 +376,7 @@ int main(int argc, char *argv[])
                 ioctl(tty, TTY_IOCTL_VIDEO_WRITE, info);
             }
         }
+
         close(client_fd);
     }
 

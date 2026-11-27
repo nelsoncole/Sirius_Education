@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <unistd.h>
 
+#define PTHREAD_STACK_SIZE (512 * 1024)
+
 typedef struct {
     void *(*func)(void *);
     void *arg;
@@ -34,16 +36,16 @@ int pthread_create(pthread_t *pd, const pthread_attr_t *attr,
         return -1;
 
     // 256 KiB de stack
-    void *stack_base = malloc(0x40000);
+    void *stack_base = malloc(PTHREAD_STACK_SIZE);
     if (!stack_base) {
         free(tmp);
         return -1;
     }
 
-    memset(stack_base, 0, 0x40000);
+    memset(stack_base, 0, PTHREAD_STACK_SIZE);
 
     // Garante alinhamento estrito a 16 bytes no topo da stack
-    uintptr_t stack = ((uintptr_t)stack_base + 0x40000) & ~(uintptr_t)0xF;
+    uintptr_t stack = ((uintptr_t)stack_base + PTHREAD_STACK_SIZE) & ~(uintptr_t)0xF;
 
     // Empilha a struct thread_start_t (16 bytes -> mantém alinhamento a 16 bytes)
     stack -= sizeof(thread_start_t);

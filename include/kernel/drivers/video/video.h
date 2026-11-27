@@ -32,6 +32,9 @@ typedef struct {
     unsigned int  height;
     unsigned int  pixels_per_scanLine;
 
+    unsigned int  bpp;
+    unsigned int  pitch;
+
     EFI_GRAPHICS_PIXEL_FORMAT pixel_format;
     
     unsigned int  cursor_x;         // Coluna atual do texto (em pixéis ou caracteres)

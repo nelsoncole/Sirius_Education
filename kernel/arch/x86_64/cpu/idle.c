@@ -16,6 +16,7 @@
  */
 
 #include <kernel/arch/x86_64/cpu/cpu.h>
+#include <kernel/klib.h>
 
 spinlock_t wait_kernel_init = {0};
 
@@ -30,14 +31,17 @@ void cpu_idle(void)
      * Ativa as interrupções locais para permitir que o núcleo
      * acorde do estado de suspensão quando um evento disparar.
      */
-    __asm__ __volatile__("sti");
-
     for (;;)
     {
         /*
          * Coloca o processador em estado de baixo consumo (Halt).
          * O núcleo dorme até à próxima interrupção (ex: tique do LAPIC).
          */
-        __asm__ __volatile__("hlt");
+        __asm__ __volatile__(
+            "sti\n\t"
+            "hlt"
+            ::: "memory"
+        );
+
     }
 }

@@ -9,7 +9,7 @@
  *   Created Date: 16/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 16/09/2026
+ *  Modified Date: 21/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -71,10 +71,14 @@ vfs_operations_t g_ramfs_ops = {
 //-----------------------------------------------------------------------------
 // OPERAÇÕES DE CICLO DE VIDA E ES (FICHEIROS REGOULARES)
 //-----------------------------------------------------------------------------
-static int ramfs_open(vfs_node_t* node, uint32_t flags) {
+static int ramfs_open(vfs_node_t* node, uint32_t flags)
+{
     (void)flags;
-    if (!node) return -1;
-    return 0; // Ficheiros em RAM estão sempre prontos para acesso síncrono
+    
+    if (!node || !node->private_data)
+        return -1;
+
+    return 0;
 }
 
 /**
@@ -163,12 +167,32 @@ static int ramfs_readdir(vfs_node_t* target, uint32_t index, vfs_node_t* out_nod
 
     while (entry != NULL) {
         if (current_idx == index) {
-            memcpy(out_node, entry->node, sizeof(vfs_node_t));
+            vfs_node_t* node = entry->node;
+
+            if (!node)
+                return -1;
+
+            strncpy(out_node->name, node->name, sizeof(out_node->name) - 1);
+            out_node->name[sizeof(out_node->name) - 1] = '\0';
+
+            out_node->flags = node->flags;
+            out_node->size = node->size;
+            out_node->inode = node->inode;
+            out_node->parent_inode = node->parent_inode;
+            out_node->permissions = node->permissions;
+
+            out_node->ops = node->ops;
+            out_node->private_data = node->private_data;
+            out_node->fs = node->fs;
+            out_node->ptr_mount = node->ptr_mount;
+
             return 0;
         }
+
         current_idx++;
         entry = entry->next;
     }
+
     return -1;
 }
 
@@ -290,18 +314,10 @@ static int ramfs_stat(vfs_node_t *node, vfs_stat_t *buf)
     if (!node || !buf)
         return -1;
 
-    buf->st_ino  = (uint32_t)node->inode;
-    buf->st_size = node->size;
-    
-    // POSIX Standard: O st_mode combina o tipo (flags) com as permissões lógicas
-    buf->st_mode = node->flags | node->permissions;
-    
-    // Valores padrão de segurança (root/root)
-    buf->st_uid  = 0;
-    buf->st_gid  = 0;
+    vfs_stat_init(node, buf);
     
     // RamFS não possui atributos nativos de disco como o FAT32 (Hidden, System)
-    buf->st_attr = 0; 
+    buf->st_attr = 0;
 
     return 0;
 }

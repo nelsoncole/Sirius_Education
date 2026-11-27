@@ -31,6 +31,9 @@ static int console_clamp_offset(console_data_t *d, int height)
 
 static int console_contains(component_t *c, int x, int y)
 {
+    if (!c)
+        return 0;
+
     return x >= c->x &&
            y >= c->y &&
            x < c->x + c->w &&
@@ -43,9 +46,7 @@ static void console_invalidate(component_t *c)
         return;
 
     c->render = 1;
-
-    if (c->ctx && c->ctx->window)
-        c->ctx->window->invalid = 1;
+    c->dirty = 1;
 }
 
 static void console_scroll_to_bottom(component_t *console)
@@ -54,10 +55,12 @@ static void console_scroll_to_bottom(component_t *console)
         return;
 
     console_data_t *d = console->data;
+
     if (!d)
         return;
 
     int max_offset = d->content_height - console->h;
+
     if (max_offset < 0)
         max_offset = 0;
 
@@ -67,6 +70,83 @@ static void console_scroll_to_bottom(component_t *console)
         console_invalidate(console);
     }
 }
+
+/* ============================================================
+ * CICLO DE VIDA DO COMPONENTE
+ * ============================================================ */
+
+static void console_on_clear(component_t *c)
+{
+    if (!c || c->type != UI_CONSOLE)
+        return;
+
+    console_clear(c);
+}
+
+static void console_on_enable(component_t *c)
+{
+    if (!c || c->type != UI_CONSOLE)
+        return;
+
+    console_data_t *d = c->data;
+
+    if (!d)
+        return;
+
+    d->background_render = 1;
+
+    console_invalidate(c);
+}
+
+static void console_on_disable(component_t *c)
+{
+    if (!c || c->type != UI_CONSOLE)
+        return;
+
+    console_data_t *d = c->data;
+
+    if (!d)
+        return;
+
+    d->dragging_scroll = 0;
+    d->drag_offset_y = 0;
+}
+
+static void console_on_destroy(component_t *c)
+{
+    if (!c)
+        return;
+
+    console_data_t *d = c->data;
+
+    if (!d)
+        return;
+
+    if (d->ctx) {
+        if (d->ctx->window) {
+            if (d->ctx->window->buffer) {
+                free(d->ctx->window->buffer);
+                d->ctx->window->buffer = NULL;
+            }
+
+            free(d->ctx->window);
+            d->ctx->window = NULL;
+        }
+
+        free(d->ctx->components);
+        d->ctx->components = NULL;
+
+        free(d->ctx);
+        d->ctx = NULL;
+    }
+
+    free(d);
+    c->data = NULL;
+}
+
+/* ============================================================
+ * LIMPAR CONSOLE
+ * ============================================================ */
 
 int console_clear(component_t *console)
 {
@@ -86,7 +166,7 @@ int console_clear(component_t *console)
     size_t width = (size_t)win->width;
     size_t height = (size_t)win->height;
 
-    if (height > SIZE_MAX / width)
+    if (width == 0 || height > SIZE_MAX / width)
         return -1;
 
     ui_lock(&win->lock);
@@ -110,6 +190,10 @@ int console_clear(component_t *console)
 
     return 0;
 }
+
+/* ============================================================
+ * REDIMENSIONAR BUFFER INTERNO
+ * ============================================================ */
 
 static int console_resize_buffer(console_data_t *d, int required_height)
 {
@@ -164,8 +248,13 @@ static int console_resize_buffer(console_data_t *d, int required_height)
     win->height = required_height;
 
     ui_unlock(&win->lock);
+
     return 0;
 }
+
+/* ============================================================
+ * CRIAR CONSOLE
+ * ============================================================ */
 
 component_t *create_console(
     ui_context_t *ctx,
@@ -191,34 +280,40 @@ component_t *create_console(
         return NULL;
     }
 
-    d->background_render = 1;
-    d->border_radius = 0;
-    d->border_thickness = 0;
+    d->ctx = calloc(1, sizeof(ui_context_t));
 
-    d->ctx = malloc(sizeof(ui_context_t));
     if (!d->ctx) {
         free(d);
         free(c);
         return NULL;
     }
 
-    memset(d->ctx, 0, sizeof(ui_context_t));
-
     d->scrollbar_width = CONSOLE_SCROLLBAR_WIDTH;
+    d->border_radius = 0;
+    d->border_thickness = 0;
     d->background_render = 1;
 
     int viewport_width = w - d->scrollbar_width;
 
     d->ctx->fd = ctx->fd;
-    d->width = w - (d->scrollbar_width+(d->border_thickness*2));
-    d->height = h - (d->border_thickness*2);
+    d->ctx->suppress_server_notify = 1;
+
+    d->width = w - d->scrollbar_width -
+               (d->border_thickness * 2);
+
+    d->height = h - (d->border_thickness * 2);
     d->content_height = d->height;
 
     d->ctx->window = component_window_create(
         ctx->window,
         viewport_width,
         h,
-        argb(ctx->window->bg >> 24 &0xFF, 16, 18, 22),
+        argb(
+            (ctx->window->bg >> 24) & 0xFF,
+            16,
+            18,
+            22
+        ),
         0
     );
 
@@ -233,59 +328,111 @@ component_t *create_console(
     c->y = y;
     c->w = w;
     c->h = h;
+
     c->type = UI_CONSOLE;
     c->visible = 1;
+    c->enabled = 1;
     c->render = 1;
+    c->dirty = 1;
+
     c->ctx = ctx;
     c->data = d;
 
     c->bg = argb(255, 16, 18, 22);
     c->border_color = c->bg;
+    c->fg = argb(255, 230, 230, 230);
+    c->font_size = 18;
 
-    unsigned char *free_font_buffer = 0;
-    void *font = malloc(sizeof(stbtt_fontinfo));
+    unsigned char *free_font_buffer = NULL;
+    stbtt_fontinfo *font = malloc(sizeof(stbtt_fontinfo));
+
     if (font) {
         memset(font, 0, sizeof(stbtt_fontinfo));
-        if (stbtt_font_init(font, "usr/share/fonts/UbuntuMono.ttf", &free_font_buffer) == 0)
-        {
+
+        if (stbtt_font_init(
+                font,
+                "usr/share/fonts/UbuntuMono.ttf",
+                &free_font_buffer
+            ) == 0) {
+
+            c->font = *font;
             c->free_font_buffer = free_font_buffer;
-            c->font = *(stbtt_fontinfo *)font;
-            free(font);
-            font = NULL;
-        }
-        else
-        {
-            free(font);
+
+        } else {
+            free(free_font_buffer);
+            free_font_buffer = NULL;
+
+            if (!ctx->window->font) {
+                free(font);
+                goto fail;
+            }
+
             c->font = *(stbtt_fontinfo *)ctx->window->font;
         }
-    }else {
-         c->font = *(stbtt_fontinfo *)ctx->window->font;   
-    }
-    c->font_size = 18;
-    c->fg = argb(255, 230, 230, 230);
 
-    d->char_width = c->font_size/2;
+        free(font);
+    } else {
+        if (!ctx->window->font)
+            goto fail;
+
+        c->font = *(stbtt_fontinfo *)ctx->window->font;
+    }
+
+    d->char_width = c->font_size / 2;
     d->char_height = c->font_size;
 
     c->on_draw = draw_console;
     c->on_event = console_event;
 
-    // --- inicializar cache da fonte aqui ---
-    build_font_cache(&c->font, c->font_size, &c->font_cache);
+    c->on_clear = console_on_clear;
+    c->on_enable = console_on_enable;
+    c->on_disable = console_on_disable;
+    c->on_destroy = console_on_destroy;
 
-    if (ui_add_component(ctx, c) != 0) {
-        free(d->ctx->window->buffer);
-        free(d->ctx->window);
-        free(d->ctx);
-        free(d);
-        free(c);
-        return NULL;
-    }
+    build_font_cache(
+        &c->font,
+        c->font_size,
+        &c->font_cache
+    );
+
+    if (ui_add_component(ctx, c) != 0)
+        goto fail;
 
     return c;
+
+fail:
+
+    if (d->ctx && d->ctx->window) {
+        free(d->ctx->window->buffer);
+        d->ctx->window->buffer = NULL;
+
+        free(d->ctx->window);
+        d->ctx->window = NULL;
+    }
+
+    if (d->ctx) {
+        free(d->ctx->components);
+        free(d->ctx);
+    }
+
+    free(d);
+
+    if (c->free_font_buffer)
+        free(c->free_font_buffer);
+
+    free(c);
+
+    return NULL;
 }
 
-void console_set_content_height(component_t *console, int content_height)
+/* ============================================================
+ * CONFIGURAR ALTURA DO CONTEÚDO
+ * ============================================================ */
+
+void console_set_content_height(
+    component_t *console,
+    int content_height
+)
 {
     if (!console || console->type != UI_CONSOLE)
         return;
@@ -310,6 +457,10 @@ void console_set_content_height(component_t *console, int content_height)
     console_invalidate(console);
 }
 
+/* ============================================================
+ * CONFIGURAR SCROLL
+ * ============================================================ */
+
 void console_set_offset(component_t *console, int offset)
 {
     if (!console || console->type != UI_CONSOLE)
@@ -328,6 +479,10 @@ void console_set_offset(component_t *console, int offset)
 
     console_invalidate(console);
 }
+
+/* ============================================================
+ * MÉTRICAS DA BARRA DE SCROLL
+ * ============================================================ */
 
 static void console_get_metrics(
     console_data_t *d,
@@ -354,7 +509,9 @@ static void console_get_metrics(
 
     int thumb = (int)(numerator / d->content_height);
 
-    int minimum_thumb = d->char_height > 0 ? d->char_height : 1;
+    int minimum_thumb = d->char_height > 0
+                      ? d->char_height
+                      : 1;
 
     if (thumb < minimum_thumb)
         thumb = minimum_thumb;
@@ -367,7 +524,14 @@ static void console_get_metrics(
     *max_thumb_y = height - thumb;
 }
 
-static int console_ensure_height(component_t *console, int required_height)
+/* ============================================================
+ * GARANTIR ALTURA DO CONTEÚDO
+ * ============================================================ */
+
+static int console_ensure_height(
+    component_t *console,
+    int required_height
+)
 {
     if (!console)
         return -1;
@@ -381,15 +545,23 @@ static int console_ensure_height(component_t *console, int required_height)
         required_height = console->h;
 
     if (required_height > d->content_height) {
-        console_set_content_height(console, required_height);
+        console_set_content_height(
+            console,
+            required_height
+        );
 
         if (d->content_height < required_height)
             return -1;
     }
 
     console_scroll_to_bottom(console);
+
     return 0;
 }
+
+/* ============================================================
+ * NOVA LINHA
+ * ============================================================ */
 
 int console_newline(component_t *console)
 {
@@ -404,7 +576,9 @@ int console_newline(component_t *console)
     d->cursor_x = 0;
 
     if (d->cursor_y / d->char_height >= CONSOLE_MAX_LINES - 1) {
-        console_clear(console);
+        if (console_clear(console) != 0)
+            return -1;
+
         console->render = 1;
         return 0;
     }
@@ -416,14 +590,20 @@ int console_newline(component_t *console)
 
     if (console_ensure_height(
             console,
-            d->cursor_y + d->char_height) != 0)
+            d->cursor_y + d->char_height
+        ) != 0)
         return -1;
 
     console_scroll_to_bottom(console);
-    console->render = 1;
+
+    console_invalidate(console);
 
     return 0;
 }
+
+/* ============================================================
+ * ESCREVER UM CARACTERE
+ * ============================================================ */
 
 int console_put_char(component_t *console, char ch)
 {
@@ -437,7 +617,7 @@ int console_put_char(component_t *console, char ch)
 
     window_t *win = d->ctx->window;
 
-    if (d->char_width <= 0 || d->char_height <= 0)
+    if (!win->buffer || d->char_width <= 0 || d->char_height <= 0)
         return -1;
 
     if (ch == '\n')
@@ -446,13 +626,15 @@ int console_put_char(component_t *console, char ch)
     if (ch == '\r') {
         d->cursor_x = 0;
         console_scroll_to_bottom(console);
-        console->render = 1;
+        console_invalidate(console);
         return 0;
     }
 
     if (ch == '\b') {
         if (d->cursor_x >= d->char_width) {
             d->cursor_x -= d->char_width;
+
+            ui_lock(&win->lock);
 
             fill_rect(
                 win->buffer,
@@ -465,15 +647,20 @@ int console_put_char(component_t *console, char ch)
                 win->bg
             );
 
-            console->render = 1;
+            ui_unlock(&win->lock);
+
+            console_invalidate(console);
         }
 
         console_scroll_to_bottom(console);
+
         return 0;
     }
 
     if (ch == '\t') {
-        int spaces = 4 - ((d->cursor_x / d->char_width) % 4);
+        int spaces = 4 - (
+            (d->cursor_x / d->char_width) % 4
+        );
 
         while (spaces-- > 0) {
             if (console_put_char(console, ' ') != 0)
@@ -483,20 +670,23 @@ int console_put_char(component_t *console, char ch)
         return 0;
     }
 
-    if (ch < 32)
+    if ((unsigned char)ch < 32)
         return 0;
 
-    if (d->cursor_x + d->char_width > d->width) {
+    if (d->cursor_x > d->width - d->char_width) {
         if (console_newline(console) != 0)
             return -1;
     }
 
     if (console_ensure_height(
             console,
-            d->cursor_y + d->char_height) != 0)
+            d->cursor_y + d->char_height
+        ) != 0)
         return -1;
 
-    char text[2] = {ch, '\0'};
+    char text[2] = { ch, '\0' };
+
+    ui_lock(&win->lock);
 
     draw_text_cached(
         &console->font_cache,
@@ -510,17 +700,24 @@ int console_put_char(component_t *console, char ch)
         console->fg
     );
 
+    ui_unlock(&win->lock);
+
     d->cursor_x += d->char_width;
 
     console_scroll_to_bottom(console);
-    console->render = 1;
+
+    console_invalidate(console);
 
     return 0;
 }
 
+/* ============================================================
+ * ESCREVER TEXTO
+ * ============================================================ */
+
 int console_write(component_t *console, const char *text)
 {
-    if (!console || !text)
+    if (!console || !text || console->type != UI_CONSOLE)
         return -1;
 
     while (*text) {
@@ -528,17 +725,28 @@ int console_write(component_t *console, const char *text)
             return -1;
     }
 
+    console_invalidate(console);
+
     return 0;
 }
 
+/* ============================================================
+ * DESENHAR CONSOLE
+ * ============================================================ */
+
 int draw_console(component_t *c, window_t *win)
 {
-    if (!c || !win || !c->visible || !c->render)
+    if (!c || !win || !c->visible || !c->enabled || !c->render)
         return 0;
 
     console_data_t *d = c->data;
 
-    if (!d || !d->ctx->window)
+    if (!d || !d->ctx || !d->ctx->window)
+        return 0;
+
+    window_t *console_window = d->ctx->window;
+
+    if (!console_window->buffer)
         return 0;
 
     ui_lock(&win->lock);
@@ -556,8 +764,8 @@ int draw_console(component_t *c, window_t *win)
             c->h,
             c->bg,
             c->border_color,
-            0,
-            0
+            d->border_radius,
+            d->border_thickness
         );
 
         d->background_render = 0;
@@ -565,12 +773,13 @@ int draw_console(component_t *c, window_t *win)
 
     window_copy_buffer(
         win,
-        d->ctx->window,
+        console_window,
         d->scroll_offset,
         d->width,
         d->height,
         c->x + d->border_thickness,
-        c->y + d->border_thickness);
+        c->y + d->border_thickness
+    );
 
     int track_x = c->x + c->w - d->scrollbar_width;
 
@@ -620,15 +829,22 @@ int draw_console(component_t *c, window_t *win)
     }
 
     c->render = 0;
+    c->dirty = 0;
+    c->clear = 0;
 
     ui_unlock(&win->lock);
 
     return 1;
 }
 
+/* ============================================================
+ * EVENTOS DO CONSOLE
+ * ============================================================ */
+
 int console_event(component_t *c, event_t ev)
 {
-    if (!c || !c->visible || c->type != UI_CONSOLE)
+    if (!c || !c->visible || !c->enabled ||
+        c->type != UI_CONSOLE)
         return 0;
 
     console_data_t *d = c->data;
@@ -684,7 +900,10 @@ int console_event(component_t *c, event_t ev)
 
                 console_set_offset(
                     c,
-                    (int)(((int64_t)new_thumb_y * max_offset) / max_thumb_y)
+                    (int)(
+                        ((int64_t)new_thumb_y * max_offset) /
+                        max_thumb_y
+                    )
                 );
             }
 
@@ -720,15 +939,20 @@ int console_event(component_t *c, event_t ev)
 
             console_set_offset(
                 c,
-                (int)(((int64_t)new_thumb_y * max_offset) / max_thumb_y)
+                (int)(
+                    ((int64_t)new_thumb_y * max_offset) /
+                    max_thumb_y
+                )
             );
         }
 
-        return c->render;
+        return 1;
     }
 
     if (ev.type == EVENT_MOUSE_UP && d->dragging_scroll) {
         d->dragging_scroll = 0;
+        d->drag_offset_y = 0;
+
         return 1;
     }
 

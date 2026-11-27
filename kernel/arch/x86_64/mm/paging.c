@@ -626,7 +626,7 @@ setup_paging(
     );
 }
 
-static inline uint64_t read_cr3(void)
+uint64_t read_cr3(void)
 {
     uint64_t cr3;
 
@@ -638,7 +638,7 @@ static inline uint64_t read_cr3(void)
     return cr3;
 }
 
-static inline void write_cr3(uint64_t cr3)
+void write_cr3(uint64_t cr3)
 {
     __asm__ volatile(
         "mov %0, %%cr3"

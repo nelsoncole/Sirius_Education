@@ -11,7 +11,7 @@
  *   Created Date: 07/09/2026
  * 
  *    Modified By: Nelson Cole
- *  Modified Date: 07/09/2026
+ *  Modified Date: 23/11/2026
  * 
  *        License: MIT
  * ============================================================================
@@ -22,8 +22,8 @@
 #include <kernel/klib.h>
 #include <kernel/kernel/sched/wait.h>
 #include <kernel/kernel/sched/wakeup.h>
+#include <kernel/kernel/sched/scheduler.h>
 
-static void* g_mouse_read_wait = NULL;
 
 #define IRQ_MOUSE 12 /* O Rato PS/2 secundário está mapeado obrigatoriamente na IRQ 12 */
 
@@ -36,6 +36,9 @@ static uint8_t g_mouse_bytes[3];
 static mouse_packet_t g_mouse_buffer[MOUSE_BUFFER_SIZE];
 static int g_mouse_head = 0;
 static int g_mouse_tail = 0;
+static int g_mouse_read_wait;
+
+static size_t g_mouse_dropped;
 
 static inline uint8_t inb(uint16_t port)
 {
@@ -83,13 +86,38 @@ static void mouse_write_cmd(uint8_t cmd)
     outb(MOUSE_DATA_PORT, cmd);
 }
 
+static void mouse_set_sample_rate(uint8_t rate)
+{
+    mouse_write_cmd(MOUSE_CMD_SET_SAMPLE_RATE);
+    mouse_wait(0);
+    inb(MOUSE_DATA_PORT);
+
+    mouse_write_cmd(rate);
+    mouse_wait(0);
+    inb(MOUSE_DATA_PORT);
+}
+
+static void mouse_set_resolution(uint8_t resolution)
+{
+    mouse_write_cmd(MOUSE_CMD_SET_RESOLUTION);
+    mouse_wait(0);
+    inb(MOUSE_DATA_PORT);
+
+    mouse_write_cmd(resolution);
+    mouse_wait(0);
+    inb(MOUSE_DATA_PORT);
+}
+
 void mouse_ps2_init(void)
 {
+    (void)g_mouse_read_wait;
+
     kprintf("[Rato] Inicializando barramento auxiliar PS/2 (IRQ %d)...\n", IRQ_MOUSE);
 
     g_mouse_cycle = 0;
     g_mouse_head = 0;
     g_mouse_tail = 0;
+    g_mouse_dropped = 0;
 
     /* 1. ATIVAÇÃO DA PORTA AUXILIAR NO CONTROLADOR 8042 */
     mouse_wait(1);
@@ -105,6 +133,13 @@ void mouse_ps2_init(void)
     outb(MOUSE_STATUS_PORT, 0x60); /* Informa que vai reescrever o Command Byte */
     mouse_wait(1);
     outb(MOUSE_DATA_PORT, status);
+
+    /*
+    mouse_set_resolution(3);
+    mouse_set_sample_rate(200);
+    mouse_set_sample_rate(100);
+    mouse_set_sample_rate(80);
+    */
 
     /* 3. ATIVAÇÃO DOS SINALIZADORES DE TRANSMISSÃO DO PRÓPRIO RATO */
     mouse_write_cmd(MOUSE_CMD_ENABLE_REPT);
@@ -176,8 +211,11 @@ void mouse_handler(void)
         {
             g_mouse_buffer[g_mouse_head] = packet;
             g_mouse_head = next;
-
-            wakeup(&g_mouse_read_wait);
+            //wakeup(&g_mouse_read_wait);
+        }
+        else
+        {
+            kprintf("[mouse] pacotes descartados %ld\n", g_mouse_dropped++);
         }
 
         // kprintf("[%dx%d %2x] ",packet.delta_x, packet.delta_y, packet.buttons);
@@ -195,7 +233,9 @@ int mouse_get_packet(mouse_packet_t* packet)
 
     while (g_mouse_tail == g_mouse_head)
     {
-        wait(&g_mouse_read_wait, NULL);
+        //wait(&g_mouse_read_wait, NULL);
+        __asm__ __volatile__("sti; hlt; sti;" ::: "memory");
+        schedule();
     }
 
     *packet = g_mouse_buffer[g_mouse_tail];

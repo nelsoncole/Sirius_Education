@@ -9,7 +9,7 @@
  *   Created Date: 23/09/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 23/09/2026
+ *  Modified Date: 23/11/2026
  *
  *        License: MIT
  * ============================================================================
@@ -18,7 +18,7 @@
 #include <kernel/fs/dev/vfs_tty.h>
 #include <kernel/fs/dev/vfs_pty.h>
 #include <kernel/drivers/tty/tty.h>
-#include <kernel/drivers/char/keyboard.h>
+#include <kernel/drivers/input/keyboard.h>
 #include <kernel/klib.h>
 #include <kernel/kernel/sched/scheduler.h>
 
@@ -60,7 +60,10 @@ void tty_keyboard_bridge_thread(void* arg) {
     while (1)
     {
         /* 1. BLOQUEIO SEGURO: Aguarda o snapshot estruturado do evento vindo da ISR */
-        kbd_event_t event = keyboard_get_event();
+        keyboard_packet_t event = keyboard_get_packet();
+
+        if (event.is_e0_extended)
+            continue;
 
         /* 2. Extrai e valida o scancode base puro (Set 1) */
         uint8_t scancode = event.scancode;
@@ -68,7 +71,7 @@ void tty_keyboard_bridge_thread(void* arg) {
             continue;
 
         /* 3. FILTRO DE EVENTOS: Se a tecla foi libertada (Key Up / Release), ignora */
-        if (event.modifiers_state & KBD_MOD_RELEASE)
+        if (event.mods & KBD_MOD_RELEASE)
         {
             continue;
         }
@@ -91,8 +94,8 @@ void tty_keyboard_bridge_thread(void* arg) {
         }
 
         /* 5. Avalia o estado dos modificadores gravados no snapshot do evento */
-        int shift_active = (event.modifiers_state & (KBD_MOD_LSHIFT | KBD_MOD_RSHIFT)) ? 1 : 0;
-        int caps_active = (event.modifiers_state & KBD_MOD_CAPS) ? 1 : 0;
+        int shift_active = (event.mods & (KBD_MOD_LSHIFT | KBD_MOD_RSHIFT)) ? 1 : 0;
+        int caps_active = (event.mods & KBD_MOD_CAPS) ? 1 : 0;
 
         char ascii_char = 0;
 

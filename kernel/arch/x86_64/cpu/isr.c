@@ -9,7 +9,7 @@
  *   Created Date: 31/08/2026
  *
  *    Modified By: Nelson Cole
- *  Modified Date: 04/09/2026
+ *  Modified Date: 26/11/2026
  *
  *        License: MIT
  * ============================================================================
@@ -215,20 +215,15 @@ void* interrupt_handler_c(registers_t *regs)
         return next_stack;
     }
 
-    // DESPACHANTE ESTENDIDO DO IOAPIC (Vetores 33 a 80 -> Pinos 0 a 47) */
-    if(regs->int_no >= 33 && regs->int_no < 81)
+    /* DESPACHANTE ESTENDIDO DO IOAPIC (Vetores 33 a 80 -> Pinos 0 a 47) */
+    if (regs->int_no >= 33 && regs->int_no < 81)
     {
-        // Subtrai a base 33 para mapear o vetor de volta ao pino real do IOAPIC
         uint8_t irq_index = regs->int_no - 33;
 
-        // Executa o callback do driver caso tenha sido atracado
-        if (g_interrupt_handlers[irq_index] != NULL)
-        {
-            g_interrupt_handlers[irq_index]();
-        }
+        lapic_eoi();
 
+        irq_dispatch(irq_index);
 
-        lapic_eoi(); // Avisa o chip que a interrupção foi processada
         return regs;
     }
 
